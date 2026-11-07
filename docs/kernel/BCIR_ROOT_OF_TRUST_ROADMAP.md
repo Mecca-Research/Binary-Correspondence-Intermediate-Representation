@@ -170,15 +170,39 @@ Linux's model (6.10) is the reference:
   substituted key;
 - a TPM reset changes the null seed and fails every session, which exposes a reset attack.
 
-`bcir_base` already has SHA-256, HMAC-SHA256 and Ed25519. Ed25519's curve is not one a TPM's ECC
-offers, so the sessions need, besides AES-128 (CFB uses only the forward cipher):
-- **KDFa** (SP 800-108 counter mode over HMAC-SHA256) and **KDFe** (SP 800-56A concatenation over
-  SHA-256);
-- for the salt, **NIST P-256 ECDH with a constant-time scalar multiplication**, or RSA-2048 OAEP to
-  an RSA key.
+**Decided (2026-11-07): NIST P-256 ECDH in `bcir_base`, not RSA-OAEP.** Creating an RSA primary
+key under `TPM_RH_NULL` makes the TPM search for primes, which takes from hundreds of milliseconds to
+seconds on a physical part; a P-256 primary is fast and deterministic, which is why Linux salts to
+one. `bcir_base` already has SHA-256, HMAC-SHA256 and Ed25519 (a curve no TPM offers). The sessions
+add:
+- **P-256 scalar multiplication only:** ephemeral key generation and ECDH for
+  `TPM2_StartAuthSession`, with no ECDSA. The ladder runs in constant time (projective
+  coordinates, complete formulas, no secret-dependent branch or index). The TPM key's point is
+  checked to lie on the curve before use.
+- **The key schedule** of the TPM 2.0 Library, Part 1, as Linux's `tpm2-sessions.c` follows it:
+  - salt = KDFe(SHA-256, Z, "SECRET", ephemeral.x, tpmKey.x), where Z is the ECDH shared x-coordinate
+    (SP 800-56A concatenation KDF);
+  - session key = KDFa(SHA-256, salt, "ATH", nonceTPM, nonceCaller) (SP 800-108 counter mode over
+    HMAC-SHA256);
+  - parameter-encryption key and IV = KDFa(SHA-256, sessionKey ‖ authValue, "CFB", nonceNewer,
+    nonceOlder), 128 bits each.
 
-Each lands with its standard's test vectors, as HMAC did with RFC 4231's. P-256 is the largest
-piece and the riskiest, because its scalar multiplication must run in constant time.
+  The nonces enter only through KDFa, so seeing them gives a sniffer nothing.
+- **AES-128, forward direction only:** CFB decrypts with the forward cipher too.
+- **Local entropy for the ephemeral scalar:** RDSEED/RDRAND on x86, the RoT's TRNG on an SoC.
+  `TPM2_GetRandom` alone crosses the very bus the session protects.
+- **Witnesses:**
+  - each primitive against its standard's vectors: FIPS 197 for AES, NIST's ECC CDH vectors for
+    P-256, the KDFs against the TPM library's and Linux's derivations;
+  - a constant-time witness for the ladder: secrets marked undefined under Valgrind, the ctgrind
+    technique.
+
+**The null primary's name.** The driver creates the primary under `TPM_RH_NULL` (`TPM2_CreatePrimary`).
+A TPM reset regenerates the null seed and so invalidates every session derived from it. The driver
+records the primary's name, the hash of its `TPM2B_PUBLIC`, in the runtime registry and measures it,
+so a quote binds it to the boot. In attestation (RoT6) an attestation key chained to the endorsement
+key certifies that name (`TPM2_Certify`), which exposes an interposer that substituted its own key
+at boot.
 
 ### 6.3 PCR allocation: no collision with Linux and systemd
 
@@ -196,20 +220,30 @@ Outside it, PCR 16 is the debug PCR and PCR 23 is for application support.
 - **PCR 11 stays the UKI's**, as `systemd-measure` and `PolicyAuthorize` sealing expect. On
   BCIR-Linux systemd also extends boot phases into it, so BCIR's predicted values include them, as
   `systemd-measure`'s signed values do.
-- **The activation log.** The proposal puts it in PCR 23, which firmware and systemd leave alone.
-  **Correction:** software at locality 0 can reset PCR 23, and a quote does not show that a reset
-  happened, so PCR 23 alone can neither seal nor attest. (A Linux patch restricting it to the
-  kernel was proposed and not adopted.) RoT0 chooses between two candidates:
-  - **(a) An NV extend index**, an "NvPCR" as systemd implements them, outside the PCR space
-    altogether. NV indices can be deleted and recreated, so it needs an anchor; systemd anchors its
-    own.
-  - **(b) PCR 23**, with resets refused by the TPM's one owner (the native kernel; on BCIR-Linux
-    only if its kernel restricts them), and the log's head extended into a static PCR at quiescent
-    generation boundaries.
-
-  Either way a static PCR anchors the chain. On BCIR-Linux images without system extensions that
-  can be PCR 13. Otherwise it is a domain-separated event (`BCIR_ACTIVATE:<sha256>`) in PCR 11
-  after the stub, which BCIR's prediction carries.
+- **The activation log: PCR 23 with a single owner (decided 2026-11-07), over an NV extend index.**
+  - *Why not the NV index:* an extend index writes the TPM's non-volatile memory, which TPMs
+    limit unless the index is orderly. A PCR extend touches only volatile state. An NV index also
+    needs its own anchor against deletion, the anchoring systemd does for its NvPCRs.
+  - *The risk:* software at locality 0 can reset PCR 23, and a quote does not show that a reset
+    happened. (A Linux patch restricting it to the kernel was proposed and not adopted; the thread
+    asked whether applications rely on PCR 23.)
+  - *What makes it sound:*
+    - **One owner.** The `bcir_tpm` driver holds the TPM's only MMIO/CRB capability, and its
+      command marshaler refuses `TPM2_PCR_Reset` on PCR 23 at the registry boundary. No raw
+      locality-0 access leaves the driver.
+    - **A static anchor before any dynamic code runs.** The root manifest is measured as
+      `BCIR_ACTIVATE:<sha256>`: into PCR 11 after the stub, or into PCR 13 on images without
+      system extensions. BCIR's prediction carries either.
+    - **No erasable history.** Activations happen only at quiescent generation boundaries
+      (invariant 6). At each one, the driver extends the new PCR 23 value into the static anchor
+      too, so a compromise after an activation cannot reset PCR 23 to hide that activation. A
+      verifier quotes the anchor with PCR 23.
+  - *Conditions RoT0 states in its threat model:*
+    - No other code reaches locality 0: no firmware runtime service or SMM handler, no hypervisor,
+      and no DMA-capable device before the IOMMU is locked.
+    - On BCIR-Linux, `/dev/tpmrm0` gives root locality 0, so PCR 23 is advisory there and the
+      static anchor carries the evidence. A fork patch refusing PCR 23's reset would be a K2
+      candidate, answering the six K2 questions of the driver roadmap's §6.2.
 - **PCR 16 for `bcir-qualify`'s replayed extend chains**, which can be replayed without a reboot.
   It is a test register only, never used to seal or attest.
 
@@ -222,8 +256,10 @@ The decision is one BCAB v1 bundle in one PE section, rather than a section per 
 
 **Correction:** systemd-stub measures only the sections its list names, so a section with a name of
 BCIR's own would go unmeasured. On BCIR-Linux the bundle therefore rides as the `.initrd`, which
-the stub measures into PCR 11. The native runtime's own stub measures its `.bcab` section into
-PCR 11 in the UKI's order.
+the stub measures into PCR 11. The native runtime's own stub parses the PE headers and locates `.bcab`. It
+measures the section's name and contents into PCR 11 as the UKI's stub does (`EV_IPL`, in the
+canonical order), and the activation anchor after them. It then hands the section's base address to
+the runtime, which reads it in place.
 
 A section per artifact would win only if the boot loader had to choose among artifacts, which is
 the runtime control plane's job.
@@ -241,8 +277,9 @@ AMD platforms still provide it. RoT0–RoT7 rely on the static chain: PCRs 0–7
 
 ## 7. Open questions RoT0 answers
 - **Confirm or revise §6's drafts** against the threat model: the RoT and TPM per target class
-  (§6.1), the activation register (§6.3: an NV extend index or a guarded PCR 23, and its static
-  anchor), the image (§6.4) and DRTM's place (§6.5).
+  (§6.1), the image (§6.4) and DRTM's place (§6.5). P-256 sessions (§6.2) and the single-owner
+  PCR 23 (§6.3) are decided; RoT0 states the conditions they rest on.
+- **The entropy source per target class** for the session's ephemeral scalar (§6.2).
 - **Which TPM 2.0 implementation** answers on the open-SoC class, and which block answers SPDM on a
   Caliptra SoC.
 - **Post-quantum signatures:** Caliptra signs firmware with ML-DSA; what the TPM side offers is to
@@ -258,7 +295,9 @@ Cited by section when a rung uses them:
   documentation;
 - the UAPI group's Linux TPM PCR Registry, systemd's PCR measurement and NV-index assignment
   documents, and the tpm2-tools manual pages (`tpm2_pcrreset`, `tpm2_nvextend`);
-- NIST SP 800-108, SP 800-56A and FIPS 197, and the DMTF's SPDM and MCTP specifications;
+- NIST SP 800-108, SP 800-56A, FIPS 197 and FIPS 186 (P-256), NIST's ECC CDH test vectors, the
+  TPM 2.0 Library's session key schedule (Part 1), Linux's `drivers/char/tpm/tpm2-sessions.c`, and
+  the DMTF's SPDM and MCTP specifications;
 - TrenchBoot's Secure Launch patch series;
 - the Intel TXT Software Development Guide, the AMD64 Architecture Programmer's Manual Volume 2
   (`SKINIT`) and Arm's DRTM architecture specification;
