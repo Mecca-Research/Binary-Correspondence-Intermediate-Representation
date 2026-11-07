@@ -289,6 +289,19 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-07 — BER-DER-ENVELOPE: the BER-before-DER encode claim judged on lower envelopes.**
+  `test_ber_encodes_faster_than_der_because_the_standard_says_it_may` compared two independent
+  medians taken among nine interleaved candidates, and once, on a shared runner, BER's read
+  108 ns against DER's 95 (`BCIR oracle 1/2 on LLVM 23` on #823, which touches no ASN.1 code;
+  its re-run passed). The claim is unchanged -- X.690 §8.1.3.6 lets BER encode in one pass,
+  §10.1 makes DER know each length first -- but it is now timed on DER and BER alone, back to
+  back in each of 41 rounds, and asserted on each one's fastest round: load can only add time to
+  a round, so the fastest is the estimate a loaded runner moves least. On the development host
+  BER's fastest round is ~38 ns against DER's ~61 and BER wins every paired round; two busy loops
+  on its CPU moved the medians about twice as far as the minima, and neither inverted. An extra
+  BER pass injected into the harness's encode call fails it (BER the faster in 0-1 of 41
+  rounds). The intervals are still not required to separate.
+
 - **2026-11-07 — CI-ONCE: the main workflow runs once per change, and the CMake cells in half
   the time.** Measured on #823/#824's runs: every push to a branch with a pull request ran the
   whole workflow twice (push and pull_request, 36 jobs each; 64 minutes of wall time and 356
