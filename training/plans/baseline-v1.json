@@ -1,6 +1,6 @@
 {
   "builder": "training/tools/plan_baseline.py",
-  "corpus": "0dfb4b715524951adb126a4c9a989b59696b246c1ac0d02c43954aecc2918935",
+  "corpus": "295cdc67801fb60eabd339d07ffe889e72201b2dc0aac3849f94d2009bf33859",
   "license": "LicenseRef-BCIR-NC-1.0",
   "objectives": [
     "EXACTNESS",
