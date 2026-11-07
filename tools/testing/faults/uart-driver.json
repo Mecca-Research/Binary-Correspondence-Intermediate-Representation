@@ -17,7 +17,7 @@
     "bcir.tests.test_uart_driver:test_sim_sends_and_receives_only_the_word_lengths_data_bits",
     "bcir.tests.test_uart_driver:test_sim_refuses_a_config_it_cannot_model",
     "bcir.tests.test_uart_driver:test_driver_compiles_clean_on_both_rails_with_contracts",
-    "bcir.tests.test_uart_driver:test_the_emitted_driver_declares_the_headers_api_but_the_open_defect",
+    "bcir.tests.test_uart_driver:test_the_emitted_driver_declares_the_headers_api",
     "bcir.tests.test_uart_driver:test_probe_identifies_the_part_its_record_describes",
     "bcir.tests.test_uart_driver:test_the_probe_leaves_the_fifos_off",
     "bcir.tests.test_uart_driver:test_init_follows_the_canonical_sequence",

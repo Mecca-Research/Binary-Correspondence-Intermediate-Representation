@@ -5887,9 +5887,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     rails' `--linkable` emit (the defect CF-LINKTWIN pinned as `_LINKABLE_OPEN`): `uart_tx`'s
     `const uint8_t *buf` is emitted `uint8_t *buf`, a type C does not call compatible with the
     header's, which the harness calls through. Every ABI the program builds on passes the two
-    alike; `test_the_emitted_driver_declares_the_headers_api_but_the_open_defect` pins it as the one
-    API function so declared (`_LINKABLE_API_OPEN`). Since CF-LINKTWIN the twin's artifact, like the
-    oracle's, carries the types, prototypes and headers it names, so each rail's builds alone.
+    alike; `test_the_emitted_driver_declares_the_headers_api_but_the_open_defect` pinned it as the
+    one API function so declared (`_LINKABLE_API_OPEN`). Since CF-LINKTWIN the twin's artifact, like
+    the oracle's, carries the types, prototypes and headers it names, so each rail's builds alone.
+    CF-PARMQUALS (#824) closed the defect on both rails; when the two merged, the pin went and the test
+    became `test_the_emitted_driver_declares_the_headers_api`: no API function declared with another
+    type than the header's, and the `const` dropped again refused.
   NDT-BF16 (2026-10-17): the GEMMs on bfloat16 operands, accumulated as the AMX unit accumulates them.
   - The instance the container moved to at 10:15 has AMX and AVX512-BF16. The tile unit's
     `TDPBF16PS` was pinned first, bit for bit, against twelve candidate models

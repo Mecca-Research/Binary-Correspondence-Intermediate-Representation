@@ -807,13 +807,6 @@ def test_driver_compiles_clean_on_both_rails_with_contracts():
         assert os.path.getsize(_oracle_linkable(d)) > 0 and os.path.getsize(_twin_linkable(d)) > 0
 
 
-#: the API functions each rail's --linkable artifact declares with another type than the header's: the
-#: emit's parameter types keep no qualifier below a parameter's top level (the open defect
-#: bcir/tests/test_cfront_link.py pins as `_LINKABLE_OPEN`), so uart_tx's `const uint8_t *buf` is
-#: declared and defined `uint8_t *buf`, a type C does not call compatible with the header's (C11
-#: 6.7.6.3p15, 6.7.6.1p2), and a program whose units disagree on it is undefined (6.2.7p2). The
-#: harness calls through the header; every ABI the program builds on passes the two alike.
-_LINKABLE_API_OPEN = {"uart_tx"}
 _PROTOTYPE = re.compile(r"^uint32_t (uart_\w+)\(.*\);$", re.MULTILINE)
 _CONFLICT = re.compile(r"conflicting types for ['\u2018](\w+)['\u2019]")
 
@@ -837,28 +830,30 @@ def _api_conflicts(d: str, artifact: str) -> set:
     return found
 
 
-def test_the_emitted_driver_declares_the_headers_api_but_the_open_defect():
-    """Each rail's --linkable driver against the driver's API header, in one translation unit: the
-    compiler names every API function whose emitted declaration is not the header's. On both rails
-    that is exactly `_LINKABLE_API_OPEN`, uart_tx's TX buffer defined without its `const`. The check
-    reads the declarations: the same artifact with the `const` restored conflicts nowhere, and with
-    uart_flush's count taken as an `int32_t *` it conflicts at uart_flush too."""
+def test_the_emitted_driver_declares_the_headers_api():
+    """Each rail's --linkable driver against the driver's API header, in one translation unit: every
+    API function the artifact declares has the header's type. Before CF-PARMQUALS both rails' emit
+    dropped the qualifiers below a parameter's top level, so uart_tx's `const uint8_t *buf` was
+    declared `uint8_t *buf`, a type C does not call compatible with the header's (C11 6.7.6.1p2,
+    6.7.6.3p15; undefined across units, 6.2.7p2). The check reads the declarations: the same
+    artifact with that `const` dropped conflicts at uart_tx, and with uart_flush's count taken as an
+    `int32_t *` at uart_flush."""
     if not (_CC and _tree()):
         return
     d = _scratch(_GOLDEN_PLACEMENT)
     for rail, path in (("oracle", _oracle_linkable(d)), ("twin", _twin_linkable(d))):
         with open(path, encoding="utf-8") as fh:
             artifact = fh.read()
-        assert _api_conflicts(d, artifact) == _LINKABLE_API_OPEN, rail
+        assert _api_conflicts(d, artifact) == set(), rail
         tx = [m.group(0) for m in _PROTOTYPE.finditer(artifact) if m.group(1) == "uart_tx"]
-        assert len(tx) == 1 and tx[0].count("uint8_t *") == 1, (rail, tx)
-        fixed = artifact.replace(tx[0], tx[0].replace("uint8_t *", "const uint8_t *"))
-        assert _api_conflicts(d, fixed) == set(), rail
+        assert len(tx) == 1 and tx[0].count("const uint8_t *") == 1, (rail, tx)
+        dropped = artifact.replace(tx[0], tx[0].replace("const uint8_t *", "uint8_t *"))
+        assert _api_conflicts(d, dropped) == {"uart_tx"}, rail
         flush = [m.group(0) for m in _PROTOTYPE.finditer(artifact) if m.group(1) == "uart_flush"]
         count = re.sub(r", uint32_t \*(\s*\w*)\);$", r", int32_t *\1);", flush[0])
         assert len(flush) == 1 and count != flush[0], (rail, flush)
         wrong = artifact.replace(flush[0], count)
-        assert _api_conflicts(d, wrong) == _LINKABLE_API_OPEN | {"uart_flush"}, rail
+        assert _api_conflicts(d, wrong) == {"uart_flush"}, rail
 
 
 def test_probe_identifies_the_part_its_record_describes():

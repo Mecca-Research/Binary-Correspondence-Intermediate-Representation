@@ -1109,16 +1109,14 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
 - *Each rail's artifact builds alone.* bcir-cc's `--linkable` renders the oracle's artifact
   (CF-LINKTWIN, as the oracle's does since CF-LINKEMIT): the type definitions the driver names, a
   prototype for every function, its globals and the headers its own text needs. So the section and
-  the tests compile each rail's artifact alone and link it with the sim and the harness. One defect
-  the two rails share remains, pinned by
-  `test_the_emitted_driver_declares_the_headers_api_but_the_open_defect` (`_LINKABLE_API_OPEN`):
-  the emit's parameter types keep no qualifier below a parameter's top level, so `uart_tx`'s
-  `const uint8_t *buf` is declared and defined `uint8_t *buf`. C calls those two pointer types
-  incompatible (C11 6.7.6.1p2, 6.7.6.3p15), so the harness, which calls through `uart_driver.h`, and
-  the emitted driver declare `uart_tx` with two types, which 6.2.7p2 leaves undefined. Every ABI the
-  program builds on passes the two alike, and the transcripts agree byte for byte; the test holds
-  every other API function to the header's type, and fails the day the defect is fixed. It is the
-  defect `bcir/tests/test_cfront_link.py` pins as `_LINKABLE_OPEN`, a front-end slice of its own.
+  the tests compile each rail's artifact alone and link it with the sim and the harness.
+  `test_the_emitted_driver_declares_the_headers_api` holds every API function each rail's artifact
+  declares to the header's type. Until CF-PARMQUALS (#824) the emit kept no qualifier below a
+  parameter's top level, so `uart_tx`'s `const uint8_t *buf` was declared and defined `uint8_t *buf`
+  -- a type C does not call compatible with the header's (C11 6.7.6.1p2, 6.7.6.3p15), which the
+  harness calls through, and which 6.2.7p2 leaves undefined across units. U2 pinned that as the one
+  open defect (`_LINKABLE_API_OPEN`); CF-PARMQUALS closed it on both rails, and the test now refuses
+  the `const` dropped again as well as a wrong count type for `uart_flush`.
 - *The sim's open choices*, each stated in `sim16550.h`: a byte written to a full transmitter is
   lost and counted; a byte written to an idle transmitter moves into the shift register at once
   (TL16C550D p.41), and the PC16550D's sub-character delay of that THRE (8.4.1 item 2, p.16) is not
@@ -1150,8 +1148,7 @@ harness `uart_main` (built by BCIR Make and CMake with the gate's flags, untrace
   word length as SD13 and UD37, the busy transmitter as UD34.
 
 `check_passes.sh` is untouched (U2 adds no pass). Pending beside U2: U1's law-rail half (U0's
-landed after U2, above), and the qualifiers below a parameter's top level in both rails'
-`--linkable` emit (above).
+landed after U2, above).
 
 **Commit.** `devices: U2 -- the polled UART driver, linked from emitted TUs, running against the spec-exact sim`
 
