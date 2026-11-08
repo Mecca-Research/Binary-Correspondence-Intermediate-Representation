@@ -38,7 +38,26 @@ whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.
 
 ## Where to work
 
+**The next build phase starts at the master roadmap's §11, item 1**
+([`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md)): the foundation phase that §3.1
+sizes, beginning with Unicode UC-1, before the driver order resumes. §3.2 says what sends work back
+to drivers. Read `.claude/context/BCIR_DIGEST.md` first.
+
 - Changing the IR semantics/optimizer → `bcir/` (with parity in `mlir/`).
+- Building the Unicode 17.0 database (UC-n) → [`training/UNICODE_ROADMAP.md`](training/UNICODE_ROADMAP.md)
+  §10. Its paths are fixed in §5.5:
+  - the rail under `training/tools/unicode/`;
+  - the vendored, SHA-256-pinned UCD under `training/formats/unicode/`;
+  - the one UAX #15 implementation in `bcir/hosted/training/unicode_normalize.py`, which
+    `training/` imports and never the reverse;
+  - the DER record in `bcir/asn1/` (UC-8).
+
+  Gate: `verify_unicode.py` beside `verify_database.py`. Faults:
+  `tools/testing/faults/training-unicode.json`. `unicodedata` is a differential oracle, never a
+  source.
+- Building the small-language-model laboratory (SLM-n) → [`training/SLM_ROADMAP.md`](training/SLM_ROADMAP.md)
+  §6. Each slice names the UC-n it needs; nothing starts before UC-3. Its check groups are sections
+  of `verify_unicode.py`, and its faults go in `tools/testing/faults/training-slm.json`.
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/` and the `mlir` preset's
   `ctest -L mlir`, whose lit suite runs every fixture's RUN lines as written: `mlir/lit.cfg.py`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).

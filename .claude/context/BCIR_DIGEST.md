@@ -1,6 +1,35 @@
 # BCIR repo digest (compressed knowledge base — read this INSTEAD of exploring)
 
 <!-- KNOWLEDGE:BEGIN -->
+## Start here: the next build phase (2026-11-08, `main` after #825)
+
+**Where things stand.** UART U0–U2 have landed (#823, U0 on every rail). CI runs once per change;
+its CMake cells took 12–19 min in the last runs, against 28–48 before (#825). The phase now open is
+the **foundation phase**, owned by `docs/BCIR_MASTER_ROADMAP.md` §3.1–3.2 and queued in its §11:
+
+| Program | Landed | Before the drivers resume |
+|---|---|---|
+| Hybrid database (`training/DATABASE_ROADMAP.md`) | S1–S19, P1–P4 | UC-3 (a second declared table), SLM-2–SLM-5 (lookup legality and price, sharded exact fusion, DER `LookupEnvelope`, frozen query projection) |
+| Unicode 17.0 (`training/UNICODE_ROADMAP.md`) | nothing | UC-1–UC-8, the Latin stage; UC-9–UC-11 deferred |
+| SLM laboratory (`training/SLM_ROADMAP.md`) | none of its slices; the native decoder trainer and the train rail it builds on have | SLM-1, SLM-6, SLM-7; SLM-8–SLM-13 deferred |
+
+**The next slice is UC-1**: the Unicode pins, the fetch tool and the source tree
+(`training/UNICODE_ROADMAP.md` §10). Then UC-2 … UC-8, then SLM-1 … SLM-7. Each is one PR, RED
+before GREEN, under the one-way corpus law (`AGENTS.md`).
+
+After those fifteen, the driver order resumes (`docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md` §5.6:
+timers, DMA, virtio first, on a schedule), alternating one slice at a time with the deferred
+Unicode and SLM slices. A measured bottleneck goes to the layer that owns it (master §3.2):
+in-process memory pressure is user-space work; device transfers, datasets past the page cache,
+page and NUMA policy, inter-process copies, jitter and missing counters are driver and kernel work.
+
+UC-1's fetch tool downloads the pinned UCD 17.0 files from `www.unicode.org`. The shared default
+cloud environment refuses that host; the repository's own environment allows it, so start the
+session there. Never stand vendored bytes in for a refused fetch.
+
+The host is 4 vCPUs, 16 GB, no GPU and no PMU. Work at two workers with heavy gates serialized, and
+run `python3 tools/local/latest_toolchain.py status` before a PR.
+
 ## Curated knowledge (current through PR #749 and package 0.2.0, 2026-09-03)
 
 **What BCIR is.** A registry-first, phase-ordered, lane-typed, cost-governed
@@ -262,14 +291,14 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/BCIR_JSON_PROGRAM_REPRESENTATION.md** (377L): 1. The proposal, restated precisely · 2. Prior art, because none of the core ideas are new — and t · 3. Three claims in the proposal that must be corrected befor · 4. The three deficiencies, and the mechanisms that answer th · 5. Control flow as a cost problem — the technically stronges · 6. Self-modification: the staged model · 7. Phase ladder · 8. What this changes in the existing roadmaps · 9. Risk register · 10. References
 - **docs/BCIR_LANGREF.md** (1537L): 0. Stance · 1. The multi-level IR · 2. Central equation · 3–9. Laws (summary) · 10. Verifier laws (R1–R25) · 11. Rewrite laws (the building-blocks engine) · 12. Lowering contracts · 13. Learning placement (normative policy) · 14. The two-truth separation (MOPC) · 15. The enriched-operad memory interface (the higher intelli · 16. BCIRQ8 v1 decoder-artifact contract · 17. ASN.1 in BCIR · 18. Conformance profiles and external-contract boundary
 - **docs/BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md** (219L): 0. Executive verdicts · 1. The machine model as built (the "BCIR ISA") · 2. The toolchain as built · 3. What the research docs add to the frame · 4. HAL/ABI as built · 5. The ABI ledger (what is frozen today) · 6. The gap register — the MC-track (code-backed) · 7. Standing positions this audit confirms (no change needed)
-- **docs/BCIR_MASTER_ROADMAP.md** (440L): 1. Mission and non-negotiable invariants · 2. Architecture and current baseline · 3. Dependency order · 4. Active workstreams · 5. Program milestones · 6. Release policy · 7. Validation and publication gate · 8. Decision boundaries · 9. Risk register · 10. Document ownership · 11. Immediate priority queue
+- **docs/BCIR_MASTER_ROADMAP.md** (535L): 1. Mission and non-negotiable invariants · 2. Architecture and current baseline · 3. Dependency order · 4. Active workstreams · 5. Program milestones · 6. Release policy · 7. Validation and publication gate · 8. Decision boundaries · 9. Risk register · 10. Document ownership · 11. Immediate priority queue
 - **docs/BCIR_NATIVE_OBJECT_GATE.md** (152L): 1. The decision · 2. The warranted slice (done): real native objects end-to-en · 3. GO criteria — what would warrant BCIR-native isel · 4. STOP criteria — if a native-isel experiment is taken · 5. Current verdict and evidence boundary
 - **docs/BCIR_ORACLE_INVENTORY.md** (120L): Summary · Hot paths · Native twins · Python-only, by package
 - **docs/BCIR_QUALIFICATION.md** (299L): The model: BCIR-Docs-860K · The pipeline and its checks · Results · Reproduce · What is not claimed
 - **docs/BCIR_Repo_Structure.md** (236L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · 8. Change-placement rules
 - **docs/BCIR_TARGET_ACCESS.md** (133L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
 - **docs/BCIR_UNIVERSAL_INTERFACE_ROADMAP.md** (467L): 1. Reuse the implemented foundation · 2. Four compatibility contracts · 3. Interface description and registry design · 4. Provider and frontend portfolio · 5. IPC: the service contract above the selected transport · 6. ABNF and internet protocol interfaces · 7. Cryptographic syntax and provider integration · 8. Compiler, ML and TMSAO integration · 9. Gateable implementation order · 10. Conformance and performance qualification · Source ledger
-- **docs/DEVELOPMENT_HISTORY.md** (9622L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
+- **docs/DEVELOPMENT_HISTORY.md** (9647L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
 - **docs/ONBOARDING_DEEP_DIVE.md** (320L): 1. Read this first · 2. The three implementation rails · 3. From source to execution · 4. Core semantic and optimizer packages · 5. Frontends, lowering, and machine boundary · 6. Runtime memory and ownership · 7. Models, training, and BCIRQ8 · 8. Drivers, kernel, telemetry, and IPC · 9. Current evidence boundary · 10. Validation workflow · 11. Reading and change-placement map
 - **docs/PARITY.md** (514L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
 - **docs/PERFORMANCE_AUDIT.md** (149L): 1. Gate and evidence contract · 2. Defects and bottlenecks found · 3. Local before/after evidence · 4. What remains hardware- and workload-gated
@@ -285,7 +314,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/kernel/BCIR_DATA_PLANE_HANDOFF.md** (224L): The pack table · The per-step freeze (the dynamic-graph builder) · The Stage 3 exit flow · Gates · Not claimed
 - **docs/kernel/BCIR_DELTA_CHAIN.md** (253L): The declared delta (v0) · The plan — `IncrementalOffer` and `IncrementalPlan` · The pack — `PackState` · The verdict — `VerifyState` · The gates · Measured · Not claimed
 - **docs/kernel/BCIR_DMA_BLUEPRINT.md** (2453L): 0. Purpose, scope, and how to use this document · 1. The normative DMA model · 2. The variant matrix · 3. How A2's descriptor ring maps onto each controller · 4. The laws (D-laws) · 5. The simulated controller's behavioral contract · 6. The build slices (a proposal: D0–D7, not milestones) · 7. Errors and inconsistencies inside the documents (provenan · 8. Open questions for the user
-- **docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md** (1100L): 1. Mission and product split · 2. Current baseline · 3. The BCIR driver package contract · 4. Execution, telemetry, and continual optimization · 5. Driver maturity and build order · 6. BCIR-Linux: compatibility oracle and experimental fork · 7. Universal ABI, POSIX compatibility, and IPC · 8. Validation and promotion policy · 9. Risks and stop conditions · 10. Historical rationale retained from roadmap v1
+- **docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md** (1116L): 1. Mission and product split · 2. Current baseline · 3. The BCIR driver package contract · 4. Execution, telemetry, and continual optimization · 5. Driver maturity and build order · 6. BCIR-Linux: compatibility oracle and experimental fork · 7. Universal ABI, POSIX compatibility, and IPC · 8. Validation and promotion policy · 9. Risks and stop conditions · 10. Historical rationale retained from roadmap v1
 - **docs/kernel/BCIR_ESCAPE_ANALYSIS.md** (267L): The analysis · The answers · The reports (both rails, byte for byte) · What is not claimed · Evidence
 - **docs/kernel/BCIR_EVENT_TIMER_BLUEPRINT.md** (1564L): 0. Purpose and scope · 1. The normative timer model · 2. The variant matrix · 3. The laws (T-laws) · 4. A simulated timer's behavioral contract · 5. Where a timer meets BCIR's event phases and the measureme · 6. The build slices T0–T7 (a proposal, not milestones) · 7. Errors and inconsistencies (provenance notes, never adopt · 8. Open questions for the user · Appendix A — Derived arithmetic (none of this is printed in
 - **docs/kernel/BCIR_EXECUTION_PLAN_ABI.md** (269L): Conventions · Header (64 bytes, cache-line aligned; every `u64` at an 8-al · Body (sequential, length-prefixed) · Trailer · The wire laws (both rails, before publication and again on r · Semantic trust boundary · Readers · Where the plan travels · v2 (append-only): the liveness domain and the lifetime ticks · v3 (append-only): the move tail and the binding (G8) · The explicit-placement flag (G19) · Versioning (the freeze)
@@ -307,7 +336,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/languages/CFRONT_GUIDE.md** (608L): Quickstart · Command-line options · Diagnostics · The target ABI matrix · The LLVM-backend fallback contract · Pointer-bounds policy (LangRef §4) · Pointer-lifetime policy (R21, LangRef §10) · Inline assembly (ASM1) · Port-mapped I/O (ASM2) · Hardware barriers (ASM3) · What's supported · Known limits
 - **docs/languages/CPP_HANDOFF_BOUNDARY.md** (215L): Honest depth (read this first) · Why a boundary at all · What stays on the C/IR rail (below the boundary) · What crosses to C++ (above the boundary) · The seam · Why C++ (and not C / IR) · What is built · Risks and follow-ups (what remains, deliberately)
 - **docs/languages/C_MEMORY_DISCIPLINE.md** (104L): Runtime classes · Required ownership rules · Direct driver ABI first · IPC boundary · Validation cadence
-- **docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md** (1403L): 0. Stance — why an IR becomes intelligence · 1. The intelligence already in BCIR (the substrate this buil · 2. The ordered build-out · 3. The continuous-development discipline (how every layer ke · 4. Capability-track placement (do we need CT6 / CT7?) · 5. Risk register / honest boundaries (out of the dreamy pote · 6. AI-substrate closure register · 7. Open-weight model ingestion (GLM / Gemma / Qwen) — the LL · 8. Feasibility audit — the deeper-integration program (2026- · Native C decoder training
+- **docs/machine-learning/BCIR_ML_AI_INTEGRATION_ROADMAP.md** (1404L): 0. Stance — why an IR becomes intelligence · 1. The intelligence already in BCIR (the substrate this buil · 2. The ordered build-out · 3. The continuous-development discipline (how every layer ke · 4. Capability-track placement (do we need CT6 / CT7?) · 5. Risk register / honest boundaries (out of the dreamy pote · 6. AI-substrate closure register · 7. Open-weight model ingestion (GLM / Gemma / Qwen) — the LL · 8. Feasibility audit — the deeper-integration program (2026- · Native C decoder training
 - **docs/machine-learning/BCIR_NATIVE_DECODER_TRAINING.md** (814L): Implemented contract · Using the trainer · The train rail (TRAIN-RAIL) · The step as a GEM+ program (NDT-GEM) · Evidence and scope
 - **docs/machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md** (176L): 1. Verdict · 2. Scope and method · 3. Native surface implemented by this audit · 4. Safety, determinism, and portability contract · 5. Bounded local evidence · 6. Complete placement register · 7. Next native milestones
 - **docs/machine-learning/BCIR_WHOLE_MODEL_REFERENCE.md** (313L): 1. The overlap — BCIR already owns the reference numerics · 2. What landed and what remains · 3. What NOT to import · 4. Where each piece lands (anchored homes) · 5. Build-slice status (WMR-1 … WMR-4) · 6. The larger implication — closing the train → export → ser · 7. Coherence with the rest of the system · Native C decoder training

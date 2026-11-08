@@ -15,6 +15,21 @@
 > this database, and says so in its own dependency table. Authority order is the
 > repository's: LangRef → generated evidence and implementation → current-state
 > audit → master roadmap → companion roadmaps (this one) → research notes.
+>
+> **Scope in the foundation phase (2026-11-08, `docs/BCIR_MASTER_ROADMAP.md`
+> §3.1): UC-1 to UC-8 run before the drivers resume. UC-9 to UC-11 are deferred
+> and interleave with the drivers afterwards.** Stopping at UC-7 would leave the
+> SLM blocked: UC-8 (the DER record and UAX #29) is the last slice that adds a
+> mechanism, and SLM-1 needs it. UC-9 to UC-11 add repertoire, not mechanisms.
+> UC-10's Han tables raise the row count about a hundredfold. That meets the
+> catalog's declared ceilings and `DATABASE_ROADMAP.md`'s reopening condition for
+> approximate nearest neighbours (about 50,000 rows), a decision UC-10 measures
+> rather than assumes. **The next session starts at UC-1 (§10).** The
+> interpreters the suite runs carry three different `unidata_version`s today:
+> 14.0 on 3.11, 15.0 on 3.12, 17.0 on 3.15. That is the drift UC-7 removes.
+> UC-1's fetch needs `www.unicode.org` reachable from the session: the default
+> cloud environment's proxy refuses it, and this repository's own environment
+> allows it.
 
 ## 1. The three questions, answered
 

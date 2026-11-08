@@ -121,11 +121,103 @@ flowchart TD
 After UART, the foundation phase runs before deep driver and kernel work, by the owner's
 direction: the hybrid database, the Unicode infrastructure and the small-language-model laboratory
 with its initial lessons (the corpus-side roadmaps under `training/`); the device order that
-follows is the driver roadmap's §5.6.
+follows is the driver roadmap's §5.6. §3.1 sizes the phase and §3.2 says what sends the work back
+to drivers.
 
 The driver and ML programs share compiler, runtime, telemetry, artifact, and validation
 machinery. Neither may bypass the other's prerequisites: model acceleration needs real device
 packages; learned driver optimization needs stable direct behavior and trace identity.
+
+### 3.1 The foundation phase, sized (review of 2026-11-08, `main` after #825)
+
+| Program | Ladder | Landed | Open |
+|---|---|---|---|
+| Hybrid database: the training catalog and retrieval rail ([`training/DATABASE_ROADMAP.md`](../training/DATABASE_ROADMAP.md)) | S1–S19 and the performance suite's P1–P4 | All of it: content-addressed sets behind generations, postings with exact joint statistics, sorted numeric indexes with zone maps, a ten-operator predicate language, a legality-first planner priced on the K_BCIR cost vector, the native Q15 top-k under a predicate mask, one transaction per publish, a stored derived column. The hybrid SQL/vector path already runs end to end. | It is one-table-shaped (the three generalizations of [`UNICODE_ROADMAP.md`](../training/UNICODE_ROADMAP.md) §5.3). It has no second vector space per row, no exact fusion of two rankings, no sharding above the kernel's 65,536-row ceiling and no replayable lookup certificate. Those are UC-3 and SLM-2 to SLM-5. |
+| Unicode 17.0 database ([`training/UNICODE_ROADMAP.md`](../training/UNICODE_ROADMAP.md)) | UC-1–UC-11 | None. | All of it. The tree still normalizes text with the interpreter's own tables, a different Unicode version on each interpreter the suite runs: 14.0 on 3.11, 15.0 on 3.12, 17.0 on 3.15. |
+| Small-language-model laboratory ([`training/SLM_ROADMAP.md`](../training/SLM_ROADMAP.md)) | SLM-1–SLM-13 | None of its slices. What it builds on has landed: the native decoder trainer (`runtime/c/bcir_decoder_train.c` over `bcir_tensor.c`) gives complete dense Llama/SwiGLU training in C, bit-identical at every thread count under declared GEMM, exponential, reduction and bf16 contracts. Around it: the NDT ladder of [`research/BCIR_TRAINING_ACCELERATION_ROADMAP.md`](research/BCIR_TRAINING_ACCELERATION_ROADMAP.md); the train rail (TRAIN-RAIL: the `BCIR-Corpus-860K` recipe trained on CI); the hosted stage pipeline; and BCIRQ8 → C inference parity. | Every slice. Nothing in `SLM-*` starts before UC-3, and SLM-1 needs UC-7 and UC-8. |
+
+**The phase's exit (build this much before the drivers resume): fifteen slices, one PR each, in
+this order.**
+
+1. **Unicode UC-1 to UC-8, the whole Latin stage.** Stopping at UC-7 would leave SLM-1 blocked:
+   UC-8 (the DER character record and UAX #29 segmentation) is the last slice that adds a
+   mechanism, and SLM-1 needs it. UC-9 to UC-11 add repertoire, not mechanisms. UC-3 is also the
+   database's next slice: it makes the catalog hold a second declared table, additively, with the
+   chunk table byte-identical. UC-7 is the traceability payoff: tables pinned to 17.0 replace the
+   interpreter's, so one corpus reaches one digest on every supported Python.
+2. **The rest of the database: SLM-2 to SLM-5.** SLM-2 is the lookup request: six appended
+   legality rules and its price. SLM-3 is exact sharded fusion, on synthetic sets until UC-10
+   supplies the real two spaces. SLM-4 is the DER `LookupEnvelope`, replayable on any host.
+   SLM-5 is the frozen query projection. After them, every lookup is planned, priced, refusable
+   and replayable: the database the model consults.
+3. **The laboratory's initial lessons: SLM-1, SLM-6 and SLM-7.** SLM-1 is the record interface and
+   `bcir.byte_bpe.v2`. SLM-6 puts the engines in as `verify` callbacks in bounded reasoning search.
+   SLM-7 makes curriculum phase 1 (orthographic grounding) a content-addressed stage. SLM-7b stays
+   optional.
+
+In numbering order that is UC-1 … UC-8, then SLM-1 … SLM-7: every slice's dependencies land
+before it.
+
+**Deferred, then interleaved with the drivers one slice at a time:**
+- UC-9, the other scripts.
+- UC-10, Han. The vendored data triples and the row count rises about a hundredfold. That meets the
+  catalog's declared ceilings and the database's reopening condition for approximate nearest
+  neighbours at about 50,000 rows, so it is a measured decision.
+- UC-11, the rest of 17.0 and the LangRef made normative.
+- SLM-8 to SLM-13: tree-constrained attention, the recursive cell, the lexical graph behind its
+  GO/STOP, the curriculum ledger, the evaluation harness and the scale GO/STOP.
+
+None of these blocks a driver, and no driver blocks them.
+
+### 3.2 What sends the work back to drivers and kernels
+
+Not a memory bottleneck as such. Three rules decide it.
+
+1. **The first driver block runs on a schedule, not a trigger.** The event timers, DMA with the
+   ownership engine, and the virtio queue proof come first. They are preconditions of everything
+   after them: NVMe, the IPC rungs, HAM's physical tiers, UEFI with the trust program, and the JIT
+   microkernel. None of them waits for a model to slow down; they resume when §3.1's exit is met.
+2. **After that, a measured bottleneck sends the work to the layer that owns it.** A memory
+   bottleneck inside one process is user-space work. The native trainer has been closing those in
+   user space:
+   - the step's state on one huge-page mapping (NDT-PAGES);
+   - the transient arena laid out by lifetime (NDT-MEM);
+   - the attention's tasks on contiguous copies of their rows (ATT-CONTIG);
+   - the weight adjoints split over their depth (KSPLIT).
+
+   A driver or the kernel pays only where the measured time crosses a boundary user space cannot
+   move. Attribution is the training ladder's NEXT-n method: time the step a part at a time against
+   the host's measured rates, then name the layer.
+
+   | What the trace attributes the time to | The layer that owns it | Where it is planned |
+   |---|---|---|
+   | Data crossing devices: accelerator memory, peer transfers | DMA, IOMMU, PCIe, the GPU driver | driver order 2, 5, 12; HMF-D1/D2 |
+   | Datasets and checkpoints larger than the page cache | NVMe queues, the semantic store | order 6; HMF-D4 |
+   | Page size, pinning, NUMA placement and memory tiers beyond `madvise` | memory inventory, HAM | order 10; HMF-D3 |
+   | Copies and wakeups between processes | the IPC rungs | driver roadmap §7.4, I1–I5 |
+   | Jitter from interrupts and other tenants | timers, interrupt routing, the microkernel | order 1, 13 |
+   | Counters a certificate needs | a physical rig: this cloud host has no PMU | CPU and PMU, order 11; TMSAO-3 |
+3. **On this host, model scale will not surface a driver-shaped bottleneck soon.** The host has
+   4 vCPUs, 16 GB, no GPU and no PMU. The corpus recipe's model and the 9.84M study decoder live in
+   cache and RAM. Driver-shaped bottlenecks appear when the dataset outgrows the page cache, when
+   training moves to an accelerator, or when tensors cross processes. That is why the driver order
+   puts DMA, NVMe and the IPC rungs early, and why each driver is qualified against a data,
+   inference and training profile (driver roadmap §4.7;
+   [`research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md`](research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)).
+
+How the program goals map onto this order:
+- **Fully capable JIT microkernels** are the driver ladder's end (order 13). Driver roadmap §7.5
+  defines one as a preverified, content-addressed service bundle, and it needs the whole evidence
+  chain below it.
+- **TMSAO on data-structure execution**: the database's next slices put retrieval under the
+  plan, legality, price and certificate machinery GEM+ already runs. The proof rail issues
+  TMSAO-1/TMSAO-2; TMSAO-3 waits on hardware.
+- **TMSAO on AI inference**: the NDT and Q8 ladders and BCIRQ8 → C.
+- **Full traceability**:
+  - UC-7: the Unicode version in every digest;
+  - SLM-4: every lookup a replayable DER envelope;
+  - SLM-12: no reported number without its digests;
+  - StreamPack and BCAB provenance throughout.
 
 ## 4. Active workstreams
 
@@ -287,7 +379,7 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | C/runtime memory discipline | Landed baseline | Strict hosted/freestanding builds, allocation-failure campaign, sanitizers, idempotent teardown |
 | Pre-driver machine edge | Partial landed | Ordinary x86 edge and MC1/MC2 baselines; paranoid/reset and hardware binding remain explicit |
 | UART direct package | Partial landed | U0 on every rail, U1 on the oracle, U2's polled driver against the simulated 16550 linked from both rails' emit; U1's law-rail half and the event-driven slices remain for D0–D2's cancellation, saturation and replay |
-| Foundation phase | Open, before deep driver work | The hybrid database's next S-slices, the Unicode database's first slices and the small-language-model laboratory with its initial lessons, each at its own roadmap's gates |
+| Foundation phase | Open, before deep driver work; sized in §3.1 (database S1–S19 landed; Unicode and the SLM's own slices not started) | The fifteen slices of §3.1, each at its own roadmap's gates: UC-1–UC-8 (UC-3 the database's second table), SLM-2–SLM-5 (the rest of the database), SLM-1, SLM-6, SLM-7 (the initial lessons) |
 | UART Linux adapter | Open | D3 direct/adapter behavioral parity and unload/restart safety |
 | virtio queue proof | Open | Character/event plus block/DMA lifecycle, reset and saturation evidence |
 | BCIR UAPI v1 | Gated | UART + virtio-blk evidence, generated ABI tests, compatibility and failure matrix |
@@ -417,23 +509,26 @@ History explains past decisions but does not reopen superseded sequencing.
 
 ## 11. Immediate priority queue
 
-1. Land the UART slices and keep CI's gates green on the runner release its baseline toolchain
-   comes from (Ubuntu 24.04: Clang 18, GCC 13, Python 3.12).
+1. **Start here: the foundation phase, §3.1's fifteen slices in order.** Begin with **UC-1**, the
+   Unicode pins, the fetch tool and the source tree ([`training/UNICODE_ROADMAP.md`](../training/UNICODE_ROADMAP.md)
+   §10). Then UC-2 … UC-8, then SLM-1 … SLM-7
+   ([`training/SLM_ROADMAP.md`](../training/SLM_ROADMAP.md) §6). Each slice is one PR with its
+   slice id in the title and RED before GREEN, gated where that roadmap's §11 or §10 places it.
+   All of it stays under the one-way corpus law (`AGENTS.md`). UART U0–U2 and the CI work (#823,
+   #825) have landed; keep CI's gates green on the runner release its baseline toolchain comes
+   from (Ubuntu 24.04: Clang 18, GCC 13, Python 3.12).
 2. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
-   twin's form), the one UART slice left open across rails.
-3. Run the foundation phase before deep driver work: the hybrid database's next slices, the
-   Unicode infrastructure and the small-language-model laboratory with its initial lessons
-   (`training/DATABASE_ROADMAP.md`, `training/UNICODE_ROADMAP.md`, `training/SLM_ROADMAP.md`),
-   under the one-way corpus law.
-4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
-   event timers and DMA, whose blueprints exist; grow the deep-learning and modeling work with
-   each driver's traces.
-5. Keep the IPC and firmware programs at their plans until their rows come up; start BCIR-Linux
+   twin's form), the one UART slice left open across rails. It can ride between foundation slices.
+3. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
+   event timers and DMA, whose blueprints exist. Alternate them one slice at a time with §3.1's
+   deferred Unicode and SLM slices, and grow the deep-learning and modeling work with each
+   driver's traces. A measured bottleneck goes to the layer that owns it (§3.2).
+4. Keep the IPC and firmware programs at their plans until their rows come up; start BCIR-Linux
    only at §6.4's entry criteria, with the owner creating the repository.
-6. Keep HAM hardware work at the documented HMF-D0–D5 gates and physical HAM and native HAM/SYCL
+5. Keep HAM hardware work at the documented HMF-D0–D5 gates and physical HAM and native HAM/SYCL
    behind the resulting driver/IPC evidence, with direct/staged routing and hosted fallback
    labeled separately.
-7. Work one slice at a time on the bounded host; multi-agent fan-out waits for a usage budget that
+6. Work one slice at a time on the bounded host; multi-agent fan-out waits for a usage budget that
    carries it.
 
 Completed-wave details and the former master roadmap's capability-by-capability ledger are retained

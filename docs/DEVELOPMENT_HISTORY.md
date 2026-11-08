@@ -289,6 +289,31 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-08 — FOUNDATION-SIZING: the foundation phase reviewed and sized, and the repository
+  set up for the next session.** A review of `main` after #825:
+  - The hybrid database's S1–S19 and P1–P4 have landed.
+  - The Unicode roadmap's UC-1–UC-11 have not started.
+  - None of the SLM roadmap's SLM-1–SLM-13 has landed. The native decoder trainer and the train
+    rail it builds on have, and the roadmap's §1.2 had not caught up, so it is corrected.
+
+  The master roadmap's new §3.1 sets the phase's exit at fifteen slices:
+  - UC-1–UC-8, the Latin stage. UC-8 is the last mechanism slice and SLM-1's prerequisite, and
+    UC-9–UC-11 add repertoire.
+  - SLM-2–SLM-5, the database's lookup.
+  - SLM-1, SLM-6 and SLM-7, the initial lessons.
+
+  The rest interleaves with the drivers afterwards. §3.2 records when work returns to drivers:
+  - The first driver block runs on a schedule.
+  - After it, a measured bottleneck goes to the layer that owns it. In-process memory pressure
+    is user-space work, which the NDT ladder has been doing.
+
+  §11's first item now names UC-1. `AGENTS.md`, the systems-engineer skill and the digest's
+  curated block point there.
+
+  #825's outcome on its last two runs: one run per change, all 39 jobs green. The CMake cells
+  took 12.6/12.5/10.3 min (run 3) and 18.4/15.1/6.0 min (run 4) for gcc/clang/clang23, against
+  47.8/27.8/32.3 before. The wall time was 20.6 and 28.4 min against 64 min run twice.
+
 - **2026-11-07 — BER-DER-ENVELOPE: the BER-before-DER encode claim judged on lower envelopes.**
   `test_ber_encodes_faster_than_der_because_the_standard_says_it_may` compared two independent
   medians taken among nine interleaved candidates, and once, on a shared runner, BER's read

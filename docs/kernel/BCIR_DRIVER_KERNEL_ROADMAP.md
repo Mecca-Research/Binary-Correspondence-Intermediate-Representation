@@ -582,6 +582,22 @@ and stand up the small-language-model laboratory with its initial lessons
 the one-way corpus law (`AGENTS.md`); the deep-learning and modeling work then grows alongside the
 drivers below, each driver supplying traces and workload profiles (§4.7).
 
+**The phase's size and exit** are set in the master roadmap's §3.1 (2026-11-08). They are fifteen
+slices, after which row 1 below resumes:
+- the database S1–S19 have landed;
+- Unicode UC-1–UC-8, the Latin stage, with UC-3 the database's second table;
+- SLM-2–SLM-5, the rest of the hybrid database;
+- SLM-1, SLM-6 and SLM-7, the laboratory's initial lessons.
+
+UC-9–UC-11 and SLM-8–SLM-13 then interleave with these rows one slice at a time.
+
+Rows 1–3 run on a schedule, not on a model's bottleneck: they are preconditions of everything
+after them. Past them, a measured bottleneck goes to the layer that owns it. In-process memory
+pressure is user-space work, as the native trainer's NDT-PAGES, NDT-MEM, ATT-CONTIG and KSPLIT
+slices show. Device transfers, datasets past the page cache, page and NUMA policy beyond `madvise`,
+inter-process copies, interrupt jitter and missing counters are this roadmap's (master roadmap
+§3.2).
+
 The device order is dependency order — time, then memory ownership, then queues, then the bus,
 then storage, then firmware and trust, then the rest of the platform, then compute:
 

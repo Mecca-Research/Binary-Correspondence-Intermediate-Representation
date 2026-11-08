@@ -768,7 +768,8 @@ them (thermal/power/clock optimization, adaptive unrolling, best-ISA selection).
   hybrid SQL/vector lookup — is planned in
   [`training/SLM_ROADMAP.md`](../../training/SLM_ROADMAP.md) on
   [`training/UNICODE_ROADMAP.md`](../../training/UNICODE_ROADMAP.md); it stays
-  in the laboratory and changes no frozen ABI.
+  in the laboratory and changes no frozen ABI. The master roadmap's §3.1 (2026-11-08) puts its
+  first part, UC-1–UC-8 and SLM-1–SLM-7, in the foundation phase before the driver order resumes.
 - **F2 — The file-creation backbone.** Keep object/file production on the resident
   ELF/DWARF/BFD/LLVM ecosystem behind
   [`BCIR_NATIVE_OBJECT_GATE.md`](../BCIR_NATIVE_OBJECT_GATE.md). BCIR may plan section

@@ -316,6 +316,20 @@ a signed plan, and the portfolio's missing regions, objectives and bounds); Stag
 physical evidence; whole-decoder Q4, GPU execution, production serving. Check `REPO_CURRENT_STATE_AUDIT.md` before promising
 any of these exists.
 
+**Since then (2026-11-08).**
+- UART U0–U2 landed (#823), with U0 on every rail.
+- CI runs once per change, its CMake cells halved (#825).
+- The next build phase is the **foundation phase**: fifteen slices before the driver order
+  resumes, sized in `docs/BCIR_MASTER_ROADMAP.md` §3.1 and queued in its §11.
+  - Unicode UC-1–UC-8, starting at UC-1.
+  - The database's next slices: UC-3, then SLM-2–SLM-5. Its S1–S19 have landed.
+  - The SLM's initial lessons: SLM-1, SLM-6 and SLM-7.
+- §3.2 there decides when work returns to drivers. The first driver block (timers, DMA, virtio)
+  runs on a schedule. After it, a measured bottleneck goes to the layer that owns it, and
+  in-process memory pressure stays user-space work.
+- The native decoder trainer (`runtime/c/bcir_decoder_train.c`) and the train rail have landed;
+  `research/BCIR_TRAINING_ACCELERATION_ROADMAP.md` owns that ladder.
+
 ## 10. Writing it down
 
 - PR titles carry the slice ID; bodies end with Verification (exact outputs).
