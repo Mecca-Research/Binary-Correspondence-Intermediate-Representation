@@ -219,6 +219,29 @@ How the program goals map onto this order:
   - SLM-12: no reported number without its digests;
   - StreamPack and BCAB provenance throughout.
 
+### 3.3 One system: database, Unicode and the laboratory as AI processes
+
+The three foundation programs are one system, not three. [`BCIR_AI_SYSTEM_ROADMAP.md`](BCIR_AI_SYSTEM_ROADMAP.md)
+(2026-11-08, design) defines it:
+- **One knowledge plane.** A knowledge epoch binds every generation a result read: the Unicode
+  version, the catalogs, the sets, the tokenizer, the projection, the checkpoint and the plan
+  baseline. Every certificate names one epoch.
+- **One planner and one artifact path for every workload.** Lookups and text processing take the
+  path the training step already takes (PX-2b): K_BCIR plan → GEM+ schedule → StreamPack →
+  executor.
+- **What K_BCIR and GEM+ need.** No new laws and no new cost axes. They need new claim families,
+  the landed SDF, timed and expectation regions (G22–G24) put to work on the pipeline between
+  services, and six algorithms beyond the Unicode roadmap and the ML system: joins, batched
+  lookup, a fused native text pipeline, a priced cache, channel-mode selection and stream
+  generations.
+- **The OS model.** Eight service roles (text, store, train, infer, plan, verify, ledger, agent)
+  run on the IPC program's four primitives. Control records travel on SPSC rings; generations
+  are mapped read-only; batch buffers move by lease. The workloads are learning-database building
+  and query, language processing and agent coding.
+
+Its slices, AIS-1 to AIS-9, start after §3.1's exit and alternate with the driver order. AIS-1 to
+AIS-6 need no driver; AIS-7 waits for DMA's lease laws.
+
 ## 4. Active workstreams
 
 ### 4.1 Language and compiler rail
@@ -497,7 +520,7 @@ measurement validity, toolchain/profile identity, and honest degraded/skipped re
 
 | Location | Owns |
 |---|---|
-| `docs/` | Normative law, master execution order, current state, parity, releases, onboarding, history, repository structure |
+| `docs/` | Normative law, master execution order, current state, parity, releases, onboarding, history, repository structure, the AI system (database, Unicode and laboratory as one system and its OS processes) |
 | `docs/kernel/` | Drivers, RuntimeChannel/UAPI/IPC, StreamPack, hardware validation, telemetry, channels, SYCL, firmware and the root of trust |
 | `docs/machine-learning/` | ML/AI roadmap, model/reference ladder, language placement, model provenance, hosted-AI integration research |
 | `docs/languages/` | C frontend/memory/C++ boundary and future language-specific frontend/lowering plans |
@@ -514,15 +537,18 @@ History explains past decisions but does not reopen superseded sequencing.
    §10). Then UC-2 … UC-8, then SLM-1 … SLM-7
    ([`training/SLM_ROADMAP.md`](../training/SLM_ROADMAP.md) §6). Each slice is one PR with its
    slice id in the title and RED before GREEN, gated where that roadmap's §11 or §10 places it.
-   All of it stays under the one-way corpus law (`AGENTS.md`). UART U0–U2 and the CI work (#823,
-   #825) have landed; keep CI's gates green on the runner release its baseline toolchain comes
+   All of it stays under the one-way corpus law (`AGENTS.md`). Build each slice so that the
+   unified system of §3.3 can use it: generations and digests, not ad-hoc state. UART U0–U2 and
+   the CI work (#823, #825) have landed; keep CI's gates green on the runner release its baseline toolchain comes
    from (Ubuntu 24.04: Clang 18, GCC 13, Python 3.12).
 2. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
    twin's form), the one UART slice left open across rails. It can ride between foundation slices.
 3. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
    event timers and DMA, whose blueprints exist. Alternate them one slice at a time with §3.1's
    deferred Unicode and SLM slices, and grow the deep-learning and modeling work with each
-   driver's traces. A measured bottleneck goes to the layer that owns it (§3.2).
+   driver's traces. A measured bottleneck goes to the layer that owns it (§3.2). The AI system's
+   AIS-1 … AIS-9 ([`BCIR_AI_SYSTEM_ROADMAP.md`](BCIR_AI_SYSTEM_ROADMAP.md) §6–§7) take alternate
+   turns too.
 4. Keep the IPC and firmware programs at their plans until their rows come up; start BCIR-Linux
    only at §6.4's entry criteria, with the owner creating the repository.
 5. Keep HAM hardware work at the documented HMF-D0–D5 gates and physical HAM and native HAM/SYCL

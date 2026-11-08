@@ -35,6 +35,12 @@
 > rail have landed, so the hosted slices now have a deterministic native trainer to
 > be measured against. Their own mechanisms (the tree mask, the recursive cell, the
 > router) are not in it: it trains the dense, causal Llama/SwiGLU decoder.
+>
+> **How the lab joins the database and Unicode as one system** is
+> `docs/BCIR_AI_SYSTEM_ROADMAP.md` (design). SLM-2's `generation` rule generalizes
+> to a knowledge epoch every certificate names (AIS-1). SLM-6's verify callbacks
+> become the agent-coding loop's verify service (AIS-8). The L0–L3 ladder of §2.11
+> becomes the placement of the infer and store roles.
 
 ## 0. The proposal, restated with its claims labeled
 

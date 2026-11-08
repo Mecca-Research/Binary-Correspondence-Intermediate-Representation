@@ -41,7 +41,8 @@ whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.
 **The next build phase starts at the master roadmap's §11, item 1**
 ([`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md)): the foundation phase that §3.1
 sizes, beginning with Unicode UC-1, before the driver order resumes. §3.2 says what sends work back
-to drivers. Read `.claude/context/BCIR_DIGEST.md` first.
+to drivers; §3.3 says how the database, Unicode and the laboratory become one system. Read
+`.claude/context/BCIR_DIGEST.md` first.
 
 - Changing the IR semantics/optimizer → `bcir/` (with parity in `mlir/`).
 - Building the Unicode 17.0 database (UC-n) → [`training/UNICODE_ROADMAP.md`](training/UNICODE_ROADMAP.md)
@@ -58,6 +59,10 @@ to drivers. Read `.claude/context/BCIR_DIGEST.md` first.
 - Building the small-language-model laboratory (SLM-n) → [`training/SLM_ROADMAP.md`](training/SLM_ROADMAP.md)
   §6. Each slice names the UC-n it needs; nothing starts before UC-3. Its check groups are sections
   of `verify_unicode.py`, and its faults go in `tools/testing/faults/training-slm.json`.
+- Joining the database, Unicode and the laboratory into one system, or defining the AI workloads'
+  OS processes and their IPC (AIS-n) → [`docs/BCIR_AI_SYSTEM_ROADMAP.md`](docs/BCIR_AI_SYSTEM_ROADMAP.md)
+  §6. Its slices start after the foundation phase's exit. Each engine a service runs gets an IR-side
+  twin whose parity gate lives corpus-side, so the one-way corpus law holds.
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/` and the `mlir` preset's
   `ctest -L mlir`, whose lit suite runs every fixture's RUN lines as written: `mlir/lit.cfg.py`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).

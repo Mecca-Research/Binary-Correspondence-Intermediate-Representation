@@ -18,6 +18,13 @@
 > tables pass the ~50,000 rows at which approximate nearest neighbours reopens,
 > and the second table measures the catalog's declared ceilings. UC-10 records
 > both as measurements.
+>
+> **The database is one part of a system** (`docs/BCIR_AI_SYSTEM_ROADMAP.md`,
+> design). A lookup becomes a K_BCIR-planned StreamPack program like the training
+> step, matched plan for plan by `training/tools/plan.py` (AIS-2). It gains batched lookup
+> and a priced result cache (AIS-3) and equi-joins over the catalog (AIS-4). Each
+> is an IR-side twin of this rail, its parity gate held here. This tree remains
+> the oracle.
 
 ## The question
 

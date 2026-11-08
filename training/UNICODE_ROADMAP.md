@@ -30,6 +30,12 @@
 > UC-1's fetch needs `www.unicode.org` reachable from the session: the default
 > cloud environment's proxy refuses it, and this repository's own environment
 > allows it.
+>
+> **The Unicode generation is the first member of the system's knowledge epoch**
+> (`docs/BCIR_AI_SYSTEM_ROADMAP.md` §3.1, design). After UC-8 and SLM-1, AIS-5
+> builds a fused native text pipeline from the generation's tables: UTF-8
+> validation, NFC, UAX #29 and byte_bpe.v2 in one pass in C. It is held
+> byte-identical to this roadmap's oracles on their conformance files.
 
 ## 1. The three questions, answered
 

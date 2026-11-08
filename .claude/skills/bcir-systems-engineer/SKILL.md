@@ -329,6 +329,11 @@ any of these exists.
   in-process memory pressure stays user-space work.
 - The native decoder trainer (`runtime/c/bcir_decoder_train.c`) and the train rail have landed;
   `research/BCIR_TRAINING_ACCELERATION_ROADMAP.md` owns that ladder.
+- `docs/BCIR_AI_SYSTEM_ROADMAP.md` (master §3.3) makes the database, Unicode and the lab one
+  system: a knowledge epoch, one K_BCIR → GEM+ → StreamPack path for every workload, and eight
+  service roles on the IPC primitives. Its AIS-1–AIS-9 follow the foundation exit. When building
+  a UC or SLM slice, keep its state in generations and digests so the system can bind them. A
+  service runs an IR-side twin of a corpus engine, and the twin's parity gate lives corpus-side.
 
 ## 10. Writing it down
 

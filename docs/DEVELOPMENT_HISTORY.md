@@ -289,6 +289,29 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-08 — AIS-0: the database, Unicode and the laboratory designed as one system.**
+  `docs/BCIR_AI_SYSTEM_ROADMAP.md` answers how the three foundation programs work together:
+  - **One knowledge plane.** A knowledge epoch binds every generation a result read, declared in
+    `ExecutionScopeV1`'s existing `G` component. SLM-2's pairwise `generation` rule becomes its
+    special case.
+  - **One planner and artifact path.** Lookups and text processing take the training step's path
+    (PX-2b).
+  - **K_BCIR and GEM+.** No new law and no new axis. New claim families; the landed regions put to
+    work (G22 expectation for a cache, G23/G24 SDF and max-plus for the service pipeline, G25/G26
+    for scans); `fabric` and `sync` populated across processes.
+  - **Six algorithms beyond the Unicode roadmap and the ML system.** Equi-joins with exact sizes,
+    batched lookup, a fused native text pipeline, a priced cache, channel-mode selection and
+    stream generations.
+  - **Eight service roles on the IPC program's four primitives.** Control records (G14) on SPSC
+    rings (G15): v1's six kinds already move an epoch and lease a buffer, and request and
+    completion kinds are appended in a v2. Generations are mapped read-only; buffers move by
+    lease. Each role is a JIT-microkernel catalog entry.
+
+  AIS-1–AIS-9 follow the foundation phase's exit and alternate with the driver order. AIS-1–AIS-6
+  need no driver, and AIS-7 waits for DMA's lease laws. The master roadmap gains §3.3; `AGENTS.md`,
+  the digest, the three training roadmaps, the driver roadmap's §4.7 and the ML roadmap's §8.6
+  point to it.
+
 - **2026-11-08 — FOUNDATION-SIZING: the foundation phase reviewed and sized, and the repository
   set up for the next session.** A review of `main` after #825:
   - The hybrid database's S1–S19 and P1–P4 have landed.

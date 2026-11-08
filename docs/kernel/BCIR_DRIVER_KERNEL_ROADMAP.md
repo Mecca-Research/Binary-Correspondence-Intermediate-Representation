@@ -469,6 +469,15 @@ at the established quiescent boundary. No IPC, driver or model benchmark is adde
 roadmap text. The [full qualification specification](../research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)
 maps these experiments onto existing OT/SI/BG/D/M gates.
 
+[`BCIR_AI_SYSTEM_ROADMAP.md`](../BCIR_AI_SYSTEM_ROADMAP.md) (design, 2026-11-08) names the
+processes these workloads run as: eight service roles on §7.4's four primitives, each a §7.5
+catalog entry. The roles are text, store, train, infer, plan, verify, ledger and agent. The
+corpus tools stay outside the IR and kernel as the oracle. A service runs an IR-side twin of an
+engine, held equal by a parity gate on the corpus side. Its AIS-6 and AIS-7 are the first
+non-driver users of rungs I1 and I2. Their inter-process copy and wake-up traces are workload
+evidence that row 7 of §5.6 weighs beside the UART, virtio and NVMe traces. They do not change
+§7.4's freeze condition: native IPC v1 still freezes on the UART and virtio-blk traces.
+
 ## 5. Driver maturity and build order
 
 ### 5.1 The D0–D7 maturity ladder
