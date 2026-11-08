@@ -39,12 +39,19 @@ whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.
 ## Where to work
 
 **The next build phase starts at the master roadmap's §11, item 1**
-([`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md)): the foundation phase that §3.1
-sizes, beginning with Unicode UC-1, before the driver order resumes. §3.2 says what sends work back
-to drivers; §3.3 says how the database, Unicode and the laboratory become one system. Read
-`.claude/context/BCIR_DIGEST.md` first.
+([`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md)): the interface phase that §3.4
+sizes, beginning with IF-1, the real-world ASN.1 grammar corpus. The foundation phase that §3.1
+sizes follows it, beginning with Unicode UC-1, and then the driver order resumes. §3.2 says what
+sends work back to drivers; §3.3 says how the database, Unicode and the laboratory become one
+system. Read `.claude/context/BCIR_DIGEST.md` first.
 
 - Changing the IR semantics/optimizer → `bcir/` (with parity in `mlir/`).
+- Finishing the ASN.1 compiler backend, the peer notations and formats, the cryptographic
+  standards or networking (IF-n) → [`docs/BCIR_INTERFACE_PHASE_ROADMAP.md`](docs/BCIR_INTERFACE_PHASE_ROADMAP.md)
+  §3. ASN.1 code is in `bcir/asn1/` (the generated-C backend is `cgen.py`), its C twins in
+  `runtime/c/`. Review each corpus, test suite or comparator's license before use, and fetch by
+  pinned digest where redistribution is unclear. No claim that ASN.1 is faster or smaller than
+  another format passes outside a measurement record unless that roadmap's §4.3 rule holds.
 - Building the Unicode 17.0 database (UC-n) → [`training/UNICODE_ROADMAP.md`](training/UNICODE_ROADMAP.md)
   §10. Its paths are fixed in §5.5:
   - the rail under `training/tools/unicode/`;

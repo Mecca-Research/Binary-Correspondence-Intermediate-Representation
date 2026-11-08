@@ -583,7 +583,11 @@ laws that refuse before cost, and discovery that may veto a record but never ste
 ### 5.6 The buildout order after UART (recommended, 2026-11-07)
 
 UART U0–U2 have landed with U0 on every rail. Before deep driver and kernel work, the
-**foundation phase** runs first, by the owner's direction: mature the hybrid database (the
+**interface phase** runs first: the ASN.1 compiler backend, peer notations and formats,
+cryptographic standards and networking over hosted transports
+([`BCIR_INTERFACE_PHASE_ROADMAP.md`](../BCIR_INTERFACE_PHASE_ROADMAP.md), master roadmap §3.4).
+After it, the
+**foundation phase** runs, also by the owner's direction: mature the hybrid database (the
 retrieval rail's S-ladder, [`training/DATABASE_ROADMAP.md`](../../training/DATABASE_ROADMAP.md)),
 build the Unicode infrastructure ([`training/UNICODE_ROADMAP.md`](../../training/UNICODE_ROADMAP.md))
 and stand up the small-language-model laboratory with its initial lessons
@@ -591,8 +595,8 @@ and stand up the small-language-model laboratory with its initial lessons
 the one-way corpus law (`AGENTS.md`); the deep-learning and modeling work then grows alongside the
 drivers below, each driver supplying traces and workload profiles (§4.7).
 
-**The phase's size and exit** are set in the master roadmap's §3.1 (2026-11-08). They are fifteen
-slices, after which row 1 below resumes:
+**The foundation phase's size and exit** are set in the master roadmap's §3.1 (2026-11-08). They
+are fifteen slices, after which row 1 below resumes:
 - the database S1–S19 have landed;
 - Unicode UC-1–UC-8, the Latin stage, with UC-3 the database's second table;
 - SLM-2–SLM-5, the rest of the hybrid database;
@@ -614,7 +618,7 @@ then storage, then firmware and trust, then the rest of the platform, then compu
 |---|---|---|---|---|
 | 1 | **Event timers** ([blueprint](BCIR_EVENT_TIMER_BLUEPRINT.md)) | Every later driver needs deadlines, timeouts and timestamps; HPET and the RTC are small MMIO devices a simulator pins exactly | UART's model/law/sim pattern | T-law sim parity (D1) |
 | 2 | **DMA and the ownership engine** ([blueprint](BCIR_DMA_BLUEPRINT.md)) | The buffer lease of §5.5 is the precondition of every queue driver, IPC shared region and HAM transfer | timers (completion deadlines) | lease laws refuse unmapped/unauthorized/stale access (D1) |
-| 3 | **virtio-console, virtio-blk** (§5.2) | The deterministic queue/DMA proof UAPI v1 needs (M4, M5) | DMA, timers | QEMU lifecycle and reset parity (D2–D3) |
+| 3 | **virtio-console, virtio-blk**, then **virtio-net** (§5.2) | The deterministic queue/DMA proof UAPI v1 needs (M4, M5). virtio-net, on the same virtqueue proof, is native networking's device: packet rings, backpressure, multi-queue. The interface phase's packet, DNS, HTTP and TLS engines (IF-24, IF-25) run over it once a native stack holds DMA leases. | DMA, timers; virtio-net after virtio-blk | QEMU lifecycle and reset parity (D2–D3); for virtio-net, QEMU packet loopback with backpressure |
 | 4 | **ACPI static tables** (no AML) | MCFG, MADT, SPCR, DMAR/IVRS, SRAT/SLIT/HMAT describe the bus, the interrupt controllers, the IOMMUs and the memory topology the next rows read | the verified-parser kernels | tables parsed into the typed registry and validated (§5.7) |
 | 5 | **PCIe** | Enumeration, capabilities, BARs, MSI/MSI-X, IOMMU scopes; the fabric NVMe, USB and accelerators sit on | ACPI, DMA | QEMU enumeration and malformed-capability refusal |
 | 6 | **NVMe** | The admin/I-O submission and completion queues are the SQ/CQ ring at production scale | PCIe, DMA, timers | QEMU NVMe boot read, wraparound, timeout, reset |

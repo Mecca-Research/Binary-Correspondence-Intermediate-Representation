@@ -47,9 +47,10 @@ BCIR, ffasn1 and asn1c have no BER-specific *encoder* — all three emit DER, wh
 BER. asn1scc's is a genuine BER encoder: `BerEncodeLengthStart`/`BerEncodeLengthEnd` write
 X.690 §8.1.3.6's indefinite-length form, which DER forbids.
 
-**BCIR is the only one of the four with X.692 ECN**, and the only one with aligned PER *and*
-JER *and* OER together. asn1c's aligned-PER gap is notable given how much of the telecom
-corpus it is used on.
+**BCIR is the only one of the four with X.692 ECN.** It shares aligned PER, JER and OER
+together with ffasn1 alone, as the table shows (an earlier version of this sentence said BCIR
+was the only one; the table contradicted it). asn1c's aligned-PER gap is notable given how much
+of the telecom corpus it is used on.
 
 ## 3. Schema language coverage
 
@@ -208,6 +209,14 @@ as the one place where another compiler's assurance story reaches somewhere BCIR
 into the generated encoder's own control flow.
 
 ## 6. What to import, ranked
+
+> **Scheduled (2026-11-08).** None of the seven items below had landed by 2026-11-08. They are
+> the interface phase's stage A ([`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md)
+> §3):
+> - items 1–3 are IF-1–IF-3;
+> - items 4–7 are IF-7.
+>
+> IF-4–IF-6 carry `cgen` from §5.7's study scale to a production backend.
 
 **1. asn1c's and asn1scc's grammar corpora, as front-end conformance input.** Highest value per
 unit of work and no architectural commitment: vendor a set of real protocol modules and assert

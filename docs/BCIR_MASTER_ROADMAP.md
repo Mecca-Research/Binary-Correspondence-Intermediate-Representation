@@ -106,7 +106,8 @@ flowchart TD
     F --> G
     G --> H["BCIR-Linux targeted experiments"]
     G --> I["Native adapter and slim IPC"]
-    D --> P["Foundation phase: hybrid database, Unicode, SLM laboratory"]
+    D --> X["Interface phase: ASN.1 compiler backend, notations, formats, crypto, networking"]
+    X --> P["Foundation phase: hybrid database, Unicode, SLM laboratory"]
     P --> F
     P --> T["Event timers, DMA, ACPI, PCIe, NVMe"]
     T --> I
@@ -118,8 +119,9 @@ flowchart TD
     K --> L["Scalable model and accelerator packages"]
 ```
 
-After UART, the foundation phase runs before deep driver and kernel work, by the owner's
-direction: the hybrid database, the Unicode infrastructure and the small-language-model laboratory
+After UART, two phases run before deep driver and kernel work, by the owner's direction. First
+the **interface phase** (§3.4): the ASN.1 compiler's backend, the peer notations and formats, the
+cryptographic standards and networking over hosted transports. Then the **foundation phase**: the hybrid database, the Unicode infrastructure and the small-language-model laboratory
 with its initial lessons (the corpus-side roadmaps under `training/`); the device order that
 follows is the driver roadmap's §5.6. §3.1 sizes the phase and §3.2 says what sends the work back
 to drivers.
@@ -129,6 +131,8 @@ machinery. Neither may bypass the other's prerequisites: model acceleration need
 packages; learned driver optimization needs stable direct behavior and trace identity.
 
 ### 3.1 The foundation phase, sized (review of 2026-11-08, `main` after #825)
+
+It runs after §3.4's interface phase. The sizing below is unchanged by that order.
 
 | Program | Ladder | Landed | Open |
 |---|---|---|---|
@@ -241,6 +245,25 @@ The three foundation programs are one system, not three. [`BCIR_AI_SYSTEM_ROADMA
 
 Its slices, AIS-1 to AIS-9, start after §3.1's exit and alternate with the driver order. AIS-1 to
 AIS-6 need no driver; AIS-7 waits for DMA's lease laws.
+
+### 3.4 The interface phase comes first (2026-11-08)
+
+The database, the Unicode work and the laboratory went ahead of the compiler backend. The owner's
+direction is to finish the backend first. [`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md)
+sizes the phase at twenty-five slices, IF-1 to IF-25, in six stages:
+
+| Stage | Slices | What it finishes |
+|---|---|---|
+| A. The ASN.1 compiler | IF-1–IF-7 | A real-world grammar corpus; the three refused X.680 constructs; schema-driven random values; `cgen` from study scale to production (`DEFAULT`, extensions, `SET`, character strings, open types, DER/BER and aligned PER), selectable under K_BCIR's certificate; a CLI, a bit-layout report and a security-regression corpus |
+| B. Qualification | IF-8, IF-9 | Independent comparators and five whole-process workloads on x86-64 and aarch64, and the rule for when "faster" or "smaller" may be claimed. The ITS result stays a scoped `ratio` until then. |
+| C. JSON | IF-10 | The minimal compiled JSON investigation, ending in GO or STOP |
+| D. Notations and formats | IF-11–IF-18 | The contract registry and native BCIR JSON, ABNF, CSN.1, XDR, CBOR/CDDL, Protocol Buffers, XML 1.0, SDXF and MessagePack |
+| E. Cryptographic standards | IF-19–IF-23 | A provider contract with verified and reference providers; X.509 path validation; CMS and PKCS #1/#8/#10; S/MIME 4.0; a sans-I/O TLS 1.3 engine |
+| F. Networking | IF-24, IF-25 | Packet, checksum and DNS codecs; hosted UDP/TCP, HTTP/1.1 and TLS |
+
+Its slices that need Unicode run ASCII-first with declared refusals, so the phase does not wait on
+UC-n. Native networking needs virtio-net and DMA leases, so it joins the driver order (driver
+roadmap §5.6, row 3).
 
 ## 4. Active workstreams
 
@@ -402,7 +425,8 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | C/runtime memory discipline | Landed baseline | Strict hosted/freestanding builds, allocation-failure campaign, sanitizers, idempotent teardown |
 | Pre-driver machine edge | Partial landed | Ordinary x86 edge and MC1/MC2 baselines; paranoid/reset and hardware binding remain explicit |
 | UART direct package | Partial landed | U0 on every rail, U1 on the oracle, U2's polled driver against the simulated 16550 linked from both rails' emit; U1's law-rail half and the event-driven slices remain for D0–D2's cancellation, saturation and replay |
-| Foundation phase | Open, before deep driver work; sized in §3.1 (database S1–S19 landed; Unicode and the SLM's own slices not started) | The fifteen slices of §3.1, each at its own roadmap's gates: UC-1–UC-8 (UC-3 the database's second table), SLM-2–SLM-5 (the rest of the database), SLM-1, SLM-6, SLM-7 (the initial lessons) |
+| Interface phase | Open, first: before the foundation phase; sized in §3.4 (ASN.1 encoding rules and ECN landed; `cgen` study-scale; no peer format, CMS/PKCS/S/MIME/TLS or networking) | The twenty-five slices IF-1–IF-25 of [`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md), each at its own gate |
+| Foundation phase | Open, after the interface phase and before deep driver work; sized in §3.1 (database S1–S19 landed; Unicode and the SLM's own slices not started) | The fifteen slices of §3.1, each at its own roadmap's gates: UC-1–UC-8 (UC-3 the database's second table), SLM-2–SLM-5 (the rest of the database), SLM-1, SLM-6, SLM-7 (the initial lessons) |
 | UART Linux adapter | Open | D3 direct/adapter behavioral parity and unload/restart safety |
 | virtio queue proof | Open | Character/event plus block/DMA lifecycle, reset and saturation evidence |
 | BCIR UAPI v1 | Gated | UART + virtio-blk evidence, generated ABI tests, compatibility and failure matrix |
@@ -520,7 +544,7 @@ measurement validity, toolchain/profile identity, and honest degraded/skipped re
 
 | Location | Owns |
 |---|---|
-| `docs/` | Normative law, master execution order, current state, parity, releases, onboarding, history, repository structure, the AI system (database, Unicode and laboratory as one system and its OS processes) |
+| `docs/` | Normative law, master execution order, current state, parity, releases, onboarding, history, repository structure, the interface phase (ASN.1 backend, notations, formats, crypto standards, networking), the AI system (database, Unicode and laboratory as one system and its OS processes) |
 | `docs/kernel/` | Drivers, RuntimeChannel/UAPI/IPC, StreamPack, hardware validation, telemetry, channels, SYCL, firmware and the root of trust |
 | `docs/machine-learning/` | ML/AI roadmap, model/reference ladder, language placement, model provenance, hosted-AI integration research |
 | `docs/languages/` | C frontend/memory/C++ boundary and future language-specific frontend/lowering plans |
@@ -532,29 +556,38 @@ History explains past decisions but does not reopen superseded sequencing.
 
 ## 11. Immediate priority queue
 
-1. **Start here: the foundation phase, §3.1's fifteen slices in order.** Begin with **UC-1**, the
+1. **Start here: the interface phase, §3.4's slices in order.** Begin with **IF-1**, the real-world
+   ASN.1 grammar corpus ([`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md) §3):
+   it tells IF-2 which constructs to close. Each slice is one PR with its slice id in the title and
+   RED before GREEN. Licenses are reviewed before any corpus, test suite or comparator is used.
+   UART U0–U2 and the CI work (#823, #825) have landed. Keep CI's gates green on the runner
+   release its baseline toolchain comes from (Ubuntu 24.04: Clang 18, GCC 13, Python 3.12).
+2. **Then the foundation phase, §3.1's fifteen slices in order.** Begin with **UC-1**, the
    Unicode pins, the fetch tool and the source tree ([`training/UNICODE_ROADMAP.md`](../training/UNICODE_ROADMAP.md)
    §10). Then UC-2 … UC-8, then SLM-1 … SLM-7
    ([`training/SLM_ROADMAP.md`](../training/SLM_ROADMAP.md) §6). Each slice is one PR with its
    slice id in the title and RED before GREEN, gated where that roadmap's §11 or §10 places it.
    All of it stays under the one-way corpus law (`AGENTS.md`). Build each slice so that the
-   unified system of §3.3 can use it: generations and digests, not ad-hoc state. UART U0–U2 and
-   the CI work (#823, #825) have landed; keep CI's gates green on the runner release its baseline toolchain comes
-   from (Ubuntu 24.04: Clang 18, GCC 13, Python 3.12).
-2. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
-   twin's form), the one UART slice left open across rails. It can ride between foundation slices.
-3. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
-   event timers and DMA, whose blueprints exist. Alternate them one slice at a time with §3.1's
-   deferred Unicode and SLM slices, and grow the deep-learning and modeling work with each
-   driver's traces. A measured bottleneck goes to the layer that owns it (§3.2). The AI system's
-   AIS-1 … AIS-9 ([`BCIR_AI_SYSTEM_ROADMAP.md`](BCIR_AI_SYSTEM_ROADMAP.md) §6–§7) take alternate
-   turns too.
-4. Keep the IPC and firmware programs at their plans until their rows come up; start BCIR-Linux
+   unified system of §3.3 can use it: generations and digests, not ad-hoc state. UC-4 and UC-6
+   lift the interface phase's ASCII-first refusals when they land.
+3. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
+   twin's form), the one UART slice left open across rails. It can ride between slices of either
+   phase.
+4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
+   event timers and DMA, whose blueprints exist; virtio-net, and with it native networking, comes
+   with row 3. Alternate the drivers one slice at a time with the deferred work:
+   - the interface phase's deferred formats and protocols;
+   - §3.1's deferred Unicode and SLM slices;
+   - the AI system's AIS-1 … AIS-9 ([`BCIR_AI_SYSTEM_ROADMAP.md`](BCIR_AI_SYSTEM_ROADMAP.md) §6–§7).
+
+   Grow the deep-learning and modeling work with each driver's traces. A measured bottleneck goes
+   to the layer that owns it (§3.2).
+5. Keep the IPC and firmware programs at their plans until their rows come up; start BCIR-Linux
    only at §6.4's entry criteria, with the owner creating the repository.
-5. Keep HAM hardware work at the documented HMF-D0–D5 gates and physical HAM and native HAM/SYCL
+6. Keep HAM hardware work at the documented HMF-D0–D5 gates and physical HAM and native HAM/SYCL
    behind the resulting driver/IPC evidence, with direct/staged routing and hosted fallback
    labeled separately.
-6. Work one slice at a time on the bounded host; multi-agent fan-out waits for a usage budget that
+7. Work one slice at a time on the bounded host; multi-agent fan-out waits for a usage budget that
    carries it.
 
 Completed-wave details and the former master roadmap's capability-by-capability ledger are retained

@@ -351,8 +351,8 @@ the driver ladder (driver roadmap §5.6) and are not slices here.
 
 ## 7. Order, relative to everything else
 
-1. **Now: the foundation phase's fifteen slices** (master roadmap §3.1, starting at UC-1). AIS-0
-   is the only AIS slice in it.
+1. **Now: the interface phase** (master roadmap §3.4, starting at IF-1), **then the foundation
+   phase's fifteen slices** (§3.1, starting at UC-1). AIS-0 is the only AIS slice in either.
 2. **Then the driver order resumes** with the event timers, DMA and the virtio queue proof,
    alternating one slice at a time with AIS-1 to AIS-6. Those six need no driver; AIS-7 waits for
    DMA's lease laws.

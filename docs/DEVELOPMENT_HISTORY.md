@@ -289,6 +289,40 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-08 — INTERFACE-PHASE: the compiler backend goes first.** The owner observed that the
+  database, drivers and AI training had moved ahead of the compiler backend. A review against the
+  tree found:
+  - **The ASN.1 encoding rules and ECN are complete; the compiler is not.**
+    - The front end refuses `COMPONENTS OF`, selection types and `WITH SUCCESSORS`/`WITH DESCENDANTS`.
+    - Its real-world corpus is two PKIX modules.
+    - `bcir.asn1.cgen` is study-scale. It covers canonical OER, unaligned PER and the ITS binary
+      rule. It refuses `DEFAULT`, extensions, `SET`, `SET OF`, character strings, OBJECT
+      IDENTIFIER and BIT STRING.
+    - None of the compiler comparison's seven ranked imports had landed.
+  - **CSN.1, ABNF and the peer formats are planned, not built.** These are UDSI-2/3/6/9: SDXF,
+    XDR, Protocol Buffers, CBOR, MessagePack and general XML.
+  - **The ITS result is a scoped `ratio`.** Canonical OER was smaller and faster than BCIR's own
+    reconstruction of the binary rule, on one envelope family. That is not evidence that ASN.1
+    beats an independent codec in general.
+  - **Cryptography is SHA-256, HMAC-SHA256, Ed25519 and CRC32.** There is no CMS, PKCS, S/MIME,
+    TLS or X.509 path validation.
+  - **There is no networking code.** virtio-net was in the driver evidence sequence but not the
+    build order.
+
+  `docs/BCIR_INTERFACE_PHASE_ROADMAP.md` sizes the phase at IF-1–IF-25 in six stages:
+  - A: the ASN.1 compiler;
+  - B: qualification against independent comparators, with a written claim rule;
+  - C: the minimal compiled JSON investigation, four hypotheses and a GO/STOP;
+  - D: notations and formats;
+  - E: cryptographic standards over verified and reference providers;
+  - F: networking over hosted transports.
+
+  Unicode-dependent pieces run ASCII-first with declared refusals. The master roadmap gains §3.4
+  and puts the phase first in §11, ahead of the foundation phase. virtio-net joins the driver
+  order's row 3. UC-6's UTS #46 algorithm moves IR-side beside UC-4's. The compiler comparison's
+  claim that BCIR alone had aligned PER, JER and OER together is corrected: its own table shows
+  ffasn1 has all three.
+
 - **2026-11-08 — AIS-0: the database, Unicode and the laboratory designed as one system.**
   `docs/BCIR_AI_SYSTEM_ROADMAP.md` answers how the three foundation programs work together:
   - **One knowledge plane.** A knowledge epoch binds every generation a result read, declared in

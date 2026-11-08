@@ -24,7 +24,9 @@
 > UC-10's Han tables raise the row count about a hundredfold. That meets the
 > catalog's declared ceilings and `DATABASE_ROADMAP.md`'s reopening condition for
 > approximate nearest neighbours (about 50,000 rows), a decision UC-10 measures
-> rather than assumes. **The next session starts at UC-1 (§10).** The
+> rather than assumes. **This roadmap starts at UC-1 (§10)** once the interface
+> phase (`docs/BCIR_INTERFACE_PHASE_ROADMAP.md`) has run; that phase goes first
+> in the master order. The
 > interpreters the suite runs carry three different `unidata_version`s today:
 > 14.0 on 3.11, 15.0 on 3.12, 17.0 on 3.15. That is the drift UC-7 removes.
 > UC-1's fetch needs `www.unicode.org` reachable from the session: the default
@@ -451,6 +453,7 @@ built over one generation cannot serve another; the check is structural.
 | `training/UNICODE_LANGREF.md` | the normative document (from UC-1 on) | yes |
 | `build/training/unicode/…` | chunks, catalog set, generations, `records.der`, sets | no — generated |
 | `bcir/asn1/BCIR-Unicode.asn1`, `bcir/asn1/unicode_record.py` | the DER module and its hand-bound twin (UC-8) | yes |
+| `bcir/hosted/training/unicode_idna.py` | the one UTS #46 and RFC 3492 Punycode implementation, IR-side because the interface phase's protocols need it; `training/` imports it, never the reverse (UC-6) | yes |
 | `bcir/hosted/training/unicode_normalize.py` | the one UAX #15 implementation, dependency-free, reading the generated tables; `training/` imports it, never the reverse (UC-4, §8) | yes |
 | `bcir/hosted/training/unicode_tables.py` (generated, Latin-stage sized) and the Latin record fixture | the package-data tables `bcir/` may use without importing `training/` (UC-7) | yes — generated, digest-recorded |
 | `tools/testing/faults/training-unicode.json` | the RED-sweep fault table | yes |
@@ -792,6 +795,12 @@ test alone cannot see a uniform shift, which is why the witness exists).
 ### UC-6 — UTS #39 and UTS #46, with Punycode
 
 `security.py` and `idna.py` (§6.3–6.4), their columns, and the RFC 3492 codec.
+
+*Placement (2026-11-08).* The interface phase's protocol code needs UTS #46 and Punycode IR-side
+(`docs/BCIR_INTERFACE_PHASE_ROADMAP.md` §2): domain names in X.509, DNS, HTTP and TLS. So the
+algorithm lives beside UC-4's, in `bcir/hosted/training/unicode_idna.py`, for the same reason
+(§8). `idna.py` stays the table builder and gate owner that imports it, as `normalize.py` is for
+UC-4, and the catalog columns stay corpus-side.
 
 *Gate:* check group `security` — the summary regenerates from the source
 table; every pair in `confusables.txt` shares a `confusable_class`; check group

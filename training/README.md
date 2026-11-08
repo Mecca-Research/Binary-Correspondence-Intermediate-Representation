@@ -42,7 +42,8 @@ hybrid SQL/vector lookup is [`SLM_ROADMAP.md`](SLM_ROADMAP.md); it depends on
 the database and the database does not depend on it. Neither has landed a slice.
 How much of each runs before the driver work resumes is sized in
 [`docs/BCIR_MASTER_ROADMAP.md`](../docs/BCIR_MASTER_ROADMAP.md) §3.1: UC-1 to
-UC-8, then SLM-1 to SLM-7, starting at UC-1.
+UC-8, then SLM-1 to SLM-7, starting at UC-1. That phase follows the interface
+phase (§3.4 there), which finishes the compiler backend first.
 
 A subject brings its own material and its own gates; it does not bring its own
 grader. Grading, dataset export and bounded tool execution live in

@@ -317,10 +317,15 @@ physical evidence; whole-decoder Q4, GPU execution, production serving. Check `R
 any of these exists.
 
 **Since then (2026-11-08).**
+- **The interface phase runs first** (`docs/BCIR_INTERFACE_PHASE_ROADMAP.md`, master §3.4). It
+  finishes the compiler backend before the database, Unicode and laboratory work: IF-1–IF-25,
+  from the ASN.1 grammar corpus and `cgen` to production, through qualification against
+  independent comparators, peer formats and cryptographic standards, to networking over hosted
+  transports. Start at IF-1. Claims that ASN.1 is faster or smaller follow its §4.3 rule.
 - UART U0–U2 landed (#823), with U0 on every rail.
 - CI runs once per change, its CMake cells halved (#825).
-- The next build phase is the **foundation phase**: fifteen slices before the driver order
-  resumes, sized in `docs/BCIR_MASTER_ROADMAP.md` §3.1 and queued in its §11.
+- After it comes the **foundation phase**: fifteen slices before the driver order resumes,
+  sized in `docs/BCIR_MASTER_ROADMAP.md` §3.1 and queued second in its §11.
   - Unicode UC-1–UC-8, starting at UC-1.
   - The database's next slices: UC-3, then SLM-2–SLM-5. Its S1–S19 have landed.
   - The SLM's initial lessons: SLM-1, SLM-6 and SLM-7.
