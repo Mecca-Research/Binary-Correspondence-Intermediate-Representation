@@ -322,6 +322,12 @@ any of these exists.
   from the ASN.1 grammar corpus and `cgen` to production, through qualification against
   independent comparators, peer formats and cryptographic standards, to networking over hosted
   transports. Start at IF-1. Claims that ASN.1 is faster or smaller follow its §4.3 rule.
+- **C or C++ for a port** (`docs/research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md`):
+  - On-target, driver and artifact-path code is C; the core planner `bcir_kplan.c` stays C.
+  - The hosted toolchain (GEM+ solvers, incremental engine, ASN.1 host compiler) is one C++23
+    library behind a C ABI façade, with `pmr` arenas and `std::expected`.
+  - Its plans are re-checked by the C and MLIR verifiers.
+  - Never add a fourth copy of an algorithm that has a C twin and an MLIR pass.
 - UART U0–U2 landed (#823), with U0 on every rail.
 - CI runs once per change, its CMake cells halved (#825).
 - After it comes the **foundation phase**: fifteen slices before the driver order resumes,

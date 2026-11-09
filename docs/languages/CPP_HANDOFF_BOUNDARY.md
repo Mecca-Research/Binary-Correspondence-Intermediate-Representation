@@ -205,6 +205,12 @@ part of the MLIR/LLVM cmake.
 
 ## Risks and follow-ups (what remains, deliberately)
 
+- **Proposed: C++ beyond orchestration (2026-11-09).** The native port audit
+  ([`../research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md`](../research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md)
+  §4) proposes a second C++ component: a hosted solver library for the offline GEM+ portfolio,
+  the incremental engine and the ASN.1 host compiler. It keeps this document's rule. The library
+  proposes plans and never computes a verdict; the C rail's verifier and the law rail decide
+  every plan it produces. It is not built yet.
 - **A real MPI/NCCL backend.** Collectives, a communicator and rank model, a job queue, a thread
   pool. The partition, the shards, the manifest, per-rank admission and re-entry are real and
   gated. Only the transport and the cross-rank reduction are owed, and they need a cluster and a

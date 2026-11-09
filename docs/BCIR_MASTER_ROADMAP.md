@@ -287,6 +287,18 @@ Promotion gate: twin parity, relevant Clang/GCC differentials, strict warnings, 
 allocator-failure coverage, target-aware linking, and no expansion of the freestanding dependency
 surface.
 
+**Which language a port goes to** ([`research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md`](research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md),
+2026-11-09):
+- **C**: code that runs on a target, in a driver, in a microkernel or on the artifact path. The
+  K_BCIR core planner `bcir_kplan.c` stays C.
+- **C++23**: the hosted toolchain. The GEM+ solver portfolio, the incremental engine, the ASN.1
+  host compiler and the memory fabric's planning form one library behind a C ABI façade, using
+  arena (`pmr`) memory and `std::expected` errors. Its plans are always re-checked by the C and
+  MLIR verifiers, which share no code with it.
+- **Python**: everything else stays the oracle.
+
+The audit lists 54 modules to port, in three tiers, and a PORT-0–PORT-10 order.
+
 ### 4.2 Machine-code and backend rail
 
 LLVM remains the resident implementation of general CPU machine-code work. BCIR currently owns
@@ -572,7 +584,8 @@ History explains past decisions but does not reopen superseded sequencing.
    lift the interface phase's ASCII-first refusals when they land.
 3. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
    twin's form), the one UART slice left open across rails. It can ride between slices of either
-   phase.
+   phase, and so can the native port audit's small slices: PORT-0 (the inventory counts C++ and
+   MLIR twins), PORT-1 (MC1 disassembly in C) and PORT-2 (the tokenizers in C).
 4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
    event timers and DMA, whose blueprints exist; virtio-net, and with it native networking, comes
    with row 3. Alternate the drivers one slice at a time with the deferred work:

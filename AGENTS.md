@@ -70,6 +70,12 @@ system. Read `.claude/context/BCIR_DIGEST.md` first.
   OS processes and their IPC (AIS-n) → [`docs/BCIR_AI_SYSTEM_ROADMAP.md`](docs/BCIR_AI_SYSTEM_ROADMAP.md)
   §6. Its slices start after the foundation phase's exit. Each engine a service runs gets an IR-side
   twin whose parity gate lives corpus-side, so the one-way corpus law holds.
+- Porting an oracle module to C or C++ → [`docs/research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md`](docs/research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md).
+  What runs on a target, in a driver or on the artifact path goes to C (`runtime/c/`). The hosted
+  toolchain goes to one C++23 library behind a C ABI façade (`pmr` arenas, `std::expected`, no
+  exception across the façade), and its plans are re-checked by the C and MLIR verifiers. Do not
+  move existing C to C++, and do not add a fourth copy of an algorithm that already has a C twin
+  and an MLIR pass.
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/` and the `mlir` preset's
   `ctest -L mlir`, whose lit suite runs every fixture's RUN lines as written: `mlir/lit.cfg.py`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).
