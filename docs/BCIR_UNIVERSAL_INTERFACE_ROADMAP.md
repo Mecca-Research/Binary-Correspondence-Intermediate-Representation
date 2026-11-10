@@ -390,6 +390,28 @@ the list is not a request to implement every format in one PR.
 | UDSI-8 | OGDL Binary interoperability; optional typed graph profile only on demonstrated need | SI-12 and SI-01/02/06; separate format/profile identities and bounds |
 | UDSI-9 | Workload-selected MessagePack, Avro, Thrift, EXI, SDXF and storage/network adapters | Per-provider contract and conformance plus SI-06/10; no obligation to add idle dependencies |
 
+**Scheduled (2026-11-08).** These milestones now run inside the interface phase
+([`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md) §3), which goes first in the
+master order:
+
+| UDSI | Interface-phase slice |
+|---|---|
+| UDSI-0/1 | IF-11 |
+| UDSI-2 | IF-14 |
+| UDSI-3 | IF-15, IF-16 |
+| UDSI-6 | IF-12 (ABNF), IF-13 (CSN.1) |
+| UDSI-7 | IF-21 |
+| UDSI-9 | SDXF and MessagePack only, as IF-18 |
+
+UDSI-4, UDSI-5, UDSI-8 and the rest of UDSI-9 stay deferred. The phase adds what this roadmap
+does not cover:
+- a general XML 1.0 reader and writer (IF-17);
+- the cryptographic provider contract and primitives (IF-19);
+- X.509 path validation (IF-20);
+- S/MIME 4.0 (IF-22);
+- a TLS 1.3 engine (IF-23);
+- packet, DNS and HTTP protocols over hosted transports (IF-24, IF-25).
+
 UDSI-0/1 and optional hosted interoperability can proceed alongside PX-2/PX-3 native training
 work. Driver bring-up remains the canonical BG3–BG6/D/M program. Native IPC and independent
 boot add deployment/ownership obligations; they do not wait for every format or a blanket

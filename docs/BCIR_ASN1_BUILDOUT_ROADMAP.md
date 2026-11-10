@@ -11,6 +11,13 @@ owns the post-X.697 plan for compiling schema-bound JER into verified BCIR artif
 [`BCIR_ASN1_COMPILER_COMPARISON.md`](BCIR_ASN1_COMPILER_COMPARISON.md) measures this build
 against ffasn1, asn1c and asn1scc, and ranks what is worth importing from each.
 
+> **Next (2026-11-08): the interface phase.** The encoding-rule program below is complete except
+> for target counters. The compiler around it is not. The front end refuses three X.680
+> constructs and has a two-module real-world corpus, and the generated-C backend (`cgen`) is
+> study-scale. [`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md) stage A
+> (IF-1–IF-7) finishes both, and its stage B (IF-8, IF-9) decides what ASN.1 may claim against
+> other encodings. That phase runs first in the master order (§3.4 there).
+
 ## 0. The thesis: encoding rules are a realization choice
 
 BCIR already selects among legal realizations of an abstract value under a
@@ -1332,8 +1339,9 @@ wire-size evidence, a Python measurement harness, a native measured table
 ([`certified.py`](../bcir/asn1/certified.py)). The native **encode** column is built and the
 schema-directed decode table carries three rows, so both of phase H's gates are answered on
 this host; what it still lacks is **target hardware counters** — and that is the one remaining
-item in the whole ASN.1 build-out, because it is the one thing no amount of software can
-supply. The sequence below is recorded as written and is
+item in the encoding-rule build-out, because it is the one thing no amount of software can
+supply. The compiler's front end and generated-code backend have open items of their own, listed
+in the comparison's §6 and scheduled as the interface phase's IF-1–IF-7. The sequence below is recorded as written and is
 **complete through step 7** — every item landed as J1–J6:
 
 1. harden the JER oracle with pre-parse limits and byte-exact canonical validation;

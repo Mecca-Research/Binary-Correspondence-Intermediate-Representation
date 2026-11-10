@@ -20,6 +20,27 @@
 > records "Built-in tables (Unicode DB → the F1 tokenizer …) ABI machinery
 > exists; F1 unstarted" — and it sits in capability track CT3 (frontends) as that
 > document's §4 places F1. No new capability-track number is created.
+>
+> **Scope in the foundation phase (2026-11-08, `docs/BCIR_MASTER_ROADMAP.md`
+> §3.1): SLM-1 to SLM-7 run before the drivers resume, after UC-1 to UC-8.**
+> - SLM-2 to SLM-5 complete the hybrid database: a planned, priced, refusable and
+>   replayable lookup.
+> - SLM-1, SLM-6 and SLM-7 are the laboratory's initial lessons.
+> - SLM-3 runs on synthetic sets until UC-10 supplies the two real spaces.
+> - SLM-7b stays optional.
+> - SLM-8 to SLM-13 are deferred and interleave with the drivers afterwards.
+>
+> **What this program builds on has moved since the roadmap was written; §1.2's
+> last paragraph is corrected below.** The native decoder trainer and the train
+> rail have landed, so the hosted slices now have a deterministic native trainer to
+> be measured against. Their own mechanisms (the tree mask, the recursive cell, the
+> router) are not in it: it trains the dense, causal Llama/SwiGLU decoder.
+>
+> **How the lab joins the database and Unicode as one system** is
+> `docs/BCIR_AI_SYSTEM_ROADMAP.md` (design). SLM-2's `generation` rule generalizes
+> to a knowledge epoch every certificate names (AIS-1). SLM-6's verify callbacks
+> become the agent-coding loop's verify service (AIS-8). The L0–L3 ladder of §2.11
+> becomes the placement of the infer and store roles.
 
 ## 0. The proposal, restated with its claims labeled
 
@@ -123,10 +144,28 @@ consumes ids and carries a 32-byte `tokenizer_sha256` it does not verify.
   `run_real_model_gate.py` pins TinyLlama → BCIRQ8 → standalone C parity. Both
   prove composition, not model quality, and say so.
 
-The C training rail (`runtime/c/bcir_train.c`) trains a logistic readout, not a
-transformer; there is no dependency-free transformer trainer, no KV-cache in
-`HostedLlama.greedy`, no attention mask on the stable model, and no tree,
-dependency-parse or recursive-composition structure anywhere.
+There is a dependency-free transformer trainer, and the planned C training rail
+is a separate thing:
+- `runtime/c/bcir_train.c` is the planned rail: the M3 logistic step's kernels
+  behind the StreamPack executor, which is still a logistic readout.
+- `runtime/c/bcir_decoder_train.c`, over `bcir_tensor.c`, is the native decoder
+  trainer. It trains the dense, causal Llama/SwiGLU decoder in C:
+  - no allocation in plan, forward, backward, optimizer or a multi-step run;
+  - bit-identical state at every thread count;
+  - declared GEMM, exponential, reduction and bf16 contracts;
+  - `bcir_decoder_forward`, `bcir_decoder_run` and a run from a launch program
+    (`bcir_decoder_run_program`).
+
+  It is measured against PyTorch slice by slice in
+  `docs/research/BCIR_TRAINING_ACCELERATION_ROADMAP.md`, and the train rail
+  (TRAIN-RAIL: `tools/models/train_rail.sh` over the `BCIR-Corpus-860K` recipe,
+  `tools/models/configs/bcir-corpus-860k.json`) trains `docs/` and `training/`
+  as data on CI.
+
+What is still absent: a KV-cache in `HostedLlama.greedy`, an attention mask on
+the stable model (`F.scaled_dot_product_attention(..., is_causal=True)`), any mask
+beyond causality in the native trainer's attention, and any tree, dependency-parse or
+recursive-composition structure.
 
 ### 1.3 The native data plane: six kernels, eight entry points, one ABI
 

@@ -38,7 +38,44 @@ whether the IR builds or how it verifies. Its conventions live in `CONTRIBUTING.
 
 ## Where to work
 
+**The next build phase starts at the master roadmap's §11, item 1**
+([`docs/BCIR_MASTER_ROADMAP.md`](docs/BCIR_MASTER_ROADMAP.md)): the interface phase that §3.4
+sizes, beginning with IF-1, the real-world ASN.1 grammar corpus. The foundation phase that §3.1
+sizes follows it, beginning with Unicode UC-1, and then the driver order resumes. §3.2 says what
+sends work back to drivers; §3.3 says how the database, Unicode and the laboratory become one
+system. Read `.claude/context/BCIR_DIGEST.md` first.
+
 - Changing the IR semantics/optimizer → `bcir/` (with parity in `mlir/`).
+- Finishing the ASN.1 compiler backend, the peer notations and formats, the cryptographic
+  standards or networking (IF-n) → [`docs/BCIR_INTERFACE_PHASE_ROADMAP.md`](docs/BCIR_INTERFACE_PHASE_ROADMAP.md)
+  §3. ASN.1 code is in `bcir/asn1/` (the generated-C backend is `cgen.py`), its C twins in
+  `runtime/c/`. Review each corpus, test suite or comparator's license before use, and fetch by
+  pinned digest where redistribution is unclear. No claim that ASN.1 is faster or smaller than
+  another format passes outside a measurement record unless that roadmap's §4.3 rule holds.
+- Building the Unicode 17.0 database (UC-n) → [`training/UNICODE_ROADMAP.md`](training/UNICODE_ROADMAP.md)
+  §10. Its paths are fixed in §5.5:
+  - the rail under `training/tools/unicode/`;
+  - the vendored, SHA-256-pinned UCD under `training/formats/unicode/`;
+  - the one UAX #15 implementation in `bcir/hosted/training/unicode_normalize.py`, which
+    `training/` imports and never the reverse;
+  - the DER record in `bcir/asn1/` (UC-8).
+
+  Gate: `verify_unicode.py` beside `verify_database.py`. Faults:
+  `tools/testing/faults/training-unicode.json`. `unicodedata` is a differential oracle, never a
+  source.
+- Building the small-language-model laboratory (SLM-n) → [`training/SLM_ROADMAP.md`](training/SLM_ROADMAP.md)
+  §6. Each slice names the UC-n it needs; nothing starts before UC-3. Its check groups are sections
+  of `verify_unicode.py`, and its faults go in `tools/testing/faults/training-slm.json`.
+- Joining the database, Unicode and the laboratory into one system, or defining the AI workloads'
+  OS processes and their IPC (AIS-n) → [`docs/BCIR_AI_SYSTEM_ROADMAP.md`](docs/BCIR_AI_SYSTEM_ROADMAP.md)
+  §6. Its slices start after the foundation phase's exit. Each engine a service runs gets an IR-side
+  twin whose parity gate lives corpus-side, so the one-way corpus law holds.
+- Porting an oracle module to C or C++ → [`docs/research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md`](docs/research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md).
+  What runs on a target, in a driver or on the artifact path goes to C (`runtime/c/`). The hosted
+  toolchain goes to one C++23 library behind a C ABI façade (`pmr` arenas, `std::expected`, no
+  exception across the façade), and its plans are re-checked by the C and MLIR verifiers. Do not
+  move existing C to C++, and do not add a fourth copy of an algorithm that already has a C twin
+  and an MLIR pass.
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/` and the `mlir` preset's
   `ctest -L mlir`, whose lit suite runs every fixture's RUN lines as written: `mlir/lit.cfg.py`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).

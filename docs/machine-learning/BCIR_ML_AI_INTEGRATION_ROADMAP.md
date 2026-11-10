@@ -768,7 +768,8 @@ them (thermal/power/clock optimization, adaptive unrolling, best-ISA selection).
   hybrid SQL/vector lookup — is planned in
   [`training/SLM_ROADMAP.md`](../../training/SLM_ROADMAP.md) on
   [`training/UNICODE_ROADMAP.md`](../../training/UNICODE_ROADMAP.md); it stays
-  in the laboratory and changes no frozen ABI.
+  in the laboratory and changes no frozen ABI. The master roadmap's §3.1 (2026-11-08) puts its
+  first part, UC-1–UC-8 and SLM-1–SLM-7, in the foundation phase before the driver order resumes.
 - **F2 — The file-creation backbone.** Keep object/file production on the resident
   ELF/DWARF/BFD/LLVM ecosystem behind
   [`BCIR_NATIVE_OBJECT_GATE.md`](../BCIR_NATIVE_OBJECT_GATE.md). BCIR may plan section
@@ -1346,6 +1347,12 @@ candidate Resource/Claim graphs + verify-plan-measure selecting the winner and f
 with provenance. Each stage exists or has a named precedent; the net-new piece is the intent
 frontend and the proposer training corpus (which rungs 3/6 of §8.5 supply). **Feasible as a
 Phase-F-adjacent track; the quarantine keeps synthesis proposals from ever self-certifying.**
+
+The loop's processes are defined in [`../BCIR_AI_SYSTEM_ROADMAP.md`](../BCIR_AI_SYSTEM_ROADMAP.md)
+§5.3 (design). The agent role retrieves from the store, the infer role proposes, the verify role
+builds and checks in a bounded sandbox, and `bounded_reasoning_search` accepts. Accepted candidates
+land in a stream generation bound to the knowledge epoch. That is AIS-8 and AIS-9; the repository's
+own corpus and verifiers are its first data.
 
 ### 8.7 Erasing the line between programming and intelligence
 

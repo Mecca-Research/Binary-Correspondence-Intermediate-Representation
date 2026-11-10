@@ -1,5 +1,31 @@
 # The retrieval rail as a database — comparative analysis and the S-ladder
 
+> **Status (2026-11-08): S1–S19 and the performance suite's P1–P4 have landed;
+> no S-slice is open here.** The database's next slices are carried by the
+> foundation phase (`docs/BCIR_MASTER_ROADMAP.md` §3.1), in the roadmaps that
+> need them:
+> - [`UNICODE_ROADMAP.md`](UNICODE_ROADMAP.md) UC-3: the three generalizations of
+>   its §5.3 that let the catalog hold a second declared table, with the chunk
+>   table byte-identical.
+> - [`SLM_ROADMAP.md`](SLM_ROADMAP.md) SLM-2 to SLM-5:
+>   - the lookup request, with six appended legality rules and its price;
+>   - exact fusion of two rankings, sharded above the Q15 kernel's 65,536-row
+>     ceiling;
+>   - the DER `LookupEnvelope`;
+>   - the frozen query projection.
+>
+> Two reopening conditions below come due inside that program. UC-10's Han
+> tables pass the ~50,000 rows at which approximate nearest neighbours reopens,
+> and the second table measures the catalog's declared ceilings. UC-10 records
+> both as measurements.
+>
+> **The database is one part of a system** (`docs/BCIR_AI_SYSTEM_ROADMAP.md`,
+> design). A lookup becomes a K_BCIR-planned StreamPack program like the training
+> step, matched plan for plan by `training/tools/plan.py` (AIS-2). It gains batched lookup
+> and a priced result cache (AIS-3) and equi-joins over the catalog (AIS-4). Each
+> is an IR-side twin of this rail, its parity gate held here. This tree remains
+> the oracle.
+
 ## The question
 
 `training/` holds a corpus, a chunk builder, an embedding set, three retrieval

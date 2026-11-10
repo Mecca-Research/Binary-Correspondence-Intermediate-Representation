@@ -106,7 +106,8 @@ flowchart TD
     F --> G
     G --> H["BCIR-Linux targeted experiments"]
     G --> I["Native adapter and slim IPC"]
-    D --> P["Foundation phase: hybrid database, Unicode, SLM laboratory"]
+    D --> X["Interface phase: ASN.1 compiler backend, notations, formats, crypto, networking"]
+    X --> P["Foundation phase: hybrid database, Unicode, SLM laboratory"]
     P --> F
     P --> T["Event timers, DMA, ACPI, PCIe, NVMe"]
     T --> I
@@ -118,14 +119,151 @@ flowchart TD
     K --> L["Scalable model and accelerator packages"]
 ```
 
-After UART, the foundation phase runs before deep driver and kernel work, by the owner's
-direction: the hybrid database, the Unicode infrastructure and the small-language-model laboratory
+After UART, two phases run before deep driver and kernel work, by the owner's direction. First
+the **interface phase** (§3.4): the ASN.1 compiler's backend, the peer notations and formats, the
+cryptographic standards and networking over hosted transports. Then the **foundation phase**: the hybrid database, the Unicode infrastructure and the small-language-model laboratory
 with its initial lessons (the corpus-side roadmaps under `training/`); the device order that
-follows is the driver roadmap's §5.6.
+follows is the driver roadmap's §5.6. §3.1 sizes the phase and §3.2 says what sends the work back
+to drivers.
 
 The driver and ML programs share compiler, runtime, telemetry, artifact, and validation
 machinery. Neither may bypass the other's prerequisites: model acceleration needs real device
 packages; learned driver optimization needs stable direct behavior and trace identity.
+
+### 3.1 The foundation phase, sized (review of 2026-11-08, `main` after #825)
+
+It runs after §3.4's interface phase. The sizing below is unchanged by that order.
+
+| Program | Ladder | Landed | Open |
+|---|---|---|---|
+| Hybrid database: the training catalog and retrieval rail ([`training/DATABASE_ROADMAP.md`](../training/DATABASE_ROADMAP.md)) | S1–S19 and the performance suite's P1–P4 | All of it: content-addressed sets behind generations, postings with exact joint statistics, sorted numeric indexes with zone maps, a ten-operator predicate language, a legality-first planner priced on the K_BCIR cost vector, the native Q15 top-k under a predicate mask, one transaction per publish, a stored derived column. The hybrid SQL/vector path already runs end to end. | It is one-table-shaped (the three generalizations of [`UNICODE_ROADMAP.md`](../training/UNICODE_ROADMAP.md) §5.3). It has no second vector space per row, no exact fusion of two rankings, no sharding above the kernel's 65,536-row ceiling and no replayable lookup certificate. Those are UC-3 and SLM-2 to SLM-5. |
+| Unicode 17.0 database ([`training/UNICODE_ROADMAP.md`](../training/UNICODE_ROADMAP.md)) | UC-1–UC-11 | None. | All of it. The tree still normalizes text with the interpreter's own tables, a different Unicode version on each interpreter the suite runs: 14.0 on 3.11, 15.0 on 3.12, 17.0 on 3.15. |
+| Small-language-model laboratory ([`training/SLM_ROADMAP.md`](../training/SLM_ROADMAP.md)) | SLM-1–SLM-13 | None of its slices. What it builds on has landed: the native decoder trainer (`runtime/c/bcir_decoder_train.c` over `bcir_tensor.c`) gives complete dense Llama/SwiGLU training in C, bit-identical at every thread count under declared GEMM, exponential, reduction and bf16 contracts. Around it: the NDT ladder of [`research/BCIR_TRAINING_ACCELERATION_ROADMAP.md`](research/BCIR_TRAINING_ACCELERATION_ROADMAP.md); the train rail (TRAIN-RAIL: the `BCIR-Corpus-860K` recipe trained on CI); the hosted stage pipeline; and BCIRQ8 → C inference parity. | Every slice. Nothing in `SLM-*` starts before UC-3, and SLM-1 needs UC-7 and UC-8. |
+
+**The phase's exit (build this much before the drivers resume): fifteen slices, one PR each, in
+this order.**
+
+1. **Unicode UC-1 to UC-8, the whole Latin stage.** Stopping at UC-7 would leave SLM-1 blocked:
+   UC-8 (the DER character record and UAX #29 segmentation) is the last slice that adds a
+   mechanism, and SLM-1 needs it. UC-9 to UC-11 add repertoire, not mechanisms. UC-3 is also the
+   database's next slice: it makes the catalog hold a second declared table, additively, with the
+   chunk table byte-identical. UC-7 is the traceability payoff: tables pinned to 17.0 replace the
+   interpreter's, so one corpus reaches one digest on every supported Python.
+2. **The rest of the database: SLM-2 to SLM-5.** SLM-2 is the lookup request: six appended
+   legality rules and its price. SLM-3 is exact sharded fusion, on synthetic sets until UC-10
+   supplies the real two spaces. SLM-4 is the DER `LookupEnvelope`, replayable on any host.
+   SLM-5 is the frozen query projection. After them, every lookup is planned, priced, refusable
+   and replayable: the database the model consults.
+3. **The laboratory's initial lessons: SLM-1, SLM-6 and SLM-7.** SLM-1 is the record interface and
+   `bcir.byte_bpe.v2`. SLM-6 puts the engines in as `verify` callbacks in bounded reasoning search.
+   SLM-7 makes curriculum phase 1 (orthographic grounding) a content-addressed stage. SLM-7b stays
+   optional.
+
+In numbering order that is UC-1 … UC-8, then SLM-1 … SLM-7: every slice's dependencies land
+before it.
+
+**Deferred, then interleaved with the drivers one slice at a time:**
+- UC-9, the other scripts.
+- UC-10, Han. The vendored data triples and the row count rises about a hundredfold. That meets the
+  catalog's declared ceilings and the database's reopening condition for approximate nearest
+  neighbours at about 50,000 rows, so it is a measured decision.
+- UC-11, the rest of 17.0 and the LangRef made normative.
+- SLM-8 to SLM-13: tree-constrained attention, the recursive cell, the lexical graph behind its
+  GO/STOP, the curriculum ledger, the evaluation harness and the scale GO/STOP.
+
+None of these blocks a driver, and no driver blocks them.
+
+### 3.2 What sends the work back to drivers and kernels
+
+Not a memory bottleneck as such. Three rules decide it.
+
+1. **The first driver block runs on a schedule, not a trigger.** The event timers, DMA with the
+   ownership engine, and the virtio queue proof come first. They are preconditions of everything
+   after them: NVMe, the IPC rungs, HAM's physical tiers, UEFI with the trust program, and the JIT
+   microkernel. None of them waits for a model to slow down; they resume when §3.1's exit is met.
+2. **After that, a measured bottleneck sends the work to the layer that owns it.** A memory
+   bottleneck inside one process is user-space work. The native trainer has been closing those in
+   user space:
+   - the step's state on one huge-page mapping (NDT-PAGES);
+   - the transient arena laid out by lifetime (NDT-MEM);
+   - the attention's tasks on contiguous copies of their rows (ATT-CONTIG);
+   - the weight adjoints split over their depth (KSPLIT).
+
+   A driver or the kernel pays only where the measured time crosses a boundary user space cannot
+   move. Attribution is the training ladder's NEXT-n method: time the step a part at a time against
+   the host's measured rates, then name the layer.
+
+   | What the trace attributes the time to | The layer that owns it | Where it is planned |
+   |---|---|---|
+   | Data crossing devices: accelerator memory, peer transfers | DMA, IOMMU, PCIe, the GPU driver | driver order 2, 5, 12; HMF-D1/D2 |
+   | Datasets and checkpoints larger than the page cache | NVMe queues, the semantic store | order 6; HMF-D4 |
+   | Page size, pinning, NUMA placement and memory tiers beyond `madvise` | memory inventory, HAM | order 10; HMF-D3 |
+   | Copies and wakeups between processes | the IPC rungs | driver roadmap §7.4, I1–I5 |
+   | Jitter from interrupts and other tenants | timers, interrupt routing, the microkernel | order 1, 13 |
+   | Counters a certificate needs | a physical rig: this cloud host has no PMU | CPU and PMU, order 11; TMSAO-3 |
+3. **On this host, model scale will not surface a driver-shaped bottleneck soon.** The host has
+   4 vCPUs, 16 GB, no GPU and no PMU. The corpus recipe's model and the 9.84M study decoder live in
+   cache and RAM. Driver-shaped bottlenecks appear when the dataset outgrows the page cache, when
+   training moves to an accelerator, or when tensors cross processes. That is why the driver order
+   puts DMA, NVMe and the IPC rungs early, and why each driver is qualified against a data,
+   inference and training profile (driver roadmap §4.7;
+   [`research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md`](research/BCIR_DRIVER_IPC_AI_QUALIFICATION_2026-10-20.md)).
+
+How the program goals map onto this order:
+- **Fully capable JIT microkernels** are the driver ladder's end (order 13). Driver roadmap §7.5
+  defines one as a preverified, content-addressed service bundle, and it needs the whole evidence
+  chain below it.
+- **TMSAO on data-structure execution**: the database's next slices put retrieval under the
+  plan, legality, price and certificate machinery GEM+ already runs. The proof rail issues
+  TMSAO-1/TMSAO-2; TMSAO-3 waits on hardware.
+- **TMSAO on AI inference**: the NDT and Q8 ladders and BCIRQ8 → C.
+- **Full traceability**:
+  - UC-7: the Unicode version in every digest;
+  - SLM-4: every lookup a replayable DER envelope;
+  - SLM-12: no reported number without its digests;
+  - StreamPack and BCAB provenance throughout.
+
+### 3.3 One system: database, Unicode and the laboratory as AI processes
+
+The three foundation programs are one system, not three. [`BCIR_AI_SYSTEM_ROADMAP.md`](BCIR_AI_SYSTEM_ROADMAP.md)
+(2026-11-08, design) defines it:
+- **One knowledge plane.** A knowledge epoch binds every generation a result read: the Unicode
+  version, the catalogs, the sets, the tokenizer, the projection, the checkpoint and the plan
+  baseline. Every certificate names one epoch.
+- **One planner and one artifact path for every workload.** Lookups and text processing take the
+  path the training step already takes (PX-2b): K_BCIR plan → GEM+ schedule → StreamPack →
+  executor.
+- **What K_BCIR and GEM+ need.** No new laws and no new cost axes. They need new claim families,
+  the landed SDF, timed and expectation regions (G22–G24) put to work on the pipeline between
+  services, and six algorithms beyond the Unicode roadmap and the ML system: joins, batched
+  lookup, a fused native text pipeline, a priced cache, channel-mode selection and stream
+  generations.
+- **The OS model.** Eight service roles (text, store, train, infer, plan, verify, ledger, agent)
+  run on the IPC program's four primitives. Control records travel on SPSC rings; generations
+  are mapped read-only; batch buffers move by lease. The workloads are learning-database building
+  and query, language processing and agent coding.
+
+Its slices, AIS-1 to AIS-9, start after §3.1's exit and alternate with the driver order. AIS-1 to
+AIS-6 need no driver; AIS-7 waits for DMA's lease laws.
+
+### 3.4 The interface phase comes first (2026-11-08)
+
+The database, the Unicode work and the laboratory went ahead of the compiler backend. The owner's
+direction is to finish the backend first. [`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md)
+sizes the phase at twenty-five slices, IF-1 to IF-25, in six stages:
+
+| Stage | Slices | What it finishes |
+|---|---|---|
+| A. The ASN.1 compiler | IF-1–IF-7 | A real-world grammar corpus; the three refused X.680 constructs; schema-driven random values; `cgen` from study scale to production (`DEFAULT`, extensions, `SET`, character strings, open types, DER/BER and aligned PER), selectable under K_BCIR's certificate; a CLI, a bit-layout report and a security-regression corpus |
+| B. Qualification | IF-8, IF-9 | Independent comparators and five whole-process workloads on x86-64 and aarch64, and the rule for when "faster" or "smaller" may be claimed. The ITS result stays a scoped `ratio` until then. |
+| C. JSON | IF-10 | The minimal compiled JSON investigation, ending in GO or STOP |
+| D. Notations and formats | IF-11–IF-18 | The contract registry and native BCIR JSON, ABNF, CSN.1, XDR, CBOR/CDDL, Protocol Buffers, XML 1.0, SDXF and MessagePack |
+| E. Cryptographic standards | IF-19–IF-23 | A provider contract with verified and reference providers; X.509 path validation; CMS and PKCS #1/#8/#10; S/MIME 4.0; a sans-I/O TLS 1.3 engine |
+| F. Networking | IF-24, IF-25 | Packet, checksum and DNS codecs; hosted UDP/TCP, HTTP/1.1 and TLS |
+
+Its slices that need Unicode run ASCII-first with declared refusals, so the phase does not wait on
+UC-n. Native networking needs virtio-net and DMA leases, so it joins the driver order (driver
+roadmap §5.6, row 3).
 
 ## 4. Active workstreams
 
@@ -148,6 +286,18 @@ Current work is maintenance and bounded completion, not another breadth sprint:
 Promotion gate: twin parity, relevant Clang/GCC differentials, strict warnings, sanitizer and
 allocator-failure coverage, target-aware linking, and no expansion of the freestanding dependency
 surface.
+
+**Which language a port goes to** ([`research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md`](research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md),
+2026-11-09):
+- **C**: code that runs on a target, in a driver, in a microkernel or on the artifact path. The
+  K_BCIR core planner `bcir_kplan.c` stays C.
+- **C++23**: the hosted toolchain. The GEM+ solver portfolio, the incremental engine, the ASN.1
+  host compiler and the memory fabric's planning form one library behind a C ABI façade, using
+  arena (`pmr`) memory and `std::expected` errors. Its plans are always re-checked by the C and
+  MLIR verifiers, which share no code with it.
+- **Python**: everything else stays the oracle.
+
+The audit lists 54 modules to port, in three tiers, and a PORT-0–PORT-10 order.
 
 ### 4.2 Machine-code and backend rail
 
@@ -287,7 +437,8 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | C/runtime memory discipline | Landed baseline | Strict hosted/freestanding builds, allocation-failure campaign, sanitizers, idempotent teardown |
 | Pre-driver machine edge | Partial landed | Ordinary x86 edge and MC1/MC2 baselines; paranoid/reset and hardware binding remain explicit |
 | UART direct package | Partial landed | U0 on every rail, U1 on the oracle, U2's polled driver against the simulated 16550 linked from both rails' emit; U1's law-rail half and the event-driven slices remain for D0–D2's cancellation, saturation and replay |
-| Foundation phase | Open, before deep driver work | The hybrid database's next S-slices, the Unicode database's first slices and the small-language-model laboratory with its initial lessons, each at its own roadmap's gates |
+| Interface phase | Open, first: before the foundation phase; sized in §3.4 (ASN.1 encoding rules and ECN landed; `cgen` study-scale; no peer format, CMS/PKCS/S/MIME/TLS or networking) | The twenty-five slices IF-1–IF-25 of [`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md), each at its own gate |
+| Foundation phase | Open, after the interface phase and before deep driver work; sized in §3.1 (database S1–S19 landed; Unicode and the SLM's own slices not started) | The fifteen slices of §3.1, each at its own roadmap's gates: UC-1–UC-8 (UC-3 the database's second table), SLM-2–SLM-5 (the rest of the database), SLM-1, SLM-6, SLM-7 (the initial lessons) |
 | UART Linux adapter | Open | D3 direct/adapter behavioral parity and unload/restart safety |
 | virtio queue proof | Open | Character/event plus block/DMA lifecycle, reset and saturation evidence |
 | BCIR UAPI v1 | Gated | UART + virtio-blk evidence, generated ABI tests, compatibility and failure matrix |
@@ -405,7 +556,7 @@ measurement validity, toolchain/profile identity, and honest degraded/skipped re
 
 | Location | Owns |
 |---|---|
-| `docs/` | Normative law, master execution order, current state, parity, releases, onboarding, history, repository structure |
+| `docs/` | Normative law, master execution order, current state, parity, releases, onboarding, history, repository structure, the interface phase (ASN.1 backend, notations, formats, crypto standards, networking), the AI system (database, Unicode and laboratory as one system and its OS processes) |
 | `docs/kernel/` | Drivers, RuntimeChannel/UAPI/IPC, StreamPack, hardware validation, telemetry, channels, SYCL, firmware and the root of trust |
 | `docs/machine-learning/` | ML/AI roadmap, model/reference ladder, language placement, model provenance, hosted-AI integration research |
 | `docs/languages/` | C frontend/memory/C++ boundary and future language-specific frontend/lowering plans |
@@ -417,17 +568,33 @@ History explains past decisions but does not reopen superseded sequencing.
 
 ## 11. Immediate priority queue
 
-1. Land the UART slices and keep CI's gates green on the runner release its baseline toolchain
-   comes from (Ubuntu 24.04: Clang 18, GCC 13, Python 3.12).
-2. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
-   twin's form), the one UART slice left open across rails.
-3. Run the foundation phase before deep driver work: the hybrid database's next slices, the
-   Unicode infrastructure and the small-language-model laboratory with its initial lessons
-   (`training/DATABASE_ROADMAP.md`, `training/UNICODE_ROADMAP.md`, `training/SLM_ROADMAP.md`),
-   under the one-way corpus law.
+1. **Start here: the interface phase, §3.4's slices in order.** Begin with **IF-1**, the real-world
+   ASN.1 grammar corpus ([`BCIR_INTERFACE_PHASE_ROADMAP.md`](BCIR_INTERFACE_PHASE_ROADMAP.md) §3):
+   it tells IF-2 which constructs to close. Each slice is one PR with its slice id in the title and
+   RED before GREEN. Licenses are reviewed before any corpus, test suite or comparator is used.
+   UART U0–U2 and the CI work (#823, #825) have landed. Keep CI's gates green on the runner
+   release its baseline toolchain comes from (Ubuntu 24.04: Clang 18, GCC 13, Python 3.12).
+2. **Then the foundation phase, §3.1's fifteen slices in order.** Begin with **UC-1**, the
+   Unicode pins, the fetch tool and the source tree ([`training/UNICODE_ROADMAP.md`](../training/UNICODE_ROADMAP.md)
+   §10). Then UC-2 … UC-8, then SLM-1 … SLM-7
+   ([`training/SLM_ROADMAP.md`](../training/SLM_ROADMAP.md) §6). Each slice is one PR with its
+   slice id in the title and RED before GREEN, gated where that roadmap's §11 or §10 places it.
+   All of it stays under the one-way corpus law (`AGENTS.md`). Build each slice so that the
+   unified system of §3.3 can use it: generations and digests, not ad-hoc state. UC-4 and UC-6
+   lift the interface phase's ASCII-first refusals when they land.
+3. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
+   twin's form), the one UART slice left open across rails. It can ride between slices of either
+   phase, and so can the native port audit's small slices: PORT-0 (the inventory counts C++ and
+   MLIR twins), PORT-1 (MC1 disassembly in C) and PORT-2 (the tokenizers in C).
 4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
-   event timers and DMA, whose blueprints exist; grow the deep-learning and modeling work with
-   each driver's traces.
+   event timers and DMA, whose blueprints exist; virtio-net, and with it native networking, comes
+   with row 3. Alternate the drivers one slice at a time with the deferred work:
+   - the interface phase's deferred formats and protocols;
+   - §3.1's deferred Unicode and SLM slices;
+   - the AI system's AIS-1 … AIS-9 ([`BCIR_AI_SYSTEM_ROADMAP.md`](BCIR_AI_SYSTEM_ROADMAP.md) §6–§7).
+
+   Grow the deep-learning and modeling work with each driver's traces. A measured bottleneck goes
+   to the layer that owns it (§3.2).
 5. Keep the IPC and firmware programs at their plans until their rows come up; start BCIR-Linux
    only at §6.4's entry criteria, with the owner creating the repository.
 6. Keep HAM hardware work at the documented HMF-D0–D5 gates and physical HAM and native HAM/SYCL
