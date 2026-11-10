@@ -99,6 +99,7 @@ Every trust-boundary decoder has a libFuzzer target run under ASan and UBSan.
 | `bcir_streampack` | the plan reader, hydration, the GEM executor, the StreamPack encoder and decoder, binary records, the logistic-training stage kernels, telemetry frames and provenance |
 | `bcir_plane` | the control-plane records, the live SPSC ring, the telemetry envelope, the data-plane hand-off, the shard manifest and the native K_BCIR planner |
 | `bcir_artifact` | the allocation-free BCAB bundle reader and selector |
+| `bcir_listing` | the freestanding StreamPack listing and record-delimited dump (MC1's C twin) |
 | `bcir_asn1` | the ASN.1 twins: X.690, PER (with the bit-oriented writer and the plan-driven decoder), OER, XER, the bounded JER reader, and the StreamPack ASN.1 module |
 | `bcir_cfront` | the C front-end twin: preprocessor, parser and lowering, verifier and diagnostics |
 | `bcir_quarantine` | the bounds-quarantine runtime that the C front end's runtime-checked array accesses call |
@@ -106,9 +107,10 @@ Every trust-boundary decoder has a libFuzzer target run under ASan and UBSan.
 | `bcir_decoder_training` | the native tensor core and the decoder trainer (forward, backward, AdamW) |
 | `bcir_channel`, `bcir_driver` | the hardware-channel table and the RuntimeChannel v1 loopback driver adapter |
 
-Tools: `bcir-cc` (the C compiler driver over the front-end twin), `bcir-llama` (standalone BCIRQ8
-inference), `bcir-qualify` (the qualification rails, §4), `bcir-make` (the C twin of BCIR Make),
-and the cost-calibration, ASN.1 and AI micro-benchmarks.
+Tools: `bcir-cc` (the C compiler driver over the front-end twin), `bcir-pack` (the C twin of the
+Python `bcir-pack`, octet for octet), `bcir-llama` (standalone BCIRQ8 inference), `bcir-qualify`
+(the qualification rails, §4), `bcir-make` (the C twin of BCIR Make), and the cost-calibration,
+ASN.1 and AI micro-benchmarks.
 
 ### The C++ seam (`runtime/cpp/`)
 

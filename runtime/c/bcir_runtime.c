@@ -79,29 +79,34 @@ static bcir_status c_status(const cur *c) {
 static int c_has(const cur *c, size_t n) {
   return !c->err && c->pos <= c->len && n <= c->len - c->pos;
 }
+/* The first fault is the cursor's verdict: a read after a string that failed UTF-8 must not
+ * restate that string's fault as a truncation (the Python decoder names the string). */
+static void c_fail(cur *c) {
+  if (!c->err) c->err = 1;
+}
 static void c_skip(cur *c, size_t n) {
-  if (!c_has(c, n)) c->err = 1; else c->pos += n;
+  if (!c_has(c, n)) c_fail(c); else c->pos += n;
 }
 
 static uint8_t c_u8(cur *c) {
-  if (!c_has(c, 1)) { c->err = 1; return 0; }
+  if (!c_has(c, 1)) { c_fail(c); return 0; }
   return c->d[c->pos++];
 }
 static uint16_t c_u16(cur *c) {
-  if (!c_has(c, 2)) { c->err = 1; return 0; }
+  if (!c_has(c, 2)) { c_fail(c); return 0; }
   uint16_t v = rd16(c->d + c->pos); c->pos += 2; return v;
 }
 static uint32_t c_u32(cur *c) {
-  if (!c_has(c, 4)) { c->err = 1; return 0; }
+  if (!c_has(c, 4)) { c_fail(c); return 0; }
   uint32_t v = rd32(c->d + c->pos); c->pos += 4; return v;
 }
 static uint64_t c_u64(cur *c) {
-  if (!c_has(c, 8)) { c->err = 1; return 0; }
+  if (!c_has(c, 8)) { c_fail(c); return 0; }
   uint64_t v = rd64(c->d + c->pos); c->pos += 8; return v;
 }
 static const char *c_str(cur *c, uint16_t *out_len) {
   uint16_t n = c_u16(c);
-  if (!c_has(c, n)) { c->err = 1; *out_len = 0; return 0; }
+  if (!c_has(c, n)) { c_fail(c); *out_len = 0; return 0; }
   const char *p = (const char *)(c->d + c->pos);
   if (!bcir_utf8_valid(c->d + c->pos, n)) { c->err = 2; *out_len = 0; return 0; }
   c->pos += n; *out_len = n; return p;
@@ -109,7 +114,7 @@ static const char *c_str(cur *c, uint16_t *out_len) {
 static const uint8_t *c_u32arr(cur *c, uint16_t *out_cnt) {
   uint16_t n = c_u16(c);
   size_t bytes = (size_t)n * 4u;
-  if (!c_has(c, bytes)) { c->err = 1; *out_cnt = 0; return 0; }
+  if (!c_has(c, bytes)) { c_fail(c); *out_cnt = 0; return 0; }
   const uint8_t *p = c->d + c->pos;
   c->pos += bytes; *out_cnt = n; return p;
 }
@@ -303,7 +308,7 @@ static void skip_prefetch(cur *c, uint16_t version) {
 static const uint8_t *c_u64arr(cur *c, uint16_t *out_cnt) {
   uint16_t n = c_u16(c);
   size_t bytes = (size_t)n * 8u;
-  if (!c_has(c, bytes)) { c->err = 1; *out_cnt = 0; return 0; }
+  if (!c_has(c, bytes)) { c_fail(c); *out_cnt = 0; return 0; }
   const uint8_t *p = c->d + c->pos;
   c->pos += bytes; *out_cnt = n; return p;
 }
@@ -726,6 +731,188 @@ bcir_status bcir_sp_check_generation_vector(const uint8_t *BCIR_RESTRICT data, s
   return BCIR_OK;
 }
 
+
+/* --- MC1 (PORT-1): every wire record with its exact span ----------------------------------
+ * One walk over the cursor every other StreamPack walk reads, so a listing tool parses no second
+ * copy of the wire format: the record a callback sees is the record these helpers decoded, and its
+ * span is the cursor's movement across it. The laws are the Python decoder's (decode), in its
+ * order; R10 stays bcir_sp_verify_semantic's. */
+
+uint32_t bcir_prefetch_target(const bcir_prefetch_view *pf, uint16_t i) {
+  return (pf && pf->targets && i < pf->n_targets) ? rd32(pf->targets + (size_t)i * 4u) : 0u;
+}
+
+int bcir_sp_strings_next(bcir_sp_strings *it, const char **s, uint16_t *len) {
+  if (!it || !s || !len || it->count == 0u || !it->next) return 0;
+  uint16_t n = rd16(it->next);
+  *s = (const char *)(it->next + 2);
+  *len = n;
+  it->next += 2u + (size_t)n;
+  it->count--;
+  return 1;
+}
+
+/* A string array: its count and first string recorded, every string checked (bounds, UTF-8). */
+static void c_strarr(cur *c, bcir_sp_strings *out) {
+  out->count = c_u16(c);
+  out->next = c->err ? 0 : c->d + c->pos;
+  for (uint16_t i = 0; i < out->count && !c->err; i++) c_skip_str(c);
+  if (c->err) { out->count = 0; out->next = 0; }
+}
+
+/* Every member zero but the walk's context: the record a kind fills in. Field by field, so the
+ * freestanding unit asks no memset of its link. */
+static void rec_open(bcir_sp_record *r, const bcir_streampack_header *hdr,
+                     bcir_sp_record_kind kind, uint32_t index, size_t offset) {
+  r->header = hdr; r->kind = kind; r->index = index; r->offset = offset; r->length = 0;
+  r->source_plan = 0; r->source_plan_len = 0;
+  r->segment.name = 0; r->segment.name_len = 0; r->segment.claim_id = 0;
+  r->segment.phase_id = 0; r->segment.lane = 0; r->segment.width = 0; r->segment.stride_k = 0;
+  r->segment.opcode = 0; r->segment.opcode_len = 0;
+  r->segment.n_reads = 0; r->segment.reads = 0; r->segment.n_writes = 0; r->segment.writes = 0;
+  r->segment.prefetch = 0; r->segment.prefetch_len = 0; r->segment.dispatch = 0;
+  r->segment.channel = 0; r->segment.channel_len = 0;
+  r->fence_before.count = 0; r->fence_before.next = 0;
+  r->fence_after.count = 0; r->fence_after.next = 0;
+  r->prefetch.name = 0; r->prefetch.name_len = 0; r->prefetch.distance = 0;
+  r->prefetch.n_targets = 0; r->prefetch.targets = 0;
+  r->prefetch.hint = 0; r->prefetch.hint_len = 0;
+  r->prefetch.pattern = 0; r->prefetch.pattern_len = 0; r->prefetch.buffers = 0;
+  r->block.base = 0; r->block.count = 0; r->block.n_strides = 0; r->block.strides = 0;
+  r->trace.claim_id = 0; r->trace.src_hash = 0; r->trace.trace_hash = 0;
+  r->generation.rid = 0; r->generation.map_gen = 0; r->generation.data_gen = 0;
+  r->crc32 = 0;
+}
+
+/* One pass: every law checked in wire order; `fn` (when not NULL) sees each record as it closes.
+ * bcir_sp_for_each_record runs it once without `fn` and once with it, so a callback never sees a
+ * record of a pack the first pass refuses. */
+static bcir_status sp_records(const uint8_t *BCIR_RESTRICT data, size_t len,
+                              const bcir_streampack_header *hdr, bcir_sp_record_fn fn, void *ctx) {
+  if (hdr->pipeline_depth < 1) return BCIR_ERR_PROVENANCE;   /* decode: depth in [1, 65535] */
+  const size_t body_len = len - 4u;
+  cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
+  int live = fn != 0;
+  bcir_sp_record r;
+
+  rec_open(&r, hdr, BCIR_SP_RECORD_HEADER, 0, 0);
+  r.length = (size_t)BCIR_STREAMPACK_HEADER_SIZE;
+  if (live && fn(&r, ctx)) live = 0;
+
+  rec_open(&r, hdr, BCIR_SP_RECORD_SOURCE_PLAN, 0, c.pos);
+  r.source_plan = c_str(&c, &r.source_plan_len);
+  if (c.err) return c_status(&c);
+  r.length = c.pos - r.offset;
+  if (live && fn(&r, ctx)) live = 0;
+
+  for (uint32_t i = 0; i < hdr->n_segments; i++) {
+    rec_open(&r, hdr, BCIR_SP_RECORD_SEGMENT, i, c.pos);
+    bcir_segment_view *v = &r.segment;
+    v->name = c_str(&c, &v->name_len);
+    v->claim_id = c_u64(&c);
+    v->phase_id = c_u32(&c);
+    v->lane = c_u8(&c);
+    v->width = c_u32(&c);
+    v->stride_k = c_u32(&c);
+    v->opcode = c_str(&c, &v->opcode_len);
+    v->reads = c_u32arr(&c, &v->n_reads);
+    v->writes = c_u32arr(&c, &v->n_writes);
+    v->prefetch = c_str(&c, &v->prefetch_len);   /* "" (len 0) == no prefetch */
+    c_strarr(&c, &r.fence_before);
+    c_strarr(&c, &r.fence_after);
+    if (hdr->version >= 3) {
+      v->dispatch = c_u8(&c);
+      v->channel = c_str(&c, &v->channel_len);
+    } else {
+      v->dispatch = (uint8_t)BCIR_DISPATCH_CORE;
+      v->channel = BCIR_DEFAULT_CHANNEL; v->channel_len = BCIR_DEFAULT_CHANNEL_LEN;
+    }
+    if (c.err) return c_status(&c);
+    bcir_status rg = seg_range_ok(v);
+    if (rg != BCIR_OK) return rg;
+    r.length = c.pos - r.offset;
+    if (live && fn(&r, ctx)) live = 0;
+  }
+
+  for (uint32_t i = 0; i < hdr->n_prefetches; i++) {
+    rec_open(&r, hdr, BCIR_SP_RECORD_PREFETCH, i, c.pos);
+    bcir_prefetch_view *p = &r.prefetch;
+    p->name = c_str(&c, &p->name_len);
+    p->distance = c_u32(&c);
+    p->targets = c_u32arr(&c, &p->n_targets);
+    p->hint = c_str(&c, &p->hint_len);
+    p->pattern = c_str(&c, &p->pattern_len);
+    p->buffers = 1u;                             /* a v1 prefetch is single-buffered */
+    if (hdr->version >= 2) p->buffers = c_u8(&c);
+    if (c.err) return c_status(&c);
+    if (p->buffers != 1u && p->buffers != 2u) return BCIR_ERR_PROVENANCE;
+    r.length = c.pos - r.offset;
+    if (live && fn(&r, ctx)) live = 0;
+  }
+
+  for (uint32_t i = 0; i < hdr->n_blocks; i++) {
+    rec_open(&r, hdr, BCIR_SP_RECORD_BLOCK, i, c.pos);
+    r.block.base = c_u64(&c);
+    r.block.count = c_u64(&c);
+    r.block.strides = c_u64arr(&c, &r.block.n_strides);
+    if (c.err) return c_status(&c);
+    r.length = c.pos - r.offset;
+    if (live && fn(&r, ctx)) live = 0;
+  }
+
+  for (uint32_t i = 0; i < hdr->n_trace; i++) {
+    rec_open(&r, hdr, BCIR_SP_RECORD_TRACE, i, c.pos);
+    r.trace.claim_id = c_u64(&c);
+    r.trace.src_hash = c_u64(&c);
+    r.trace.trace_hash = c_u64(&c);
+    if (c.err) return c_status(&c);
+    r.length = c.pos - r.offset;
+    if (live && fn(&r, ctx)) live = 0;
+  }
+
+  if (hdr->version >= 4) {
+    uint32_t prev = 0, vmap = 0, vdata = 0;
+    for (uint32_t i = 0; i < hdr->n_gens; i++) {
+      rec_open(&r, hdr, BCIR_SP_RECORD_GENERATION, i, c.pos);
+      r.generation.rid = c_u32(&c);
+      r.generation.map_gen = c_u32(&c);
+      r.generation.data_gen = c_u32(&c);
+      if (c.err) return c_status(&c);
+      if (i > 0u && r.generation.rid <= prev) return BCIR_ERR_GENERATION;
+      prev = r.generation.rid;
+      if (r.generation.map_gen > vmap) vmap = r.generation.map_gen;
+      if (r.generation.data_gen > vdata) vdata = r.generation.data_gen;
+      r.length = c.pos - r.offset;
+      if (live && fn(&r, ctx)) live = 0;
+    }
+    if (hdr->n_gens != 0u && (vmap != hdr->map_gen || vdata != hdr->data_gen))
+      return BCIR_ERR_GENERATION;
+  }
+  if (c.pos != body_len) return BCIR_ERR_TRAILING;
+
+  rec_open(&r, hdr, BCIR_SP_RECORD_CRC32, 0, body_len);
+  r.length = 4u;
+  r.crc32 = rd32(data + body_len);
+  if (live) (void)fn(&r, ctx);
+  return BCIR_OK;
+}
+
+bcir_status bcir_sp_for_each_record(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                    bcir_sp_record_fn fn, void *ctx) {
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(data, len, &hdr);
+  if (st == BCIR_OK) st = sp_records(data, len, &hdr, 0, 0);
+  if (st == BCIR_OK && fn) st = sp_records(data, len, &hdr, fn, ctx);
+  return st;
+}
+
+bcir_status bcir_sp_checked_for_each_record(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                            bcir_sp_record_fn fn, void *ctx) {
+  if (!sp_checked_ok(pack)) return BCIR_ERR_TRUNCATED;
+  bcir_status st = sp_records(pack->data, pack->len, &pack->hdr, 0, 0);
+  if (st == BCIR_OK && fn) st = sp_records(pack->data, pack->len, &pack->hdr, fn, ctx);
+  return st;
+}
 
 /* --- ExecutionPlanV1 (G11, staged plan S1-C): the plan the pack was derived from -------
  * The same discipline as the StreamPack rail: byte-wise little-endian reads, a bounded

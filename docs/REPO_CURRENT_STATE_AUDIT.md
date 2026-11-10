@@ -155,7 +155,9 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    has flushed ~21 real frontend bugs into permanent gates. These fixtures validate
    compilation; they are not resident device drivers.
 9. The **first machine/HAL operator slices are code-backed**: `bcir-pack dis/hexdump`
-   validate before displaying exact codec-derived record spans, and `bcir-registry`
+   validate before displaying exact codec-derived record spans -- in Python and, octet for
+   octet, in freestanding C (`bcir_sp_listing.c` over the runtime's own record walk, PORT-1) --
+   and `bcir-registry`
    show/getp/setp advances `data_gen` so stale packs fail R11. Both remain in-process
    baselines, not hardware tools.
 10. **Hosted C allocation has a testable discipline**: allocation is injected through a

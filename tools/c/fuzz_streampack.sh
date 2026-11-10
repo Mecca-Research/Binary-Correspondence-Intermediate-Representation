@@ -261,6 +261,12 @@ add_target decoder "decoder" "" \
 add_target artifact "BCAB artifact bundle" "-max_len=16384" \
   "${C}/fuzz_artifact_bundle.c" "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
 
+# The MC1 record walk and the listing/dump over it (PORT-1): a listing tool reads packs anyone hands
+# it. Driven raw and resealed; the harness holds the spans to a partition, the format calls to the
+# walk's verdict and a refused pack to an untouched sink.
+add_target listing "StreamPack listing (MC1)" "-max_len=16384" \
+  "${C}/fuzz_sp_listing.c" "${C}/bcir_sp_listing.c" "${C}/bcir_runtime.c"
+
 # bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
 # pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
 add_target exec "executor" "" \
@@ -312,6 +318,7 @@ for key in "${KEYS[@]}"; do mkdir -p "${tmp}/corpus_${key}"; done
 cp "${tmp}/pack.bin" "${tmp}/corpus_decoder/"
 cp "${tmp}/pack.bin" "${tmp}/corpus_exec/"
 cp "${tmp}/pack.bin" "${tmp}/corpus_encode/"
+cp "${tmp}/pack.bin" "${tmp}/corpus_listing/"
 rmdir "${tmp}/corpus_binrec"
 # The decoder target also walks the ExecutionPlan twin (and reseals each mutant's CRC), so its
 # corpus starts inside every plan version: v1 (the audit fixture), v2 (schedule-liveness

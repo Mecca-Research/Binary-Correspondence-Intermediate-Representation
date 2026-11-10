@@ -208,6 +208,12 @@ The CRC + bounds decode is memory-safe, but a CRC-valid pack can still be
   there were three and four. Every walk refuses a token from a refused check, or one
   `bcir_sp_check` did not fill (no buffer, or one too short for a header and the trailer),
   with `BCIR_ERR_TRUNCATED`. The bytes must not change between the check and the walks.
+- **Every record with its span** (MC1, PORT-1: `bcir_sp_for_each_record` and its checked twin)
+  — the listing tools' walk. It hands over the header, the source plan, each segment (with its
+  fence arrays), prefetch, block, trace and generation record, and the CRC trailer, with the
+  exact octet span of each; the spans partition the pack. It applies the Python decoder's laws
+  and no others, so a pack that breaks only R10 is listed, not refused, as `bcir-pack` lists
+  it in Python. The whole pack is checked before the first callback.
 
 These mirror `bcir/verify::verify_pack`, so the Python and C rails agree.
 

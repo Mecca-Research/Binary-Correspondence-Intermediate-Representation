@@ -289,6 +289,32 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-10 — PORT-1 (StreamPack half): `bcir-pack` in C prints the oracle's octets.**
+  MC1's listing and record-delimited dump now have a freestanding C twin:
+  - `bcir_sp_for_each_record` (`bcir_runtime.c`) walks every wire record with its exact span on
+    the cursor every other walk reads, so there is no second parser. It applies the Python
+    decoder's laws and only those (R10 stays the verifier's), and checks the whole pack before
+    the first callback.
+  - `bcir_sp_listing.c` (library `bcir_listing`, no heap) formats through a caller's sink in
+    1 KiB chunks. Its trace index lives in borrowed scratch, heapsorted, so a claim traced twice
+    shows its last note, as the oracle's dict does.
+  - The hosted `bcir-pack` reads at most `--max-bytes` + 1 octets.
+  - A gate section, a libFuzzer target and a C harness hold it. The harness breaks one decoder law
+    per hand-built pack. The section and the quick tier run one corpus comparison: 78 packs over
+    four wire versions, plus their resealed mutants.
+
+  Two defects surfaced on the way:
+  - **The oracle's own listing depended on the interpreter.** `repr` keeps a printable non-ASCII
+    character literal. One pack listed `'plan\U0001fae8'` under Python 3.11 and `'plan🫨'` under
+    3.15. Quoted strings now use `ascii()`, which is identical on every ASCII string. The CLI also
+    writes UTF-8 with `\n` whatever the console's encoding; an ASCII console raised before.
+  - **The C cursor restated a UTF-8 fault as a truncation.** The next read overwrote the fault, so
+    every walk answered `BCIR_ERR_TRUNCATED` for a bad name. The first fault now sticks.
+
+  Eight injected C faults were each caught by the harness, the corpus or both. So were the two
+  Python ones (reverting to `repr`, or to a console write). The BCAB half (`bcir-bundle`'s
+  listing) remains.
+
 - **2026-11-10 — PORT-0: the oracle inventory reads every native rail.** `tools/perf/oracle_inventory.py`
   read only `runtime/c`. It now reads three rails:
   - the C units, as before;

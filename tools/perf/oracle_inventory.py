@@ -287,7 +287,12 @@ def gates(manifest: dict) -> dict[str, dict[str, list[str]]]:
             units |= libraries.get(lib, set())
         return units
 
-    harness_units = {name: units_of(e) for name, e in manifest["harnesses"].items()}
+    # A section's binaries are harnesses, variants of them and tools (bcir-cc, bcir-pack).
+    harness_units = {
+        name: units_of(e)
+        for kind in ("harnesses", "tools")
+        for name, e in manifest.get(kind, {}).items()
+    }
     for name, variant in manifest.get("variants", {}).items():
         if variant.get("of") in harness_units:
             harness_units[name] = harness_units[variant["of"]]

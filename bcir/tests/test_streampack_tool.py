@@ -132,3 +132,46 @@ def test_bounded_reader_rechecks_actual_bytes_after_stat():
         assert False, "expected concurrent-growth refusal"
     except AbiError as exc:
         assert "grew to 69 bytes" in str(exc)
+
+
+def test_quoted_strings_do_not_depend_on_the_interpreters_unicode_database():
+    # repr keeps a printable non-ASCII character literal, and which are printable is the
+    # interpreter's Unicode database: U+1FAE8 (Unicode 15) printed as itself under Python 3.15 and
+    # escaped under 3.11. ascii() escapes every code point past U+007E, and agrees with repr on
+    # every ASCII string, so the listing is one text on every interpreter.
+    from bcir.gem.streampack import LaneSegment, StreamPack, TraceNote
+    from bcir.model import Lane
+
+    pack = StreamPack(source_plan="\U0001fae8͸\xe9 it's")
+    pack.segments.append(LaneSegment("sĀ", 1, 0, Lane.U, 4, "op", (), (), fence_before=("͸",)))
+    pack.trace_notes.append(TraceNote(1))
+    blob = encode(pack)
+    listing = format_listing(blob)
+    assert 'source_plan "\\U0001fae8\\u0378\\xe9 it\'s"\n' in listing
+    assert "    fences before=['\\u0378'] after=[]\n" in listing
+    assert "  sĀ: op " in listing  # unquoted fields stay the record's own text
+    assert "# segment[0] 's\\u0100' offset=" in format_hexdump(blob)
+    assert (
+        format_listing(encode(StreamPack(source_plan="plan0"))).count("source_plan 'plan0'\n") == 1
+    )
+
+
+def test_cli_writes_utf8_octets_whatever_the_console():
+    from bcir.gem.streampack import LaneSegment, StreamPack
+    from bcir.model import Lane
+    import sys
+
+    pack = StreamPack(source_plan="p")
+    pack.segments.append(LaneSegment("s\xe9g", 1, 0, Lane.U, 4, "Ā", (), ()))
+    blob = encode(pack)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "sample.bspk"
+        path.write_bytes(blob)
+        raw = io.BytesIO()
+        console = io.TextIOWrapper(raw, encoding="ascii", newline="\r\n")
+        saved, sys.stdout = sys.stdout, console
+        try:
+            assert main(["dis", str(path)]) == 0
+        finally:
+            sys.stdout = saved
+        assert raw.getvalue() == format_listing(blob).encode("utf-8")  # no \r, no encode error

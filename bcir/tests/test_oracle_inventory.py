@@ -107,6 +107,10 @@ def test_every_twin_is_held_by_a_gate_or_said_not_to_be():
     held = oi.gates(manifest)
     assert "kplan" in held["bcir_kplan.c"]["sections"]
     assert "fuzz_kplan" in held["bcir_kplan.c"]["fuzzers"]
+    # a section's binaries are harnesses, variants and tools: a tool's main is held by the
+    # section that runs the tool (bcir-cc's, and bcir-pack's beside the harness of its library)
+    assert "bcir_cc" in held["bcir_cc.c"]["sections"]
+    assert held["bcir_pack_cli.c"]["sections"] == ["sp_listing"]
     text = oi.render()
     for unit in oi.twins(manifest, oi.oracle_modules()):
         assert f"| `{unit}` |" in text, unit
