@@ -102,6 +102,33 @@ One more finding came out of reading the units. **Nine units each define their o
 little-endian `rd16`/`rd32`/`rd64`, and four to six define `wr16`/`wr32`/`wr64`.** That is the
 L14 shape, a repeated mechanism, and CSUB-3 retires it.
 
+### 3.1 The native ports, measured (2026-11-10)
+
+The six units PORT-1 and PORT-2a added were measured the same way, after they landed. CSUB-1 was
+simulated as above, and `max_align_t` was supplied too.
+
+| Unit | Syntax today | First blocker past CSUB-1 (simulated) |
+|---|---|---|
+| `bcir_sp_listing.c` (freestanding) | fail: the multi-line static assertions of `bcir_streampack.h` | a block-scope `static const char *const` table (CSUB-2) |
+| `bcir_ab_listing.c` (freestanding) | fail: the same header | an untagged `static const struct { ... } t[]` (CSUB-2) |
+| `bcir_bundle_cli.c` (hosted) | fail: the same header | an untagged struct table of `offsetof` values (CSUB-2) |
+| `bcir_pack_cli.c`, `bcir_tokenize_cli.c` (hosted) | fail | `<stdio.h>`'s `FILE` (CSUB-5) |
+| `bcir_bpe.c` (hosted) | fail: `max_align_t`, `NULL` and `offsetof` in `bcir_host_alloc.h` | an aggregate member of an array element, `a[i].m.f` or `a[i].m = v` (in no rung yet) |
+
+None of the six parses today; none would compile with CSUB-1 alone. Three findings follow:
+- **`bcir_host_alloc.h` blocks every hosted unit.** It uses `max_align_t` and `offsetof`, and
+  every hosted unit includes it. CSUB-1 lists `offsetof` but not `max_align_t`, so CSUB-5 would
+  not open any hosted unit without it. CSUB-1 now names both.
+- **The record table is not in the ladder.** The front end refuses a member of a struct-typed
+  member of an array element (`"array-of-structs non-scalar element field ... is not yet
+  supported"`), whether read (`t[i].token.n`) or copied (`t[i].token = x`). This is the shape
+  of every open-addressed table of records, and `bcir_bpe.c`'s vocab, merge and id tables are
+  written in it. CSUB-2 now names it.
+- **The subset fell further behind while the ports landed.** PORT-1 added two freestanding units
+  outside it, and `bcir_bpe.c` carries the tenth copy of the little-endian reads. A ratchet that
+  covers only existing units would not have caught either. The gate below therefore also holds
+  new units.
+
 ## 4. The expansion ladder
 
 Each rung lands on both rails at once, the Python front end and the C twin. That means parity
@@ -110,8 +137,8 @@ itself forbids, and RED before GREEN.
 
 | Rung | What the subset gains | What it brings under the verified compiler |
 |---|---|---|
-| **CSUB-1** Conformance | Function-like macro calls whose arguments span lines (C11 6.10.3p10). `static_assert` and `_Static_assert` at file scope. Complete freestanding headers: `<stdint.h>`'s limits and its `INTn_C`/`UINTn_C` macros; `<stddef.h>`'s `NULL`, `offsetof` and `PTRDIFF_MAX`; `<stdbool.h>`, `<limits.h>` and `<float.h>`; `<math.h>`'s `NAN` and `INFINITY`. | The serialization core: `bcir_asn1.c`, `bcir_binrec.c`, `bcir_encode.c`, `bcir_runtime.c`, `bcir_exec.c`, `bcir_control_plane.c` and `bcir_ai_kernels.c`'s portable path. It is also every program in these domains that includes a standard header. |
-| **CSUB-2** Table idioms | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c` and `bcir_handoff.c`: the table-driven dispatch every codec and catalog reader is written in. |
+| **CSUB-1** Conformance | Function-like macro calls whose arguments span lines (C11 6.10.3p10). `static_assert` and `_Static_assert` at file scope. Complete freestanding headers: `<stdint.h>`'s limits and its `INTn_C`/`UINTn_C` macros; `<stddef.h>`'s `NULL`, `offsetof`, `max_align_t` and `PTRDIFF_MAX` (`bcir_host_alloc.h` needs `max_align_t` and `offsetof`, §3.1); `<stdbool.h>`, `<limits.h>` and `<float.h>`; `<math.h>`'s `NAN` and `INFINITY`. | The serialization core: `bcir_asn1.c`, `bcir_binrec.c`, `bcir_encode.c`, `bcir_runtime.c`, `bcir_exec.c`, `bcir_control_plane.c` and `bcir_ai_kernels.c`'s portable path. It is also every program in these domains that includes a standard header. |
+| **CSUB-2** Table idioms | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c` and `bcir_handoff.c`: the table-driven dispatch every codec and catalog reader is written in. |
 | **CSUB-3** C23 bits and checked arithmetic | `<stdbit.h>` (endian queries, bit width, leading and trailing zeros, population count) and `<stdckdint.h>` (`ckd_add`, `ckd_sub`, `ckd_mul`), each with its exact C23 semantics. The master roadmap lists both as near-term gaps (§4.1). One shared `bcir_bytes.h` built on them replaces the nine copies of the endian helpers, byte-identical. | Varints, bitmaps, length fields and every bounds check of the L3 kind ("bounds live where the resource commits") written as checked arithmetic rather than hand-rolled comparisons. |
 | **CSUB-4** The atomics API | `<stdatomic.h>`'s explicit-order calls: `atomic_load_explicit`, `atomic_store_explicit`, `atomic_fetch_add_explicit` and `atomic_compare_exchange_*_explicit`, with `memory_order`. They map onto the memory model the oracle already states (`lower.memory_model`) and the law rail's atomic orderings. | `bcir_ring.c` and the lock-free single-producer, single-consumer structures the AI system's services run on (`BCIR_AI_SYSTEM_ROADMAP.md` §5.2). |
 | **CSUB-5** A hosted profile | A declared hosted class, not part of the freestanding subset: `<stdio.h>` streams and file I/O under the injected-allocator memory class (`../languages/C_MEMORY_DISCIPLINE.md`). Memory mapping goes through a declared host interface. | The loaders `bcir_q8_model.c` and `bcir_llama.c`, and the quarantine's recovery |
@@ -126,7 +153,8 @@ itself forbids, and RED before GREEN.
 
 **A ratchet is the gate.** CSUB-1 adds a gate that runs `bcir-cc` over the runtime's
 freestanding units and holds the set that compiles with R1–R18 clean. Each later rung grows the
-set, and any shrink fails the gate. The interface phase gains a matching check: `cgen`'s
+set, and any shrink fails the gate. A unit added after the gate lands joins the set, or is listed
+with its first blocker and the rung that lifts it, so the distance cannot grow unrecorded (§3.1). The interface phase gains a matching check: `cgen`'s
 generated codecs (IF-4 to IF-6) compile under the verified subset, so a generated codec is held
 to R1–R18 as well as to octet parity.
 

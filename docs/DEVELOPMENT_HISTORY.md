@@ -289,6 +289,40 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-10 — PORT-2a: the byte-level BPE tokenizer in C, over one JSON reader.**
+  - `bcir_bpe.c` (library `bcir_tokenizer`, hosted) loads a `tokenizer.json` of the GPT-2/Qwen
+    family, encodes UTF-8 text to ids and decodes ids back. `bcir-tokenize` is its command line
+    (`info`, `encode`, `decode`, `limits`). Every allocation goes through a lent allocator.
+  - Both rails read the file through the bounded JSON reader under one named profile:
+    `TOKENIZER_LIMITS` (Python) and `bcir_bpe_limits` (C). The scan bounds depth, nodes, members,
+    elements, string and number lengths and total work. Then come UTF-8 (an escaped lone surrogate
+    included) and the grammar, with repeated member names refused. The Python loader used to call
+    `json.loads` alone, which admits NaN, Infinity and lone surrogates and has no limits; it now
+    runs `jer_bounded.scan` first and refuses NaN.
+  - The laws run over records the reader's events collect, in the oracle's order, so member
+    order never changes a verdict. Ids are integers in [0, 2^31-1]; `-0` counts as 0, and a
+    fraction or an exponent is refused. Merges are applied through a heap of candidates: O(n log n)
+    per word where the oracle rescans in O(n^2), with the same choice at every step (the lowest
+    rank, then the leftmost). Specials are matched through a trie, longest first. Decode checks
+    UTF-8 for each run of byte tokens between specials, as the oracle's decoder does.
+  - Every table is a hash keyed by SipHash-2-4 under the file's own SHA-256.
+
+  `test_c_bpe_tokenizer.py` and the `tokenizer` section share one comparison. It covers seven
+  tokenizers:
+  - one trained in the test, with 330 merges, rank ties and two merges that make one token;
+  - the pair form, with member order permuted and decorated;
+  - specials that overlap, share a vocab token's text and id, lie outside the byte alphabet, or
+    are the space itself.
+
+  The comparison also covers 110 law documents, the profile's per-container ceilings and byte
+  mutations. `test_bpe.c` fails every allocation of a load and an encode in turn, and pins the
+  order "scan before sink". `fuzz_bpe.c` holds encode and decode to their count, measure and
+  round-trip contracts. Eleven injected faults were each caught. Two of them first escaped the
+  comparison: the pre-tokenizer's space rule (no merge crossed two spaces) and per-run UTF-8 in
+  decode. The corpus now reaches both. Removing the scan changes no verdict, because the
+  parser holds the same limits, so the harness pins the scan's order instead. The inventory goes
+  to 69 twinned modules (C 50).
+
 - **2026-11-10 — PORT-1 (BCAB half): `bcir-bundle` in C, and MC1's C twin is complete.**
   - `bcir_ab_listing.c` (library `bcir_listing`, freestanding) prints `list` and `hexdump` over
     the BCAB reader's own validation, so a bundle the oracle refuses prints nothing.

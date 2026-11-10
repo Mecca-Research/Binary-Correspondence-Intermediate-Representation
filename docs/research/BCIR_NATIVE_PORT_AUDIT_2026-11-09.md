@@ -245,7 +245,7 @@ containers by hand for code that never runs on a target.
 |---|---|---|
 | **PORT-0** (**landed 2026-11-10**: 45 twinned modules became 66; C 47, C++ 1, MLIR 21) | The inventory reads `runtime/cpp/` and `mlir/lib/` and counts their twins. C units that mirror a module without naming it name it (`bcir_artifact_bundle.c`, `bcir_q4_kernel.c`). The A/B audit's Python-only rows show their MLIR pass where one exists. | First; small, tooling only |
 | **PORT-1** (**landed 2026-11-10**: `bcir-pack` and `bcir-bundle` in C, the oracle's octets over 78 packs, 3 bundles, 34 envelopes and their resealed mutants; 66 twinned modules became 68) | N1, MC1 disassembly in C. The views the oracle delegates to a resident disassembler, and the ASN.1 projections, stay the Python tool's | Between interface-phase slices |
-| **PORT-2** | N2, the tokenizers in C | Between slices; before SLM-1 |
+| **PORT-2** (**PORT-2a landed 2026-11-10**: `bcir_bpe.c` and `bcir-tokenize`, the byte-level BPE in C, reading `tokenizer.json` through the bounded JSON reader both rails now share; the oracle's verdicts, ids and octets; 68 twinned modules became 69) | N2, the tokenizers in C. PORT-2b, SentencePiece (`frontends.models.spm`), is next | Between slices; before SLM-1 |
 | **PORT-3** | The C verifier's R19/R20 | With driver row 1 |
 | **PORT-4** | N4, the event transducer in C | With the UART event-driven slices |
 | ECN in `cgen` | N3 | Inside the interface phase, IF-5 |

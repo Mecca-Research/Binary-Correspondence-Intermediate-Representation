@@ -270,6 +270,12 @@ add_target artifact "BCAB artifact bundle" "-max_len=16384" \
 add_target listing "StreamPack listing (MC1)" "-max_len=16384" \
   "${C}/fuzz_sp_listing.c" "${C}/bcir_sp_listing.c" "${C}/bcir_runtime.c"
 
+# The byte-level BPE tokenizer (PORT-2): a tokenizer.json is a file anyone hands a model runner.
+# Every input is loaded as one (a refusal keeps nothing; a load is held to encode/decode's count,
+# measure and round-trip contracts) and is also encoded and decoded by a fixed tokenizer.
+add_target bpe "BPE tokenizer" "-max_len=32768" \
+  "${C}/fuzz_bpe.c" "${C}/bcir_bpe.c" "${C}/bcir_jer.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
+
 # bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
 # pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
 add_target exec "executor" "" \
@@ -359,6 +365,20 @@ h, _theta = mf.target_and_theta()
 for name, (_module, _spec, mp) in sorted(mf.planned().items()):
     blob = encode_plan(execution_plan_of(mp.best, h))
     out.joinpath(f"plan_v{blob[4]}_{name}.bplan").write_bytes(blob)
+PY
+
+# The tokenizer corpus is the one bcir/tests/test_c_bpe_tokenizer.py compares against the oracle:
+# its tokenizers and the law documents small enough to mutate.
+python3 - "${tmp}/corpus_bpe" <<'PY' || { echo "  FAIL: tokenizer seed corpus"; exit 1; }
+import sys
+from pathlib import Path
+from bcir.tests.test_c_bpe_tokenizer import law_documents, tokenizers
+out = Path(sys.argv[1])
+for name, blob in tokenizers():
+    out.joinpath(f"{name}.json").write_bytes(blob)
+for name, blob in law_documents():
+    if len(blob) <= 32768:
+        out.joinpath(f"law-{name}.json").write_bytes(blob)
 PY
 
 if ! python3 - "${tmp}/corpus_artifact" <<'PY'

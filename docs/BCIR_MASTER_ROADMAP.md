@@ -598,7 +598,8 @@ History explains past decisions but does not reopen superseded sequencing.
 3. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
    twin's form), the one UART slice left open across rails. It can ride between slices of either
    phase, and so can the native port audit's small slices: PORT-0 (the inventory counts C++ and
-   MLIR twins) and PORT-1 (MC1 in C) have landed; PORT-2 (the tokenizers in C) is next.
+   MLIR twins), PORT-1 (MC1 in C) and PORT-2a (the byte-level BPE tokenizer in C) have landed;
+   PORT-2b (SentencePiece in C) is next.
 4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
    event timers and DMA, whose blueprints exist; virtio-net, and with it native networking, comes
    with row 3. Alternate the drivers one slice at a time with the deferred work:
