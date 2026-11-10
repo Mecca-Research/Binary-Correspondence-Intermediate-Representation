@@ -187,7 +187,10 @@ metadata, not payload blobs.
 `bcir-bundle list|hexdump|extract|select|dis|mnemonics` validates the entire BCAB before exposing
 one byte. StreamPack disassembly uses `bcir-pack`; native/WASM/bitcode/SPIR-V/JVM payloads are
 delegated to `llvm-objdump`/`objdump`, `llvm-dis`, `spirv-dis`, or `javap`. Missing tools fail
-honestly. Standard assembler/linker output is extracted byte-identically; BCAB never rewrites
+honestly. The C `bcir-bundle` (`runtime/c/bcir_bundle_cli.c` over the freestanding
+`bcir_ab_listing.c`, PORT-1) prints the same octets for `list`, `hexdump`, `select`, `extract`
+and the StreamPack and text views of `dis` and `mnemonics`; it refuses the delegated views and the
+ASN.1 projections rather than answering them differently. Standard assembler/linker output is extracted byte-identically; BCAB never rewrites
 relocations, sections, symbols, or instruction encodings.
 
 ## 7. Additive ASN.1 transfer syntax

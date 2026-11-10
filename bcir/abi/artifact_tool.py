@@ -3,6 +3,8 @@
 The tool validates the complete bundle before displaying or extracting a byte.
 Payload disassembly remains delegated to the resident format toolchain; BCAB is
 a container and compatibility contract, not a replacement object-file parser.
+runtime/c/bcir_bundle_cli.c is the C twin of `list`, `hexdump`, `select`, `extract`
+and the StreamPack and text views of `dis` and `mnemonics`, held to these octets.
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ from .artifact_bundle import (
     inspect_bundle,
     select_variant,
 )
-from .streampack_tool import format_listing as format_streampack_listing
+from .streampack_tool import _write_utf8, format_listing as format_streampack_listing
 
 
 DEFAULT_MAX_BYTES = MAX_BUNDLE_BYTES
@@ -96,7 +98,7 @@ def format_hexdump(data: bytes, *, width: int = 16) -> str:
     for span in sorted(info.spans, key=lambda item: item.offset):
         index = "" if span.index is None else f"[{span.index}]"
         lines.append(
-            f"# {span.kind}{index} {span.name!r} offset=0x{span.offset:08x} length={span.length}"
+            f"# {span.kind}{index} {span.name!a} offset=0x{span.offset:08x} length={span.length}"
         )
         for offset in range(span.offset, span.end, width):
             chunk = data[offset : min(offset + width, span.end)]
@@ -442,7 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     except (BundleError, OSError, ValueError) as exc:
         print(f"bcir-bundle: {exc}", file=sys.stderr)
         return 2
-    sys.stdout.write(output)
+    _write_utf8(output)  # the octets on every host: a text payload's UTF-8 whatever the console
     return 0
 
 

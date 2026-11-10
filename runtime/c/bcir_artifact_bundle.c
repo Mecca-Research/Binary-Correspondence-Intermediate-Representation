@@ -456,6 +456,6 @@ bcir_ab_status bcir_ab_select(const bcir_ab_view *view, const bcir_ab_envelope *
 
 const char *bcir_ab_status_string(bcir_ab_status status) {
   static const char *const names[] = {"ok","invalid","size","magic","version","layout",
-    "metadata","crc","sha256","payload","incompatible","not-found"};
+    "metadata","crc","sha256","payload","incompatible","not-found","output"};
   return (unsigned)status < sizeof(names)/sizeof(names[0]) ? names[status] : "unknown";
 }

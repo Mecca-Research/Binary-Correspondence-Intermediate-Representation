@@ -221,6 +221,92 @@ BCIR_NODISCARD bcir_status bcir_sp_checked_for_each_segment(
 BCIR_NODISCARD bcir_status bcir_sp_checked_for_each_block(
     const bcir_sp_checked *BCIR_RESTRICT pack, bcir_block_fn fn, void *ctx);
 
+/* --- MC1 (PORT-1): every wire record with its exact span ------------------------------------
+ * The native twin of bcir/abi/streampack_abi.py::inspect_stream_pack, for listing and debugging
+ * tools (bcir_sp_listing.h). The walk visits the header, the source plan, every segment, prefetch,
+ * block, trace and v4 generation record, and the CRC trailer, in wire order; the spans partition
+ * the pack exactly. It applies the Python decoder's laws and only those: bcir_sp_validate's header,
+ * reserved octets and CRC, pipeline_depth >= 1, every string UTF-8, the segment range gate, every
+ * prefetch's buffers 1 or 2, the v4 vector's ascending RIDs and maxima, and exact consumption to
+ * the trailer. R10 is not among them -- an untraced segment, a duplicate trace id or an unresolved
+ * prefetch is listed, never refused, as the oracle's listing lists it (bcir_sp_verify_semantic
+ * judges those). The whole pack is checked before `fn` is first called: a refused pack invokes
+ * nothing, so a tool never prints half a listing. */
+typedef enum bcir_sp_record_kind {
+  BCIR_SP_RECORD_HEADER = 0,
+  BCIR_SP_RECORD_SOURCE_PLAN = 1,
+  BCIR_SP_RECORD_SEGMENT = 2,
+  BCIR_SP_RECORD_PREFETCH = 3,
+  BCIR_SP_RECORD_BLOCK = 4,
+  BCIR_SP_RECORD_TRACE = 5,
+  BCIR_SP_RECORD_GENERATION = 6,
+  BCIR_SP_RECORD_CRC32 = 7
+} bcir_sp_record_kind;
+
+/* A zero-copy view of one prefetch record. Mirrors bcir/gem/streampack.py::Prefetch. */
+typedef struct bcir_prefetch_view {
+  const char *name; uint16_t name_len;
+  uint32_t distance;
+  uint16_t n_targets; const uint8_t *targets;  /* little-endian u32[n_targets] */
+  const char *hint; uint16_t hint_len;
+  const char *pattern; uint16_t pattern_len;
+  uint8_t buffers;                             /* v2: 1 or 2 (1 on a v1 pack) */
+} bcir_prefetch_view;
+
+/* Decode targets[i] from the raw little-endian pointer (0 when out of range). */
+uint32_t bcir_prefetch_target(const bcir_prefetch_view *pf, uint16_t i);
+
+/* One trace record. Mirrors bcir/gem/streampack.py::TraceNote. */
+typedef struct bcir_trace_view {
+  uint64_t claim_id;
+  uint64_t src_hash;
+  uint64_t trace_hash;
+} bcir_trace_view;
+
+/* A string array as the walk found it: `count` strings, each a u16 length and its octets, the
+ * first at `next`. Only a view the walk produced may be stepped (its bytes were checked). */
+typedef struct bcir_sp_strings {
+  uint16_t count;
+  const uint8_t *next;
+} bcir_sp_strings;
+
+/* Take the next string of `it` into (*s, *len) and advance; 0 (and nothing taken) at the end. */
+int bcir_sp_strings_next(bcir_sp_strings *it, const char **s, uint16_t *len);
+
+/* One record of the walk. `header`, `kind`, `index` and the span are set on every record; the
+ * member named for the kind is set on its own kind, and every other member is zero. */
+typedef struct bcir_sp_record {
+  const bcir_streampack_header *header;  /* the pack's header (valid during the call) */
+  bcir_sp_record_kind kind;
+  uint32_t index;                        /* the record's index within its kind */
+  size_t offset;                         /* the span: [offset, offset + length) */
+  size_t length;
+  const char *source_plan; uint16_t source_plan_len;  /* SOURCE_PLAN */
+  bcir_segment_view segment;                          /* SEGMENT, with its fences: */
+  bcir_sp_strings fence_before;
+  bcir_sp_strings fence_after;
+  bcir_prefetch_view prefetch;                        /* PREFETCH */
+  bcir_block_view block;                              /* BLOCK */
+  bcir_trace_view trace;                              /* TRACE */
+  bcir_generation_view generation;                    /* GENERATION */
+  uint32_t crc32;                                     /* CRC32: the stored (checked) value */
+} bcir_sp_record;
+
+/* Per-record callback; return nonzero to stop the walk early. */
+typedef int (*bcir_sp_record_fn)(const bcir_sp_record *rec, void *ctx);
+
+/* Check the whole pack, then walk every record in wire order invoking `fn` (NULL only checks).
+ * Returns the first violation's status (BCIR_ERR_TRUNCATED / _UTF8 / _MAGIC / _VERSION /
+ * _RESERVED / _CRC / _LANE / _WIDTH / _DISPATCH / _PROVENANCE for a zero pipeline depth or a
+ * prefetch's buffers / _GENERATION / _TRAILING), BCIR_OK on a pack the oracle's decoder takes,
+ * also when `fn` stops the walk. Bounds-checked end to end; freestanding, no heap. */
+BCIR_NODISCARD bcir_status bcir_sp_for_each_record(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                                   bcir_sp_record_fn fn, void *ctx);
+/* The same walk over a pack bcir_sp_check validated (SP-ONCE): every law but the CRC re-applied, the
+ * CRC not recomputed -- a tool that walks one pack several times crosses its CRC once. */
+BCIR_NODISCARD bcir_status bcir_sp_checked_for_each_record(const bcir_sp_checked *BCIR_RESTRICT pack,
+                                                           bcir_sp_record_fn fn, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

@@ -243,8 +243,8 @@ containers by hand for code that never runs on a target.
 
 | Slice | What | When |
 |---|---|---|
-| **PORT-0** | The inventory reads `runtime/cpp/` and `mlir/lib/` and counts their twins. C units that mirror a module without naming it name it (`bcir_artifact_bundle.c`, `bcir_q4_kernel.c`). The A/B audit's Python-only rows show their MLIR pass where one exists. | First; small, tooling only |
-| **PORT-1** | N1, MC1 disassembly in C | Between interface-phase slices |
+| **PORT-0** (**landed 2026-11-10**: 45 twinned modules became 66; C 47, C++ 1, MLIR 21) | The inventory reads `runtime/cpp/` and `mlir/lib/` and counts their twins. C units that mirror a module without naming it name it (`bcir_artifact_bundle.c`, `bcir_q4_kernel.c`). The A/B audit's Python-only rows show their MLIR pass where one exists. | First; small, tooling only |
+| **PORT-1** (**landed 2026-11-10**: `bcir-pack` and `bcir-bundle` in C, the oracle's octets over 78 packs, 3 bundles, 34 envelopes and their resealed mutants; 66 twinned modules became 68) | N1, MC1 disassembly in C. The views the oracle delegates to a resident disassembler, and the ASN.1 projections, stay the Python tool's | Between interface-phase slices |
 | **PORT-2** | N2, the tokenizers in C | Between slices; before SLM-1 |
 | **PORT-3** | The C verifier's R19/R20 | With driver row 1 |
 | **PORT-4** | N4, the event transducer in C | With the UART event-driven slices |
@@ -253,6 +253,11 @@ containers by hand for code that never runs on a target.
 | **PORT-6 to PORT-9** | N5's remaining solvers (CXX3), the incremental engine (N6, CXX4), the memory fabric's planning (N9, CXX6) and N7, the ASN.1 host compiler (CXX5) | Alternating with the foundation and driver work |
 | **PORT-10** | N8, a native kernel lowering in MLIR | Behind a GO/STOP written after PORT-5 |
 | Tier 3 | N10–N14 | Each with its consumer |
+
+The C half of this placement, the verified subset the runtime's C could be compiled by, is
+audited in [`BCIR_C_SUBSET_AUDIT_2026-11-10.md`](BCIR_C_SUBSET_AUDIT_2026-11-10.md). That audit
+adds three subsystems to this list: a deterministic counter-based RNG, a native data loader, and
+hardware digests.
 
 ## 6. Threats to this audit
 

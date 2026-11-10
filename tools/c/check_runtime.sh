@@ -139,6 +139,12 @@ show_section runtime || exit 1
 echo "[c-runtime] BCAB artifact bundle: freestanding reader + Python/C selection parity"
 show_section artifact_bundle || exit 1
 
+echo "[c-runtime] MC1 StreamPack listing (PORT-1): the record walk's laws + bcir-pack's octets == the oracle's"
+show_section sp_listing || exit 1
+
+echo "[c-runtime] MC1 BCAB listing (PORT-1): bcir-bundle's list/hexdump/select/extract/dis/mnemonics == the oracle's"
+show_section bundle_listing || exit 1
+
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1
 

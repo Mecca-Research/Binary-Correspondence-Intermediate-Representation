@@ -25,6 +25,8 @@ freestanding_core bcir_sha256.c
 freestanding_core bcir_ed25519.c
 freestanding_core bcir_plan_sign.c
 freestanding_core bcir_shard_manifest.c
+freestanding_core bcir_sp_listing.c
+freestanding_core bcir_ab_listing.c
 freestanding_core bcir_telemetry_frame.c
 freestanding_core bcir_telemetry_envelope.c
 freestanding_core bcir_train.c
@@ -45,6 +47,8 @@ hosted_tool bcir_llama.c
 hosted_tool bcir_llama_cli.c
 hosted_tool bcir_make.c
 hosted_tool bcir_microbench.c
+hosted_tool bcir_pack_cli.c
+hosted_tool bcir_bundle_cli.c
 hosted_tool bcir_q8_model.c
 hosted_tool bcir_q4_kernel.c
 hosted_tool bcir_qualify_cli.c

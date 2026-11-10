@@ -2,7 +2,8 @@
 //
 // The C++ half of the G16 seam (GEM+ roadmap G16, staged plan S3-C). The freestanding C pack
 // table (runtime/c/bcir_handoff.h) decides every operation; these types only give its handles a
-// C++ lifetime, so the rules the table enforces at run time are also the shape of the code:
+// C++ lifetime, so the rules the table enforces at run time are also the shape of the code.
+// Its reference model is bcir/gem/handoff.py, which states the seam's contract:
 //
 //   PackArena    owns the table's slots and arena (shared_ptr: views hold it weakly, so a view
 //                that outlives its arena is refused, never dereferenced). One mutex serializes

@@ -276,6 +276,18 @@ Current work is maintenance and bounded completion, not another breadth sprint:
 - Add C standard-library/compiler surfaces only when a driver or model slice requires them.
   Near-term ML-relevant gaps are `<stdbit.h>`, `<stdckdint.h>`, verifier-fed `assume`, and
   packed sub-byte storage/compute semantics.
+- **The subset against the runtime's own C** ([`research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)).
+  The verified compiler parses 6 of the 33 runtime library units today, 15 once three
+  conformance gaps close (CSUB-1), and compiles 10 with R1–R18 clean. The ladder:
+  - CSUB-1, conformance: multi-line macro calls, file-scope `static_assert`, complete
+    freestanding headers;
+  - CSUB-2, table idioms;
+  - CSUB-3, `<stdbit.h>` and `<stdckdint.h>`;
+  - CSUB-4, `<stdatomic.h>`'s explicit-order calls;
+  - CSUB-5, a hosted profile;
+  - CSUB-6, AI numerics at the source level.
+
+  A ratchet gate holds the set of runtime units the verified compiler accepts.
 - Preserve the C++ airlock: C owns stable value/resource ABI; C++ owns hosted graph and
   distributed orchestration. Implement a backend only with an executable consumer and teardown
   tests.
@@ -306,7 +318,8 @@ typed target/device edges, StreamPack/operator tools, verification, device-comma
 BCAB v1 packaging/selection around unmodified standard artifacts. BCAB is not MC7 pack linking or
 MC11 object linking. The next sequence is:
 
-1. Complete source-module symbol resolution and a freestanding C twin for MC1 disassembly.
+1. Complete source-module symbol resolution. MC1's freestanding C twin landed as PORT-1:
+   `bcir-pack` and `bcir-bundle` in C print the oracle's octets.
 2. Bind MC2 registry operations through RuntimeChannel only after a real driver resource exists.
 3. Build MC3–MC9 from the concrete UART/virtio command and lifecycle needs.
 4. Treat MC10–MC14—native isel, object/link, ABI frame, debug metadata, and binary trust—as a
@@ -585,7 +598,7 @@ History explains past decisions but does not reopen superseded sequencing.
 3. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
    twin's form), the one UART slice left open across rails. It can ride between slices of either
    phase, and so can the native port audit's small slices: PORT-0 (the inventory counts C++ and
-   MLIR twins), PORT-1 (MC1 disassembly in C) and PORT-2 (the tokenizers in C).
+   MLIR twins) and PORT-1 (MC1 in C) have landed; PORT-2 (the tokenizers in C) is next.
 4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
    event timers and DMA, whose blueprints exist; virtio-net, and with it native networking, comes
    with row 3. Alternate the drivers one slice at a time with the deferred work:

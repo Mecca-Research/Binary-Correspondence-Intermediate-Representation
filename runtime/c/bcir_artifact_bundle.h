@@ -3,6 +3,9 @@
  * Allocation-free, fail-closed reader/selector for the BCIR Artifact Bundle.
  * Input and selected payloads are BORROWED immutable spans; callers retain the
  * backing bytes for the lifetime of every view. No pointer crosses the wire.
+ * The C twin of bcir/abi/artifact_bundle.py's reader and variant selection
+ * (decode_bundle, inspect_bundle, select_variant); its writer stays in Python,
+ * where bundles are built.
  *===----------------------------------------------------------------------===*/
 #ifndef BCIR_ARTIFACT_BUNDLE_H
 #define BCIR_ARTIFACT_BUNDLE_H
@@ -46,7 +49,8 @@ typedef enum bcir_ab_status {
   BCIR_AB_ERR_SHA256 = 8,
   BCIR_AB_ERR_PAYLOAD = 9,
   BCIR_AB_ERR_INCOMPATIBLE = 10,
-  BCIR_AB_ERR_NOT_FOUND = 11
+  BCIR_AB_ERR_NOT_FOUND = 11,
+  BCIR_AB_ERR_OUTPUT = 12   /* a caller's sink refused the listing's output (bcir_ab_listing.h) */
 } bcir_ab_status;
 
 typedef enum bcir_ab_kind {

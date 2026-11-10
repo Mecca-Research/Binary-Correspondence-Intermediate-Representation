@@ -30,13 +30,13 @@ done
 echo "  PASS freestanding (C11 + C23; ABI static_assert holds)"
 
 for std in c11 "${c23}"; do
-  for unit in bcir_artifact_bundle.c bcir_sha256.c bcir_ed25519.c bcir_plan_sign.c; do
+  for unit in bcir_artifact_bundle.c bcir_sha256.c bcir_ed25519.c bcir_plan_sign.c bcir_sp_listing.c bcir_ab_listing.c; do
     "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
       -c "${C}/${unit}" -o /dev/null \
       || { echo "  FAIL: ${unit} not freestanding-clean under -std=${std}"; exit 1; }
   done
 done
-echo "  PASS bcir_artifact_bundle.c bcir_sha256.c bcir_ed25519.c bcir_plan_sign.c freestanding-clean (C11 + C23)"
+echo "  PASS bcir_artifact_bundle.c bcir_sha256.c bcir_ed25519.c bcir_plan_sign.c bcir_sp_listing.c bcir_ab_listing.c freestanding-clean (C11 + C23)"
 
 # ETL binary-record decoder: freestanding compile (C11 + C23)
 # bcir_binrec.c is the C twin of bcir/etl/binary.py (a second binary trust boundary).

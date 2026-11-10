@@ -1,5 +1,7 @@
 //===- BCIRCimDvfsPass.cpp - recompute the CIM/PIM dispatch + DVFS clock decisions -*- C++ -*-===//
 //
+// The law-rail twin of bcir/gem/cim.py and bcir/gem/dvfs.py.
+//
 // -bcir-cim / -bcir-dvfs: the law-rail RECOMPUTE of the two GEM scheduling decisions, the way
 // -bcir-cost-model recomputes cost. Where R14/R15 only *verify* a declared dispatch / clock,
 // these passes compute the decision from first principles (the claim + the capability + Theta),

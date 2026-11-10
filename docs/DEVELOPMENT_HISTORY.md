@@ -289,6 +289,90 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-10 — PORT-1 (BCAB half): `bcir-bundle` in C, and MC1's C twin is complete.**
+  - `bcir_ab_listing.c` (library `bcir_listing`, freestanding) prints `list` and `hexdump` over
+    the BCAB reader's own validation, so a bundle the oracle refuses prints nothing.
+  - It also gives the payload views that need no resident disassembler: the text listing, text
+    mnemonics, and a StreamPack's opcodes. The text rules are Python's `str.splitlines`, `strip`
+    and `split`, over fixed tables of line breaks and whitespace; both are the same on 3.11 and
+    3.15, and a payload built from the interpreter's own `str.isspace` set holds the table to it.
+  - The hosted `bcir-bundle` adds `select` and `extract`. It builds the envelope as
+    `CompatibilityEnvelope` does and hands it to the reader's selector, and with `--id` it does
+    not consult the envelope, as the oracle does not. The views the oracle delegates to objdump,
+    llvm-dis, spirv-dis or javap, and the ASN.1 projections, are refused rather than answered
+    differently.
+  - Both listings now print through one text writer, `bcir_listing_text.h`. Moving the StreamPack
+    listing onto it changed no octet over its corpus.
+  - The BCAB fuzzer now also runs each input resealed, and holds the listing, the dump and the
+    payload views to the reader's verdict.
+
+  `test_c_bundle_listing.py` and the `bundle_listing` section share one comparison. It covers 3
+  bundles that reach every listed field, 34 envelopes (those that select, select nothing, and are
+  refused), every extract and view, and resealed mutants. Nine injected faults were each caught.
+  Fault injection also found one CLI check (edge whitespace in envelope strings) that duplicated
+  the reader's own predicate, so it could never fire; it was removed. Two test files had literal
+  non-ASCII characters (one unassigned) where escapes were meant; they are escapes now. The
+  inventory goes to 68 twinned modules (C 49).
+
+- **2026-11-10 — PORT-1 (StreamPack half): `bcir-pack` in C prints the oracle's octets.**
+  MC1's listing and record-delimited dump now have a freestanding C twin:
+  - `bcir_sp_for_each_record` (`bcir_runtime.c`) walks every wire record with its exact span on
+    the cursor every other walk reads, so there is no second parser. It applies the Python
+    decoder's laws and only those (R10 stays the verifier's), and checks the whole pack before
+    the first callback.
+  - `bcir_sp_listing.c` (library `bcir_listing`, no heap) formats through a caller's sink in
+    1 KiB chunks. Its trace index lives in borrowed scratch, heapsorted, so a claim traced twice
+    shows its last note, as the oracle's dict does.
+  - The hosted `bcir-pack` reads at most `--max-bytes` + 1 octets.
+  - A gate section, a libFuzzer target and a C harness hold it. The harness breaks one decoder law
+    per hand-built pack. The section and the quick tier run one corpus comparison: 78 packs over
+    four wire versions, plus their resealed mutants.
+
+  Two defects surfaced on the way:
+  - **The oracle's own listing depended on the interpreter.** `repr` keeps a printable non-ASCII
+    character literal. One pack listed `'plan\U0001fae8'` under Python 3.11 and `'plan🫨'` under
+    3.15. Quoted strings now use `ascii()`, which is identical on every ASCII string. The CLI also
+    writes UTF-8 with `\n` whatever the console's encoding; an ASCII console raised before.
+  - **The C cursor restated a UTF-8 fault as a truncation.** The next read overwrote the fault, so
+    every walk answered `BCIR_ERR_TRUNCATED` for a bad name. The first fault now sticks.
+
+  Eight injected C faults were each caught by the harness, the corpus or both. So were the two
+  Python ones (reverting to `repr`, or to a console write). The BCAB half (`bcir-bundle`'s
+  listing) remains.
+
+- **2026-11-10 — PORT-0: the oracle inventory reads every native rail.** `tools/perf/oracle_inventory.py`
+  read only `runtime/c`. It now reads three rails:
+  - the C units, as before;
+  - the C++ seam's units (`seam_libraries`), under the same reference rules;
+  - the MLIR law rail's sources, by path references only. Their comments spell dialect
+    operations such as `bcir.kbcir.select`, which the dotted rule would read as the packages
+    `bcir.kbcir` and `bcir.gem`; a witness shows that hazard and refuses it.
+
+  Twins that mirrored a module without naming it now name it (comments only):
+  - BCAB's reader and selection, and the BCIRQ4T v1 kernel, in C;
+  - the hand-off seam in C++;
+  - the async-token, CIM/DVFS, allocation-pool and verifier passes in MLIR.
+
+  The inventory goes from 45 twinned modules to 66: C 47, C++ 1, MLIR 21. The A/B audit's
+  scheduler rows now show their MLIR passes. Four new witnesses were RED before the change; the
+  dotted-rule fault injected into the MLIR reader is caught.
+
+- **2026-11-10 — C-SUBSET-AUDIT: the verified C subset against the runtime's own C.**
+  `docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md` ran `bcir-cfront` over the 33 runtime
+  library units.
+  - **6 parse today.** 15 parse once three conformance gaps close: multi-line macro calls
+    (C11 6.10.3p10), a file-scope `static_assert`, and the standard headers' macros. The C twin
+    refuses the same three.
+  - **10 compile with R1–R18 clean.** Behind them are table idioms (static string tables,
+    untagged structs, pointers to arrays, array parameters in function-pointer types), the
+    `*_C` macros, `<stdatomic.h>`'s call API and hosted stdio.
+  - **`bcir_per.c` recurses one level, against R18.** The unit gets fixed rather than the law.
+  - **Nine units each define their own endian read helpers.**
+
+  The CSUB-1 to CSUB-6 ladder and a ratchet gate are proposed. So are three missing
+  subsystems: a deterministic counter-based RNG (the C rail has none outside a test), a native
+  data loader (the trainer takes token-id arrays from its caller) and hardware digests.
+
 - **2026-11-09 — NATIVE-PORT-AUDIT: what the oracle still holds that belongs in C or C++, and
   C or C++ for K_BCIR.** `docs/research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md` cross-references
   all 313 oracle modules (161,986 non-test lines) against `runtime/c`, `runtime/cpp` and the MLIR

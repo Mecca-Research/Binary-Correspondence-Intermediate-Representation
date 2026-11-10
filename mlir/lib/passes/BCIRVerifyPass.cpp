@@ -1,5 +1,7 @@
 //===- BCIRVerifyPass.cpp - the -bcir-verify semantic laws R1-R24 -*- C++ -*-===//
 //
+// The law-rail twin of bcir/verify/, the oracle's runnable laws.
+//
 // Part of the modular BCIR MLIR pass library (split out of the former monolithic
 // BCIRPasses.cpp). Shared helpers live in BCIRPassSupport.h; registration in
 // BCIRPasses.cpp. C++23.

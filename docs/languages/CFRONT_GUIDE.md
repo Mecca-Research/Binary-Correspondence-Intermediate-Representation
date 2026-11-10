@@ -606,3 +606,15 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - Cross-target builds are layout-only here; running them needs a cross toolchain.
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
+
+**Measured against the runtime's own C (2026-11-10).** [`../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)
+runs this compiler over the 33 runtime library units. Three gaps above the documented limits
+block most of them:
+- a function-like macro call whose arguments span lines (`unterminated macro argument list`,
+  which C11 6.10.3p10 allows);
+- a file-scope `static_assert` or `_Static_assert`;
+- the standard headers' macros (`NULL`, `SIZE_MAX`, `UINT32_MAX`, `UINT64_C`, `INT_MAX`, `NAN`,
+  `true`).
+
+Each is refused on both rails. The audit's CSUB ladder closes them and the table idioms behind
+them.

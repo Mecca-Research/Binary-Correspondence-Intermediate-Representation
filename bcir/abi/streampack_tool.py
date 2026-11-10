@@ -3,6 +3,13 @@
 The tool never interprets unverified bytes: `inspect_stream_pack` first applies the frozen codec's
 magic/version/CRC/range/trailing-byte checks. Record boundaries come from the codec's own writers,
 so append-only ABI changes cannot silently desynchronize a duplicate parser.
+
+Quoted strings (the source plan, fence names, the dump's span names) are spelled as `ascii()` spells
+a str, not `repr()`: the two agree on every ASCII string, but repr keeps a printable non-ASCII
+character literal, and which characters are printable is the interpreter's Unicode database -- the
+same pack listed under Python 3.11 (Unicode 14) and 3.15 (Unicode 17) differed. The command line
+writes the text as UTF-8 with "\n" line ends whatever the console's encoding, so its output is the
+same octets on every host; runtime/c/bcir_sp_listing.c is the C twin, held to these octets.
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ def format_listing(data: bytes) -> str:
         f"records segments={len(pack.segments)} prefetches={len(pack.prefetches)} "
         f"blocks={len(pack.blocks)} trace={len(pack.trace_notes)} "
         f"generations={len(pack.generations)}",
-        f"source_plan {pack.source_plan!r}",
+        f"source_plan {pack.source_plan!a}",
     ]
 
     traced = {note.claim_id: note for note in pack.trace_notes}
@@ -60,7 +67,7 @@ def format_listing(data: bytes) -> str:
         )
         if seg.fence_before or seg.fence_after:
             lines.append(
-                f"    fences before={list(seg.fence_before)!r} after={list(seg.fence_after)!r}"
+                f"    fences before={list(seg.fence_before)!a} after={list(seg.fence_after)!a}"
             )
 
     lines.append("prefetches:")
@@ -103,7 +110,7 @@ def format_hexdump(data: bytes, *, width: int = 16) -> str:
     for span in info.spans:
         index = "" if span.index is None else f"[{span.index}]"
         lines.append(
-            f"# {span.kind}{index} {span.name!r} offset=0x{span.offset:08x} length={span.length}"
+            f"# {span.kind}{index} {span.name!a} offset=0x{span.offset:08x} length={span.length}"
         )
         for offset in range(span.offset, span.end, width):
             chunk = data[offset : min(offset + width, span.end)]
@@ -128,6 +135,18 @@ def _read_bounded(path: Path, maximum: int) -> bytes:
             f"input grew to {len(data)} bytes while reading, exceeds --max-bytes={maximum}"
         )
     return data
+
+
+def _write_utf8(text: str) -> None:
+    """The listing's octets, whatever the console's encoding: UTF-8, "\n" line ends. A stream with
+    no binary buffer (a test's StringIO) takes the text itself."""
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        sys.stdout.write(text)
+        return
+    sys.stdout.flush()
+    buffer.write(text.encode("utf-8"))
+    buffer.flush()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -158,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
     except (AbiError, OSError, ValueError) as exc:
         print(f"bcir-pack: {exc}", file=sys.stderr)
         return 2
-    sys.stdout.write(output)
+    _write_utf8(output)
     return 0
 
 

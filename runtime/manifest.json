@@ -62,6 +62,11 @@
       "sources": ["bcir_artifact_bundle.c"],
       "libraries": ["bcir_base"]
     },
+    "bcir_listing": {
+      "class": "freestanding_core",
+      "sources": ["bcir_sp_listing.c", "bcir_ab_listing.c"],
+      "libraries": ["bcir_artifact", "bcir_base"]
+    },
     "bcir_asn1": {
       "class": "freestanding_core",
       "sources": [
@@ -117,6 +122,14 @@
       "sources": ["bcir_cc.c"],
       "libraries": ["bcir_cfront", "bcir_streampack", "bcir_base"]
     },
+    "bcir-pack": {
+      "sources": ["bcir_pack_cli.c"],
+      "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"]
+    },
+    "bcir-bundle": {
+      "sources": ["bcir_bundle_cli.c"],
+      "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"]
+    },
     "bcir_asn1_bench": {
       "sources": ["bcir_asn1_bench.c"],
       "libraries": ["bcir_asn1", "bcir_base"]
@@ -160,6 +173,8 @@
     "test_train_stream": {"sources": ["test_train_stream.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_telemetry_frame": {"sources": ["test_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "test_artifact_bundle": {"sources": ["test_artifact_bundle.c"], "libraries": ["bcir_artifact", "bcir_base"]},
+    "test_sp_listing": {"sources": ["test_sp_listing.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"]},
+    "test_ab_listing": {"sources": ["test_ab_listing.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"]},
     "test_control_plane": {"sources": ["test_control_plane.c"], "libraries": ["bcir_plane", "bcir_base"]},
     "test_ring": {"sources": ["test_ring.c"], "libraries": ["bcir_plane", "bcir_base"], "link": ["pthread"]},
     "test_handoff": {"sources": ["test_handoff.c"], "libraries": ["bcir_plane", "bcir_streampack", "bcir_base"]},
@@ -209,7 +224,8 @@
     "fuzz_kplan": {"sources": ["fuzz_kplan.c"], "libraries": ["bcir_plane", "bcir_base"], "max_len": "16384"},
     "fuzz_streampack": {"sources": ["fuzz_streampack.c"], "libraries": ["bcir_base"]},
     "fuzz_plan_sign": {"sources": ["fuzz_plan_sign.c"], "libraries": ["bcir_base"], "max_len": "1024"},
-    "fuzz_artifact_bundle": {"sources": ["fuzz_artifact_bundle.c"], "libraries": ["bcir_artifact", "bcir_base"], "max_len": "16384"},
+    "fuzz_artifact_bundle": {"sources": ["fuzz_artifact_bundle.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"], "max_len": "16384"},
+    "fuzz_sp_listing": {"sources": ["fuzz_sp_listing.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"], "max_len": "16384"},
     "fuzz_exec": {"sources": ["fuzz_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_encode": {"sources": ["fuzz_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_binrec": {"sources": ["fuzz_binrec.c"], "libraries": ["bcir_streampack"], "max_len": "64"},
@@ -310,6 +326,8 @@
     "x86_interrupt": {"script": "tools/c/sections/x86_interrupt.sh", "harnesses": ["test_x86_interrupt_c11", "test_x86_interrupt"]},
     "runtime": {"script": "tools/c/sections/runtime.sh", "harnesses": ["test_runtime"]},
     "artifact_bundle": {"script": "tools/c/sections/artifact_bundle.sh", "harnesses": ["test_sha256", "test_artifact_bundle", "test_asn1"]},
+    "sp_listing": {"script": "tools/c/sections/sp_listing.sh", "harnesses": ["test_sp_listing", "bcir-pack"]},
+    "bundle_listing": {"script": "tools/c/sections/bundle_listing.sh", "harnesses": ["test_ab_listing", "bcir-bundle"]},
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},
@@ -435,6 +453,6 @@
     "bcir_control_plane.c", "bcir_ring.c", "bcir_telemetry_envelope.c", "bcir_handoff.c",
     "bcir_shard_manifest.c", "bcir_kplan.c", "bcir_artifact_bundle.c", "bcir_asn1.c",
     "bcir_asn1_streampack.c", "bcir_per.c", "bcir_per_plan.c", "bcir_oer.c", "bcir_xer.c", "bcir_jer.c",
-    "bcir_emit.c"
+    "bcir_emit.c", "bcir_sp_listing.c", "bcir_ab_listing.c"
   ]
 }
