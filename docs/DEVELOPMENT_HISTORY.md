@@ -289,6 +289,22 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-10 — C-SUBSET-AUDIT: the verified C subset against the runtime's own C.**
+  `docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md` ran `bcir-cfront` over the 33 runtime
+  library units.
+  - **6 parse today.** 15 parse once three conformance gaps close: multi-line macro calls
+    (C11 6.10.3p10), a file-scope `static_assert`, and the standard headers' macros. The C twin
+    refuses the same three.
+  - **10 compile with R1–R18 clean.** Behind them are table idioms (static string tables,
+    untagged structs, pointers to arrays, array parameters in function-pointer types), the
+    `*_C` macros, `<stdatomic.h>`'s call API and hosted stdio.
+  - **`bcir_per.c` recurses one level, against R18.** The unit gets fixed rather than the law.
+  - **Nine units each define their own endian read helpers.**
+
+  The CSUB-1 to CSUB-6 ladder and a ratchet gate are proposed. So are three missing
+  subsystems: a deterministic counter-based RNG (the C rail has none outside a test), a native
+  data loader (the trainer takes token-id arrays from its caller) and hardware digests.
+
 - **2026-11-09 — NATIVE-PORT-AUDIT: what the oracle still holds that belongs in C or C++, and
   C or C++ for K_BCIR.** `docs/research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md` cross-references
   all 313 oracle modules (161,986 non-test lines) against `runtime/c`, `runtime/cpp` and the MLIR

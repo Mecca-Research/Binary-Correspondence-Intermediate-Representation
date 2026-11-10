@@ -276,6 +276,18 @@ Current work is maintenance and bounded completion, not another breadth sprint:
 - Add C standard-library/compiler surfaces only when a driver or model slice requires them.
   Near-term ML-relevant gaps are `<stdbit.h>`, `<stdckdint.h>`, verifier-fed `assume`, and
   packed sub-byte storage/compute semantics.
+- **The subset against the runtime's own C** ([`research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)).
+  The verified compiler parses 6 of the 33 runtime library units today, 15 once three
+  conformance gaps close (CSUB-1), and compiles 10 with R1–R18 clean. The ladder:
+  - CSUB-1, conformance: multi-line macro calls, file-scope `static_assert`, complete
+    freestanding headers;
+  - CSUB-2, table idioms;
+  - CSUB-3, `<stdbit.h>` and `<stdckdint.h>`;
+  - CSUB-4, `<stdatomic.h>`'s explicit-order calls;
+  - CSUB-5, a hosted profile;
+  - CSUB-6, AI numerics at the source level.
+
+  A ratchet gate holds the set of runtime units the verified compiler accepts.
 - Preserve the C++ airlock: C owns stable value/resource ABI; C++ owns hosted graph and
   distributed orchestration. Implement a backend only with an executable consumer and teardown
   tests.

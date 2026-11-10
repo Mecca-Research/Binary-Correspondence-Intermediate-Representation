@@ -254,6 +254,11 @@ containers by hand for code that never runs on a target.
 | **PORT-10** | N8, a native kernel lowering in MLIR | Behind a GO/STOP written after PORT-5 |
 | Tier 3 | N10–N14 | Each with its consumer |
 
+The C half of this placement, the verified subset the runtime's C could be compiled by, is
+audited in [`BCIR_C_SUBSET_AUDIT_2026-11-10.md`](BCIR_C_SUBSET_AUDIT_2026-11-10.md). That audit
+adds three subsystems to this list: a deterministic counter-based RNG, a native data loader, and
+hardware digests.
+
 ## 6. Threats to this audit
 
 - **A reference is not a twin.** A native file naming a module can be a comment. Every Tier-1

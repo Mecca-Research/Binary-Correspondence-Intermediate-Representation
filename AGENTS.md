@@ -76,6 +76,10 @@ system. Read `.claude/context/BCIR_DIGEST.md` first.
   exception across the façade), and its plans are re-checked by the C and MLIR verifiers. Do not
   move existing C to C++, and do not add a fourth copy of an algorithm that already has a C twin
   and an MLIR pass.
+- Expanding the verified C subset (CSUB-n) → [`docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)
+  §4. Each rung lands on both rails, the Python front end (`bcir/frontends/cfront/`) and the C
+  twin (`runtime/c/bcir_cfront.c`, `bcir_cpp.c`), with a Clang-equivalence witness. R18 (no
+  recursion) and the fallback boundary for vector code stay as they are.
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/` and the `mlir` preset's
   `ctest -L mlir`, whose lit suite runs every fixture's RUN lines as written: `mlir/lit.cfg.py`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).
