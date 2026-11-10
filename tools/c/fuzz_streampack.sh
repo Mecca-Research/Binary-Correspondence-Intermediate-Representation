@@ -276,6 +276,12 @@ add_target listing "StreamPack listing (MC1)" "-max_len=16384" \
 add_target bpe "BPE tokenizer" "-max_len=32768" \
   "${C}/fuzz_bpe.c" "${C}/bcir_bpe.c" "${C}/bcir_jer.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
 
+# The SentencePiece tokenizer (PORT-2b): a tokenizer.model is protobuf from anyone. Every input is
+# loaded as one (a refusal keeps nothing; a load is held to encode's bound and count and to decode's
+# measure, whose output is always UTF-8) and is also encoded and decoded by a fixed model.
+add_target spm "SentencePiece tokenizer" "-max_len=65536" \
+  "${C}/fuzz_spm.c" "${C}/bcir_spm.c" "${C}/bcir_jer.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
+
 # bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
 # pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
 add_target exec "executor" "" \
@@ -379,6 +385,14 @@ for name, blob in tokenizers():
 for name, blob in law_documents():
     if len(blob) <= 32768:
         out.joinpath(f"law-{name}.json").write_bytes(blob)
+PY
+python3 - "${tmp}/corpus_spm" <<'PY' || { echo "  FAIL: SentencePiece seed corpus"; exit 1; }
+import sys
+from pathlib import Path
+from bcir.tests.test_c_spm_tokenizer import law_documents, models
+out = Path(sys.argv[1])
+for name, blob in models() + [("law-" + n, b) for n, b in law_documents()]:
+    out.joinpath(f"{name}.model").write_bytes(blob)
 PY
 
 if ! python3 - "${tmp}/corpus_artifact" <<'PY'

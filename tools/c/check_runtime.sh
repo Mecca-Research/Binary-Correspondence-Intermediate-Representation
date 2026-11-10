@@ -145,7 +145,7 @@ show_section sp_listing || exit 1
 echo "[c-runtime] MC1 BCAB listing (PORT-1): bcir-bundle's list/hexdump/select/extract/dis/mnemonics == the oracle's"
 show_section bundle_listing || exit 1
 
-echo "[c-runtime] byte-level BPE tokenizer (PORT-2): bcir-tokenize's loads, ids and octets == the oracle's"
+echo "[c-runtime] tokenizers (PORT-2): bcir-tokenize's BPE and SentencePiece loads, ids and octets == the oracle's"
 show_section tokenizer || exit 1
 
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"

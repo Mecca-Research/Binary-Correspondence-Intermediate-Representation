@@ -77,7 +77,7 @@
     },
     "bcir_tokenizer": {
       "class": "hosted_tool",
-      "sources": ["bcir_bpe.c"],
+      "sources": ["bcir_bpe.c", "bcir_spm.c"],
       "libraries": ["bcir_asn1", "bcir_base"]
     },
     "bcir_cfront": {
@@ -185,6 +185,7 @@
     "test_sp_listing": {"sources": ["test_sp_listing.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"]},
     "test_ab_listing": {"sources": ["test_ab_listing.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"]},
     "test_bpe": {"sources": ["test_bpe.c"], "libraries": ["bcir_tokenizer", "bcir_asn1", "bcir_base"]},
+    "test_spm": {"sources": ["test_spm.c"], "libraries": ["bcir_tokenizer", "bcir_asn1", "bcir_base"]},
     "test_control_plane": {"sources": ["test_control_plane.c"], "libraries": ["bcir_plane", "bcir_base"]},
     "test_ring": {"sources": ["test_ring.c"], "libraries": ["bcir_plane", "bcir_base"], "link": ["pthread"]},
     "test_handoff": {"sources": ["test_handoff.c"], "libraries": ["bcir_plane", "bcir_streampack", "bcir_base"]},
@@ -237,6 +238,7 @@
     "fuzz_artifact_bundle": {"sources": ["fuzz_artifact_bundle.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"], "max_len": "16384"},
     "fuzz_sp_listing": {"sources": ["fuzz_sp_listing.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"], "max_len": "16384"},
     "fuzz_bpe": {"sources": ["fuzz_bpe.c"], "libraries": ["bcir_tokenizer", "bcir_asn1", "bcir_base"], "max_len": "32768"},
+    "fuzz_spm": {"sources": ["fuzz_spm.c"], "libraries": ["bcir_tokenizer", "bcir_asn1", "bcir_base"], "max_len": "65536"},
     "fuzz_exec": {"sources": ["fuzz_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_encode": {"sources": ["fuzz_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_binrec": {"sources": ["fuzz_binrec.c"], "libraries": ["bcir_streampack"], "max_len": "64"},
@@ -339,7 +341,7 @@
     "artifact_bundle": {"script": "tools/c/sections/artifact_bundle.sh", "harnesses": ["test_sha256", "test_artifact_bundle", "test_asn1"]},
     "sp_listing": {"script": "tools/c/sections/sp_listing.sh", "harnesses": ["test_sp_listing", "bcir-pack"]},
     "bundle_listing": {"script": "tools/c/sections/bundle_listing.sh", "harnesses": ["test_ab_listing", "bcir-bundle"]},
-    "tokenizer": {"script": "tools/c/sections/tokenizer.sh", "harnesses": ["test_bpe", "bcir-tokenize"]},
+    "tokenizer": {"script": "tools/c/sections/tokenizer.sh", "harnesses": ["test_bpe", "test_spm", "bcir-tokenize"]},
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},

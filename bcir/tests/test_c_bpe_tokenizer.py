@@ -38,6 +38,7 @@ _RUNTIME_C = os.path.join(_ROOT, "runtime", "c")
 _SOURCES = (
     "bcir_tokenize_cli.c",
     "bcir_bpe.c",
+    "bcir_spm.c",
     "bcir_jer.c",
     "bcir_sha256.c",
     "bcir_runtime.c",
@@ -108,15 +109,15 @@ def _words(seed: int, count: int) -> str:
         "er",
         "st",
         "ou",
-        "é",
-        "ü",
-        "ça",
-        "日",
-        "本",
-        "語",
-        "の",
-        "😀",
-        "👍🏽",
+        "\xe9",
+        "\xfc",
+        "\xe7a",
+        "\u65e5",
+        "\u672c",
+        "\u8a9e",
+        "\u306e",
+        "\U0001f600",
+        "\U0001f44d\U0001f3fd",
     )
     words = (
         "".join(rng.choice(syllables) for _ in range(rng.randrange(1, 5))) for _ in range(count)
@@ -127,9 +128,9 @@ def _words(seed: int, count: int) -> str:
 _TRAINING_TEXT = (
     "the quick brown fox jumps over the lazy dog and the dog sleeps; "
     "aaaa aaaaaaaa aaaaaaaaaaaa abababab abab baba bbbb "
-    "héllo wörld, ça va très bien; naïve façade "
-    "日本語のテキストと日本の言葉 "
-    "emoji 😀😀 👍🏽 done "
+    "h\xe9llo w\xf6rld, \xe7a va tr\xe8s bien; na\xefve fa\xe7ade "
+    "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8\u3068\u65e5\u672c\u306e\u8a00\u8449 "
+    "emoji \U0001f600\U0001f600 \U0001f44d\U0001f3fd done "
 ) * 4 + _words(7, 600)
 
 
@@ -244,11 +245,11 @@ def _specials() -> dict:
         {"content": "<<", "id": 401},
         {"content": "<a>", "id": 402},
         {"content": "<a>b", "id": 403},
-        {"content": "é", "id": 0xE9},  # the alphabet text of byte 0xE9, under its own id
+        {"content": "\xe9", "id": 0xE9},  # the alphabet text of byte 0xE9, under its own id
         {"content": _alphabet(" hello"), "id": 300},  # a merged vocab token's text, its id
-        {"content": "日本", "id": 404},
+        {"content": "\u65e5\u672c", "id": 404},
         {"content": "\u0000", "id": 405},
-        {"content": "😀", "id": 406},
+        {"content": "\U0001f600", "id": 406},
         {"content": "\t\t", "id": 407},
     ]
     return {"model": {"type": "BPE", "vocab": vocab, "merges": merges}, "added_tokens": added}
@@ -297,16 +298,16 @@ _POOL = (
     "\n",
     "\r",
     "\u0000",
-    "é",
-    "ü",
-    "ç",
-    "日",
-    "本",
-    "語",
-    "😀",
-    "👍🏽",
-    " ",
-    " ",
+    "\xe9",
+    "\xfc",
+    "\xe7",
+    "\u65e5",
+    "\u672c",
+    "\u8a9e",
+    "\U0001f600",
+    "\U0001f44d\U0001f3fd",
+    "\xa0",
+    "\u2028",
     "<",
     "<<",
     "<a>",
@@ -317,8 +318,8 @@ _POOL = (
     "<eos>",
     "aaaa",
     "abab",
-    "Ā",
-    "Ń",
+    "\u0100",
+    "\u0143",
     "\U0010ffff",
 )
 
@@ -335,23 +336,23 @@ def texts(rng: random.Random, count: int) -> list[str]:
         " ",
         "a b  c   d    e",
         "\thello\nworld\r\n",
-        "héllo wörld",
-        "日本語のテキスト",
-        "emoji 😀👍🏽 mixed",
+        "h\xe9llo w\xf6rld",
+        "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8",
+        "emoji \U0001f600\U0001f44d\U0001f3fd mixed",
         "<bos>hello<eos>",
         "<<a>b<a><<<",
         "<a>b<a>b<a>",
         "\u0000nul\u0000",
         " hello hello  hello",
-        "é é  é",
-        "日本日本語",
+        "\xe9 \xe9  \xe9",
+        "\u65e5\u672c\u65e5\u672c\u8a9e",
         "\t\t\t\t\t",
         "the quick brown fox jumps over the lazy dog " * 3,
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "ab" * 150,
         "abab" * 40 + " " + "ba" * 70,
         _TRAINING_TEXT[:400],
-        "\U0010ffffĀŃ",
+        "\U0010ffff\u0100\u0143",
         "<|endoftext|>the<|endoftext|>",
     ]
     rand = ["".join(rng.choice(_POOL) for _ in range(rng.randrange(1, 40))) for _ in range(count)]
@@ -400,9 +401,9 @@ def law_documents() -> list[tuple[str, bytes]]:
     edit("id-duplicate", lambda d: d["model"]["vocab"].__setitem__(vocab_key, 98))
     edit("base-byte-missing", lambda d: d["model"]["vocab"].pop(_B2U[0]))
     edit("token-outside-alphabet", lambda d: d["model"]["vocab"].__setitem__(" ", 900))
-    edit("token-cjk", lambda d: d["model"]["vocab"].__setitem__("日", 900))
+    edit("token-cjk", lambda d: d["model"]["vocab"].__setitem__("\u65e5", 900))
     edit("token-empty", lambda d: d["model"]["vocab"].__setitem__("", 900))
-    edit("token-extra", lambda d: d["model"]["vocab"].__setitem__("Ġhello", 900))
+    edit("token-extra", lambda d: d["model"]["vocab"].__setitem__("\u0120hello", 900))
     edit("merges-object", setm("merges", {}))
     edit("merges-null", setm("merges", None))
     edit("merges-empty", setm("merges", []))
@@ -434,7 +435,7 @@ def law_documents() -> list[tuple[str, bytes]]:
     edit("merge-pair-form", lambda d: d["model"]["merges"].__setitem__(0, ["h", "e"]))
     edit("merge-duplicate", lambda d: d["model"]["merges"].append("l l"))
     edit("merge-duplicate-forms", lambda d: d["model"]["merges"].append(["h", "e"]))
-    edit("merge-missing-part", lambda d: d["model"]["merges"].append("h qĀ"))
+    edit("merge-missing-part", lambda d: d["model"]["merges"].append("h q\u0100"))
     edit("merge-missing-concat", lambda d: d["model"]["merges"].append("o h"))
     edit("merge-reordered", lambda d: d["model"]["merges"].reverse())
     edit("added-object", lambda d: d.__setitem__("added_tokens", {}))
@@ -714,7 +715,7 @@ def check_tool(tool: str, work: str, *, mutations: int = 24, seed: int = 2026111
                 m,
                 deep=False,
                 rng=rng,
-                encode_texts=("hello world", "<bos> é"),
+                encode_texts=("hello world", "<bos> \xe9"),
             )
     # --max-bytes is load_tokenizer's max_bytes
     blob = corpus[0][1]
@@ -797,7 +798,7 @@ def test_the_corpus_reaches_what_the_encoder_and_the_laws_decide():
     specials = loaded["specials"]
     assert specials.encode("<a>b") == [403] and specials.encode("<<a>") == [401, 97, 62]
     assert specials.encode("<x") == [ord("<"), ord("x")]
-    assert specials.encode("é") == [0xE9] and specials.decode([0xE9]) == "é"
+    assert specials.encode("\xe9") == [0xE9] and specials.decode([0xE9]) == "\xe9"
     assert loaded["spaced"].encode(" hello") == [500, 259]
     assert specials.encode("    x") == [307, 32, 32, ord("x")], (
         "spaces merge only inside their own word"

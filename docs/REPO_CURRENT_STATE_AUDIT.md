@@ -170,11 +170,11 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     TinyLlama checkpoint/tokenizer pins feed BCIRQ8 v1, Python Q8 and standalone-C greedy
     inference, exact generated-ID parity, and a deterministic report. The checkpoint,
     tokenizer, generated Q8 artifact, logits, and executable remain cache/build products.
-    The byte-level BPE tokenizer family (`tokenizer.json`) has a hosted C twin
-    (`bcir_bpe.c`, `bcir-tokenize`, PORT-2a) that reads the file through the bounded JSON
-    reader the oracle now shares and gives the oracle's ids, so that family's text reaches C
-    inference without Python. TinyLlama's SentencePiece tokenizer is still read by the oracle
-    only (PORT-2b).
+    Both tokenizer families have hosted C twins behind `bcir-tokenize` (PORT-2). The
+    byte-level BPE (`tokenizer.json`, `bcir_bpe.c`) reads its file through the bounded JSON
+    reader the oracle now shares. SentencePiece (`tokenizer.model`, `bcir_spm.c`, TinyLlama's)
+    reads the protobuf wire format. Both give the oracle's ids, so text reaches C inference
+    without Python.
 12. **An owned hosted train-to-C micro gate exists without weakening the oracle**:
     opt-in PyTorch trains a two-layer tied GQA model for 64 one-thread CPU steps, publishes
     pickle-free exact-resume Safetensors, passes strict BCIR ingestion, and preserves the

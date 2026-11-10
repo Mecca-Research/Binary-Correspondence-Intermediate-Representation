@@ -5,9 +5,8 @@
  * in the oracle's order, so the order of members in the file never changes a verdict.
  *
  * Every table is an open-addressed hash keyed by SipHash-2-4 under a key taken from the file's own
- * SHA-256. The tables stay deterministic, and a file cannot choose its collisions without first
- * choosing its own digest. Encode and decode only look keys up; they never insert, so text cannot
- * grow a table either.
+ * SHA-256 (bcir_tok_hash.h, shared with bcir_spm.c). Encode and decode only look keys up; they
+ * never insert, so text cannot grow a table either.
  *
  * Held id for id to bcir/frontends/models/tokenizer.py by bcir/tests/test_c_bpe_tokenizer.py, and
  * fuzzed under libFuzzer + ASan/UBSan by fuzz_bpe.c.
@@ -15,6 +14,7 @@
 #include "bcir_bpe.h"
 
 #include "bcir_sha256.h"
+#include "bcir_tok_hash.h"
 
 /* --- the byte alphabet: bytes_to_unicode ----------------------------------------------------
  * Every byte maps to one code point: the printable ranges to themselves, the other 68 to
@@ -49,57 +49,9 @@ static int unalphabet(const alphabet_t *al, const uint8_t *text, size_t n, uint8
   return 1;
 }
 
-/* --- SipHash-2-4 -------------------------------------------------------------------------- */
-
-static uint64_t rotl64(uint64_t x, unsigned b) { return (x << b) | (x >> (64u - b)); }
-static uint64_t le64(const uint8_t *p) {
-  uint64_t v = 0;
-  for (unsigned i = 0; i < 8u; i++) v |= (uint64_t)p[i] << (8u * i);
-  return v;
-}
-#define SIPROUND                                                                \
-  do {                                                                          \
-    v0 += v1; v1 = rotl64(v1, 13); v1 ^= v0; v0 = rotl64(v0, 32);               \
-    v2 += v3; v3 = rotl64(v3, 16); v3 ^= v2;                                    \
-    v0 += v3; v3 = rotl64(v3, 21); v3 ^= v0;                                    \
-    v2 += v1; v1 = rotl64(v1, 17); v1 ^= v2; v2 = rotl64(v2, 32);               \
-  } while (0)
-
-/* SipHash-2-4 under (k0, k1) of the message `tag` (8 octets, little-endian) || data[0..len). */
-static uint64_t siphash(uint64_t k0, uint64_t k1, uint64_t tag, const uint8_t *data, size_t len) {
-  uint64_t v0 = k0 ^ UINT64_C(0x736f6d6570736575), v1 = k1 ^ UINT64_C(0x646f72616e646f6d);
-  uint64_t v2 = k0 ^ UINT64_C(0x6c7967656e657261), v3 = k1 ^ UINT64_C(0x7465646279746573);
-  uint64_t m;
-  size_t i = 0;
-  v3 ^= tag; SIPROUND; SIPROUND; v0 ^= tag;
-  for (; i + 8u <= len; i += 8u) {
-    m = le64(data + i);
-    v3 ^= m; SIPROUND; SIPROUND; v0 ^= m;
-  }
-  m = ((uint64_t)len + 8u) << 56;
-  for (size_t k = 0; i + k < len; k++) m |= (uint64_t)data[i + k] << (8u * k);
-  v3 ^= m; SIPROUND; SIPROUND; v0 ^= m;
-  v2 ^= 0xFFu;
-  SIPROUND; SIPROUND; SIPROUND; SIPROUND;
-  return v0 ^ v1 ^ v2 ^ v3;
-}
+/* --- the keyed hash (bcir_tok_hash.h) ------------------------------------------------ */
 
 enum { TAG_NAME = 0, TAG_VOCAB = 1, TAG_PAIR = 2, TAG_ID = 3, TAG_TRIE = 4 };
-
-static uint64_t hash_u32x2(uint64_t k0, uint64_t k1, uint64_t tag, uint32_t a, uint32_t b) {
-  uint8_t k[8];
-  for (unsigned i = 0; i < 4u; i++) {
-    k[i] = (uint8_t)(a >> (8u * i));
-    k[4u + i] = (uint8_t)(b >> (8u * i));
-  }
-  return siphash(k0, k1, tag, k, 8u);
-}
-
-static size_t pow2_at_least(size_t n) {
-  size_t c = 16u;
-  while (c < n) c *= 2u;
-  return c;
-}
 
 /* --- records the sink collects --------------------------------------------------------------- */
 
@@ -146,7 +98,7 @@ static int name_set_insert(const bcir_host_allocator *a, name_set *set, uint64_t
     set->slots = slots;
     set->cap = cap;
   }
-  uint64_t h = siphash(k0, k1, TAG_NAME ^ (object << 8), name.s, name.n);
+  uint64_t h = bcir_tok_siphash(k0, k1, TAG_NAME ^ (object << 8), name.s, name.n);
   size_t j = (size_t)h & (set->cap - 1u);
   for (; set->slots[j].name.s; j = (j + 1u) & (set->cap - 1u)) {
     const name_slot *e = &set->slots[j];
@@ -191,7 +143,7 @@ struct bcir_bpe {
 };
 
 static int vocab_find(const bcir_bpe *t, const uint8_t *s, size_t n, uint32_t *id) {
-  uint64_t h = siphash(t->k0, t->k1, TAG_VOCAB, s, n);
+  uint64_t h = bcir_tok_siphash(t->k0, t->k1, TAG_VOCAB, s, n);
   for (size_t j = (size_t)h & (t->vocab_cap - 1u); t->vocab[j].used; j = (j + 1u) & (t->vocab_cap - 1u)) {
     const vocab_rec *r = &t->tokens[t->vocab[j].index];
     if (t->vocab[j].hash == h && r->token.n == n && memcmp(r->token.s, s, n) == 0) {
@@ -203,7 +155,7 @@ static int vocab_find(const bcir_bpe *t, const uint8_t *s, size_t n, uint32_t *i
 }
 
 static const id_slot *id_find(const bcir_bpe *t, uint32_t id) {
-  uint64_t h = hash_u32x2(t->k0, t->k1, TAG_ID, id, 0u);
+  uint64_t h = bcir_tok_hash2(t->k0, t->k1, TAG_ID, id, 0u);
   for (size_t j = (size_t)h & (t->ids_cap - 1u); t->ids[j].used; j = (j + 1u) & (t->ids_cap - 1u))
     if (t->ids[j].id == id) return &t->ids[j];
   return 0;
@@ -211,7 +163,7 @@ static const id_slot *id_find(const bcir_bpe *t, uint32_t id) {
 
 /* 0 when `id` already names an entry. */
 static int id_insert(bcir_bpe *t, uint32_t id, uint32_t entry) {
-  uint64_t h = hash_u32x2(t->k0, t->k1, TAG_ID, id, 0u);
+  uint64_t h = bcir_tok_hash2(t->k0, t->k1, TAG_ID, id, 0u);
   size_t j = (size_t)h & (t->ids_cap - 1u);
   for (; t->ids[j].used; j = (j + 1u) & (t->ids_cap - 1u))
     if (t->ids[j].id == id) return 0;
@@ -223,7 +175,7 @@ static int id_insert(bcir_bpe *t, uint32_t id, uint32_t entry) {
 
 static const merge_slot *merge_find(const bcir_bpe *t, uint32_t a, uint32_t b) {
   if (!t->merges_cap) return 0;
-  uint64_t h = hash_u32x2(t->k0, t->k1, TAG_PAIR, a, b);
+  uint64_t h = bcir_tok_hash2(t->k0, t->k1, TAG_PAIR, a, b);
   for (size_t j = (size_t)h & (t->merges_cap - 1u); t->merges[j].used; j = (j + 1u) & (t->merges_cap - 1u))
     if (t->merges[j].left == a && t->merges[j].right == b) return &t->merges[j];
   return 0;
@@ -232,7 +184,7 @@ static const merge_slot *merge_find(const bcir_bpe *t, uint32_t a, uint32_t b) {
 /* The child of `node` along octet `b`, or 0 (the root is nobody's child). */
 static uint32_t trie_child(const bcir_bpe *t, uint32_t node, uint8_t b) {
   if (node == 0u) return t->root_child[b];
-  uint64_t h = hash_u32x2(t->k0, t->k1, TAG_TRIE, node, b);
+  uint64_t h = bcir_tok_hash2(t->k0, t->k1, TAG_TRIE, node, b);
   for (size_t j = (size_t)h & (t->trie_cap - 1u); t->trie[j].used; j = (j + 1u) & (t->trie_cap - 1u))
     if (t->trie[j].node == node && t->trie[j].byte == b) return t->trie[j].child;
   return 0u;
@@ -250,7 +202,7 @@ static uint32_t trie_insert(bcir_bpe *t, const span_t *content) {
       if (node == 0u) {
         t->root_child[b] = child;
       } else {
-        uint64_t h = hash_u32x2(t->k0, t->k1, TAG_TRIE, node, b);
+        uint64_t h = bcir_tok_hash2(t->k0, t->k1, TAG_TRIE, node, b);
         size_t j = (size_t)h & (t->trie_cap - 1u);
         while (t->trie[j].used) j = (j + 1u) & (t->trie_cap - 1u);
         t->trie[j].node = node;
@@ -573,8 +525,8 @@ static void *arena_table(bcir_bpe *t, size_t count, size_t size) {
 /* The vocab: tokens to distinct ids, and every base byte present. */
 static bcir_bpe_status vocab_laws(bcir_bpe *t, const grow_t *records, bcir_bpe_diag *diag, size_t extra_ids) {
   size_t nv = records->n;
-  t->vocab_cap = pow2_at_least(2u * nv + 2u);
-  t->ids_cap = pow2_at_least(2u * (nv + extra_ids) + 2u);
+  t->vocab_cap = bcir_tok_pow2(2u * nv + 2u);
+  t->ids_cap = bcir_tok_pow2(2u * (nv + extra_ids) + 2u);
   t->tokens = (vocab_rec *)arena_table(t, nv, sizeof(vocab_rec));
   t->vocab = (vocab_slot *)arena_table(t, t->vocab_cap, sizeof(vocab_slot));
   t->ids = (id_slot *)arena_table(t, t->ids_cap, sizeof(id_slot));
@@ -583,7 +535,7 @@ static bcir_bpe_status vocab_laws(bcir_bpe *t, const grow_t *records, bcir_bpe_d
   if (nv) memcpy(t->tokens, records->items, nv * sizeof(vocab_rec));
   for (size_t i = 0; i < nv; i++) {
     const vocab_rec *r = &t->tokens[i];
-    uint64_t h = siphash(t->k0, t->k1, TAG_VOCAB, r->token.s, r->token.n);
+    uint64_t h = bcir_tok_siphash(t->k0, t->k1, TAG_VOCAB, r->token.s, r->token.n);
     size_t j = (size_t)h & (t->vocab_cap - 1u);
     for (; t->vocab[j].used; j = (j + 1u) & (t->vocab_cap - 1u)) {
       const vocab_rec *o = &t->tokens[t->vocab[j].index];
@@ -611,7 +563,7 @@ static bcir_bpe_status merge_laws(bcir_bpe *t, const alphabet_t *al, const grow_
   const merge_rec *merges = (const merge_rec *)records->items;
   size_t nm = records->n;
   if (!nm) return BCIR_BPE_OK;
-  t->merges_cap = pow2_at_least(2u * nm + 2u);
+  t->merges_cap = bcir_tok_pow2(2u * nm + 2u);
   if (!(t->merges = (merge_slot *)arena_table(t, t->merges_cap, sizeof(merge_slot)))) return NOMEM(diag);
   for (size_t i = 0; i < nm; i++) {
     const merge_rec *m = &merges[i];
@@ -622,7 +574,7 @@ static bcir_bpe_status merge_laws(bcir_bpe *t, const alphabet_t *al, const grow_
     if (!unalphabet(al, m->left.s, m->left.n, cat, &ln) || !unalphabet(al, m->right.s, m->right.n, cat + ln, &rn) ||
         !vocab_find(t, cat, ln, &left) || !vocab_find(t, cat + ln, rn, &right) || !vocab_find(t, cat, ln + rn, &merged))
       return SHAPE(diag, BCIR_BPE_LAW_MERGES, m->at);
-    uint64_t h = hash_u32x2(t->k0, t->k1, TAG_PAIR, left, right);
+    uint64_t h = bcir_tok_hash2(t->k0, t->k1, TAG_PAIR, left, right);
     size_t j = (size_t)h & (t->merges_cap - 1u);
     for (; t->merges[j].used; j = (j + 1u) & (t->merges_cap - 1u))
       if (t->merges[j].left == left && t->merges[j].right == right) return SHAPE(diag, BCIR_BPE_LAW_MERGES, m->at);
@@ -644,7 +596,7 @@ static bcir_bpe_status added_laws(bcir_bpe *t, const alphabet_t *al, const grow_
   size_t na = records->n, octets = 0;
   if (!na) return BCIR_BPE_OK;
   for (size_t i = 0; i < na; i++) octets += added[i].content.n; /* each kept from one string of the file */
-  t->trie_cap = pow2_at_least(2u * octets + 2u);
+  t->trie_cap = bcir_tok_pow2(2u * octets + 2u);
   t->specials = (added_rec *)arena_table(t, na, sizeof(added_rec));
   t->trie = (trie_slot *)arena_table(t, t->trie_cap, sizeof(trie_slot));
   t->term = (int32_t *)arena_table(t, octets + 1u, sizeof(int32_t));
@@ -744,8 +696,8 @@ bcir_bpe_status bcir_bpe_load(const uint8_t *json, size_t len, const bcir_host_a
     bcir_sha256_init(&sha);
     bcir_sha256_update(&sha, json, len);
     bcir_sha256_final(&sha, t->digest);
-    t->k0 = le64(t->digest);
-    t->k1 = le64(t->digest + 8);
+    t->k0 = bcir_tok_le64(t->digest);
+    t->k1 = bcir_tok_le64(t->digest + 8);
   }
   s->t = t;
   s->a = &t->allocator;

@@ -60,7 +60,7 @@ fi
 # found when the CMake project handed it the configured compiler (BUILD-1).
 for unit in bcir_tensor.c bcir_decoder_train.c bcir_decoder_pack.c bcir_runtime_channel.c bcir_cpp.c bcir_q8_model.c bcir_q4_kernel.c \
             bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_verify.c \
-            bcir_cc.c bcir_llama_cli.c bcir_microbench.c bcir_bpe.c bcir_tokenize_cli.c; do
+            bcir_cc.c bcir_llama_cli.c bcir_microbench.c bcir_bpe.c bcir_spm.c bcir_tokenize_cli.c; do
   "${CC_BIN}" "${strict[@]}" "${compat_warnings[@]}" -c "${C}/${unit}" -o "${tmp}/${unit%.c}.o"
 done
 

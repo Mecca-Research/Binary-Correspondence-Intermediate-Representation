@@ -1,22 +1,28 @@
-/*===- bcir_tokenize_cli.c - bcir-tokenize: byte-level BPE encode / decode / info -===
+/*===- bcir_tokenize_cli.c - bcir-tokenize: BPE and SentencePiece encode / decode / info -===
  *
- * The command line of the C tokenizer twin (PORT-2, bcir_bpe.h), held to the oracle's
- * bcir/frontends/models/tokenizer.py by bcir/tests/test_c_bpe_tokenizer.py:
+ * The command line of the C tokenizer twins (PORT-2): the byte-level BPE of bcir_bpe.h, held to
+ * bcir/frontends/models/tokenizer.py by bcir/tests/test_c_bpe_tokenizer.py, and the
+ * SentencePiece-BPE of bcir_spm.h, held to bcir/frontends/models/spm.py by
+ * bcir/tests/test_c_spm_tokenizer.py:
  *
- *   bcir-tokenize [--max-bytes N] info TOKENIZER          sha256, vocab, merges and specials counts
- *   bcir-tokenize [--max-bytes N] encode TOKENIZER [TEXT]  UTF-8 text -> ids, one line, space-separated
- *   bcir-tokenize [--max-bytes N] decode TOKENIZER [IDS]   ids -> the decoded octets
- *   bcir-tokenize limits                                  the reader's limits profile, a field a line
+ *   bcir-tokenize [--max-bytes N] [--format bpe|spm] info TOKENIZER     the model's digest and counts
+ *   bcir-tokenize [--max-bytes N] [--format bpe|spm] encode TOKENIZER [TEXT] [--no-dummy-prefix]
+ *                                                     UTF-8 text -> ids, one line, space-separated
+ *   bcir-tokenize [--max-bytes N] [--format bpe|spm] decode TOKENIZER [IDS]  ids -> the decoded octets
+ *   bcir-tokenize limits                              the BPE reader's limits profile, a field a line
  *
- * TEXT and IDS are files, standard input when absent or "-"; IDS holds ASCII decimal ids separated
- * by ASCII white space (space, tab, LF, CR). --max-bytes bounds the tokenizer file as
- * load_tokenizer's max_bytes does, from 1 to the reader's own input limit (268435456, the default);
- * the text and the ids are bounded by that limit too. Output is octets on every host ("\n", never
- * "\r\n"). A refusal prints `bcir-tokenize: <reason>` on standard error, nothing on standard output,
- * and exits 2. Arguments are read in their full spellings, numbers as ASCII decimal digits.
+ * --format bpe (the default) reads a tokenizer.json, --format spm a tokenizer.model;
+ * --no-dummy-prefix is SentencePiece's encode with add_dummy_prefix=False. TEXT and IDS are files,
+ * standard input when absent or "-"; IDS holds ASCII decimal ids separated by ASCII white space
+ * (space, tab, LF, CR). --max-bytes bounds the tokenizer file as the loaders' max_bytes does, from 1
+ * to 268435456 (the default); the text and the ids are bounded by that limit too. Output is octets
+ * on every host ("\n", never "\r\n"). A refusal prints `bcir-tokenize: <reason>` on standard
+ * error, nothing on standard output, and exits 2. Arguments are read in their full spellings,
+ * numbers as ASCII decimal digits.
  *===----------------------------------------------------------------------===*/
 #include "bcir_bpe.h"
 #include "bcir_host_alloc.h"
+#include "bcir_spm.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -31,7 +37,8 @@
 #define TOKENIZE_MAX_BYTES ((size_t)256u << 20)
 
 static const char USAGE[] =
-    "usage: bcir-tokenize [--max-bytes N] {info,encode,decode} TOKENIZER [INPUT]\n"
+    "usage: bcir-tokenize [--max-bytes N] [--format bpe|spm] {info,encode,decode} TOKENIZER [INPUT]\n"
+    "                     [--no-dummy-prefix]\n"
     "       bcir-tokenize limits\n";
 
 static int refuse(const char *reason, const char *detail) {
@@ -173,44 +180,136 @@ static void print_limits(void) {
          (unsigned long long)l.work);
 }
 
-static void print_info(const bcir_bpe *t) {
+/* One tokenizer of either format. */
+typedef struct {
+  int spm;
+  bcir_bpe *bpe;
+  bcir_spm *sp;
+} tokenizer_t;
+
+static const char *spm_law_text(bcir_spm_law law) {
+  switch (law) {
+  case BCIR_SPM_LAW_VARINT: return "malformed tokenizer.model: a protobuf varint is truncated or exceeds uint64";
+  case BCIR_SPM_LAW_FIELD: return "malformed tokenizer.model: a protobuf field is malformed or truncated";
+  case BCIR_SPM_LAW_PIECE_FIELDS: return "malformed tokenizer.model: a piece lacks its text or repeats a field";
+  case BCIR_SPM_LAW_PIECE_TEXT: return "malformed tokenizer.model: a piece text is not UTF-8";
+  case BCIR_SPM_LAW_SCORE: return "malformed tokenizer.model: a piece has a non-finite score";
+  case BCIR_SPM_LAW_TYPE: return "malformed tokenizer.model: a piece has an unknown type";
+  case BCIR_SPM_LAW_NO_PIECES: return "no SentencePiece pieces (not a tokenizer.model?)";
+  case BCIR_SPM_LAW_DUPLICATE_TEXT: return "two SentencePiece pieces have one text";
+  case BCIR_SPM_LAW_BYTE_PIECE: return "a byte piece is not <0xHH>, or names a byte twice";
+  case BCIR_SPM_LAW_UNKNOWN_PIECE: return "tokenizer.model needs exactly one unknown piece";
+  case BCIR_SPM_LAW_BYTE_ALPHABET: return "partial byte fallback alphabet";
+  case BCIR_SPM_LAW_NONE:
+  default: return "malformed tokenizer.model";
+  }
+}
+
+static int load(tokenizer_t *t, const uint8_t *data, size_t len) {
+  if (!t->spm) {
+    bcir_bpe_diag diag;
+    return bcir_bpe_load(data, len, NULL, &t->bpe, &diag) == BCIR_BPE_OK ? 0 : refuse_load(&diag);
+  }
+  bcir_spm_diag diag;
+  if (bcir_spm_load(data, len, NULL, &t->sp, &diag) == BCIR_SPM_OK) return 0;
+  if (diag.status == BCIR_SPM_ERR_NOMEM) return refuse("out of memory loading the tokenizer", NULL);
+  if (diag.offset == BCIR_SPM_NO_OFFSET) return refuse(spm_law_text(diag.law), NULL);
+  char detail[64];
+  snprintf(detail, sizeof detail, " (at octet %zu)", diag.offset);
+  return refuse(spm_law_text(diag.law), detail);
+}
+
+static void release(tokenizer_t *t) {
+  bcir_bpe_free(t->bpe);
+  bcir_spm_free(t->sp);
+}
+
+static void print_info(const tokenizer_t *t) {
   static const char hex[] = "0123456789abcdef";
   uint8_t digest[32];
   char text[65];
-  bcir_bpe_digest(t, digest);
+  if (t->spm) bcir_spm_digest(t->sp, digest);
+  else bcir_bpe_digest(t->bpe, digest);
   for (unsigned i = 0; i < 32u; i++) {
     text[2u * i] = hex[digest[i] >> 4];
     text[2u * i + 1u] = hex[digest[i] & 15u];
   }
   text[64] = '\0';
-  printf("sha256 %s\nvocab %zu\nmerges %zu\nspecials %zu\n", text, bcir_bpe_vocab_size(t), bcir_bpe_merge_count(t),
-         bcir_bpe_special_count(t));
+  if (t->spm)
+    printf("sha256 %s\npieces %zu\nunk %u\nbytes %u\nspecials %zu\n", text, bcir_spm_piece_count(t->sp),
+           (unsigned)bcir_spm_unk_id(t->sp), bcir_spm_has_byte_fallback(t->sp) ? 256u : 0u,
+           bcir_spm_special_count(t->sp));
+  else
+    printf("sha256 %s\nvocab %zu\nmerges %zu\nspecials %zu\n", text, bcir_bpe_vocab_size(t->bpe),
+           bcir_bpe_merge_count(t->bpe), bcir_bpe_special_count(t->bpe));
 }
 
-static int encode(const bcir_bpe *t, const uint8_t *text, size_t len) {
+/* 0 encoded, 1 not UTF-8, 2 out of memory, 3 anything else. */
+static int encode_ids(const tokenizer_t *t, const uint8_t *text, size_t len, int prefix, uint32_t *ids, size_t cap,
+                      size_t *count) {
+  if (!t->spm) {
+    switch (bcir_bpe_encode(t->bpe, text, len, ids, cap, count)) {
+    case BCIR_BPE_OK: return 0;
+    case BCIR_BPE_ERR_NOT_UTF8: return 1;
+    case BCIR_BPE_ERR_NOMEM: return 2;
+    default: return 3;
+    }
+  }
+  switch (bcir_spm_encode(t->sp, text, len, prefix, ids, cap, count)) {
+  case BCIR_SPM_OK: return 0;
+  case BCIR_SPM_ERR_NOT_UTF8: return 1;
+  case BCIR_SPM_ERR_NOMEM: return 2;
+  default: return 3;
+  }
+}
+
+static int encode(const tokenizer_t *t, const uint8_t *text, size_t len, int prefix) {
   bcir_host_allocator allocator = bcir_host_allocator_default();
-  size_t count = 0, bytes;
+  size_t count = 0, cap = 0, bytes;
   uint32_t *ids;
-  if (!bcir_size_mul(len ? len : 1u, sizeof(uint32_t), &bytes) ||
+  /* a BPE text of len octets yields at most len ids, a SentencePiece one at most 3 * len + 3 */
+  if (t->spm ? !bcir_size_mul(len, 3u, &cap) || !bcir_size_add(cap, 3u, &cap) : !bcir_size_add(len, 0u, &cap))
+    return refuse("the text is too long", NULL);
+  if (!bcir_size_mul(cap ? cap : 1u, sizeof(uint32_t), &bytes) ||
       !(ids = (uint32_t *)bcir_host_allocate(&allocator, bytes)))
     return refuse("out of memory encoding the text", NULL);
-  bcir_bpe_status st = bcir_bpe_encode(t, text, len, ids, len, &count); /* len ids always suffice */
-  if (st == BCIR_BPE_OK) {
+  int rc = encode_ids(t, text, len, prefix, ids, cap, &count);
+  if (rc == 0) {
     for (size_t i = 0; i < count; i++) printf(i ? " %u" : "%u", (unsigned)ids[i]);
     putchar('\n');
   }
   bcir_host_deallocate(&allocator, ids);
-  switch (st) {
-  case BCIR_BPE_OK: return 0;
-  case BCIR_BPE_ERR_NOT_UTF8: return refuse("the text is not UTF-8", NULL);
-  case BCIR_BPE_ERR_NOMEM: return refuse("out of memory encoding the text", NULL);
+  switch (rc) {
+  case 0: return 0;
+  case 1: return refuse("the text is not UTF-8", NULL);
+  case 2: return refuse("out of memory encoding the text", NULL);
   default: return refuse("cannot encode the text", NULL);
+  }
+}
+
+/* 0 decoded (or measured: NOSPACE is 4), 1 unknown id, 2 not UTF-8, 3 anything else. */
+static int decode_ids(const tokenizer_t *t, const uint32_t *ids, size_t n, uint8_t *out, size_t cap,
+                      size_t *written) {
+  if (!t->spm) {
+    switch (bcir_bpe_decode(t->bpe, ids, n, out, cap, written)) {
+    case BCIR_BPE_OK: return 0;
+    case BCIR_BPE_ERR_NOSPACE: return 4;
+    case BCIR_BPE_ERR_UNKNOWN_ID: return 1;
+    case BCIR_BPE_ERR_NOT_UTF8: return 2;
+    default: return 3;
+    }
+  }
+  switch (bcir_spm_decode(t->sp, ids, n, out, cap, written)) {
+  case BCIR_SPM_OK: return 0;
+  case BCIR_SPM_ERR_NOSPACE: return 4;
+  case BCIR_SPM_ERR_UNKNOWN_ID: return 1;
+  default: return 3;
   }
 }
 
 static int is_space(uint8_t c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
-static int decode(const bcir_bpe *t, const uint8_t *in, size_t len) {
+static int decode(const tokenizer_t *t, const uint8_t *in, size_t len) {
   bcir_host_allocator allocator = bcir_host_allocator_default();
   size_t n = 0, bytes, written = 0;
   uint32_t *ids;
@@ -236,22 +335,22 @@ static int decode(const bcir_bpe *t, const uint8_t *in, size_t len) {
     i = j;
   }
   /* measure, then decode into a buffer of exactly that size */
-  bcir_bpe_status st = bcir_bpe_decode(t, ids, n, NULL, 0, &written);
-  if (st == BCIR_BPE_ERR_NOSPACE) {
+  int rc = decode_ids(t, ids, n, NULL, 0, &written);
+  if (rc == 4) {
     if (!(out = (uint8_t *)bcir_host_allocate(&allocator, written))) {
       bcir_host_deallocate(&allocator, ids);
       return refuse("out of memory decoding", NULL);
     }
-    st = bcir_bpe_decode(t, ids, n, out, written, &written);
-    if (st == BCIR_BPE_OK && fwrite(out, 1u, written, stdout) != written) st = BCIR_BPE_ERR_INVALID;
+    rc = decode_ids(t, ids, n, out, written, &written);
+    if (rc == 0 && fwrite(out, 1u, written, stdout) != written) rc = 5;
     bcir_host_deallocate(&allocator, out);
   }
   bcir_host_deallocate(&allocator, ids);
-  switch (st) {
-  case BCIR_BPE_OK: return 0;
-  case BCIR_BPE_ERR_UNKNOWN_ID: return refuse("unknown tokenizer id", NULL);
-  case BCIR_BPE_ERR_NOT_UTF8: return refuse("the decoded bytes are not UTF-8", NULL);
-  case BCIR_BPE_ERR_INVALID: return refuse("cannot write standard output", NULL);
+  switch (rc) {
+  case 0: return 0;
+  case 1: return refuse("unknown tokenizer id", NULL);
+  case 2: return refuse("the decoded bytes are not UTF-8", NULL);
+  case 5: return refuse("cannot write standard output", NULL);
   default: return refuse("cannot decode the ids", NULL);
   }
 }
@@ -259,7 +358,9 @@ static int decode(const bcir_bpe *t, const uint8_t *in, size_t len) {
 int main(int argc, char **argv) {
   uint64_t max_bytes = TOKENIZE_MAX_BYTES;
   const char *value = NULL, *path = NULL, *input = NULL;
-  int i = 1, m, rc;
+  int i = 1, m, rc, prefix = 1;
+  tokenizer_t t;
+  memset(&t, 0, sizeof t);
 
   for (int k = 1; k < argc; k++) {
     if (strcmp(argv[k], "-h") == 0 || strcmp(argv[k], "--help") == 0) {
@@ -271,9 +372,17 @@ int main(int argc, char **argv) {
   (void)_setmode(_fileno(stdin), _O_BINARY);
   (void)_setmode(_fileno(stdout), _O_BINARY); /* "\n", never "\r\n" */
 #endif
-  while (i < argc && (m = option(argc, argv, &i, "--max-bytes", &value)) != 0) {
-    if (m < 0 || parse_count(value, strlen(value), UINT64_MAX, &max_bytes) <= 0)
-      return usage_error("--max-bytes takes a number");
+  while (i < argc) {
+    if ((m = option(argc, argv, &i, "--max-bytes", &value)) != 0) {
+      if (m < 0 || parse_count(value, strlen(value), UINT64_MAX, &max_bytes) <= 0)
+        return usage_error("--max-bytes takes a number");
+    } else if ((m = option(argc, argv, &i, "--format", &value)) != 0) {
+      if (m < 0 || (strcmp(value, "bpe") != 0 && strcmp(value, "spm") != 0))
+        return usage_error("--format is bpe or spm");
+      t.spm = strcmp(value, "spm") == 0;
+    } else {
+      break;
+    }
   }
   if (i >= argc) return usage_error("a command is required");
   const char *command = argv[i++];
@@ -285,6 +394,10 @@ int main(int argc, char **argv) {
   }
   if (!(info || enc || dec)) return usage_error("the command is info, encode, decode or limits");
   for (; i < argc; i++) {
+    if (enc && t.spm && strcmp(argv[i], "--no-dummy-prefix") == 0) {
+      prefix = 0;
+      continue;
+    }
     if (argv[i][0] == '-' && argv[i][1] != '\0') return usage_error("unknown option");
     if (!path) path = argv[i];
     else if (!info && !input) input = argv[i];
@@ -293,23 +406,20 @@ int main(int argc, char **argv) {
   if (!path) return usage_error("a TOKENIZER is required");
   if (max_bytes < 1u || max_bytes > TOKENIZE_MAX_BYTES) return refuse("--max-bytes must be in [1, 268435456]", NULL);
 
-  uint8_t *json = NULL, *data = NULL;
-  size_t json_len = 0, data_len = 0;
-  if ((rc = read_path(path, (size_t)max_bytes, &json, &json_len)) != 0) return rc;
+  uint8_t *model = NULL, *data = NULL;
+  size_t model_len = 0, data_len = 0;
+  if ((rc = read_path(path, (size_t)max_bytes, &model, &model_len)) != 0) return rc;
   bcir_host_allocator allocator = bcir_host_allocator_default();
-  bcir_bpe *t = NULL;
-  bcir_bpe_diag diag;
-  bcir_bpe_status st = bcir_bpe_load(json, json_len, NULL, &t, &diag);
-  bcir_host_deallocate(&allocator, json);
-  if (st != BCIR_BPE_OK) return refuse_load(&diag);
+  rc = load(&t, model, model_len);
+  bcir_host_deallocate(&allocator, model);
+  if (rc) return rc;
   if (info) {
-    print_info(t);
-    rc = 0;
+    print_info(&t);
   } else if ((rc = read_path(input, TOKENIZE_MAX_BYTES, &data, &data_len)) == 0) {
-    rc = enc ? encode(t, data, data_len) : decode(t, data, data_len);
+    rc = enc ? encode(&t, data, data_len, prefix) : decode(&t, data, data_len);
     bcir_host_deallocate(&allocator, data);
   }
-  bcir_bpe_free(t);
+  release(&t);
   if (rc) return rc;
   return fflush(stdout) == 0 ? 0 : refuse("cannot write standard output", NULL);
 }

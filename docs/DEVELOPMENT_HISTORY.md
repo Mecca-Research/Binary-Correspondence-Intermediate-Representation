@@ -289,6 +289,43 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-10 — PORT-2b: SentencePiece in C, and PORT-2 is complete.**
+  - `bcir_spm.c` (library `bcir_tokenizer`, hosted) loads a `tokenizer.model`, the Llama family's
+    and TinyLlama's, and encodes and decodes id for id with `frontends.models.spm`.
+    `bcir-tokenize --format spm` is its command line; `--no-dummy-prefix` is
+    `add_dummy_prefix=False`.
+  - The wire reader takes what the oracle's takes: varints of at most ten octets and at most
+    2^64 - 1 (a non-minimal spelling is read), every other field skipped by its wire type, groups
+    and field zero refused. Inside a piece, field 1, 2 or 3 may not repeat with its own wire type,
+    the text must be UTF-8, the score finite and the type 1 to 6.
+  - Encode merges through a heap keyed by (score descending, position ascending), the choice the
+    oracle's rescan makes at every step. Decode streams through Python's `errors='replace'`: each
+    maximal ill-formed subpart becomes one U+FFFD.
+  - The tables are keyed by the same SipHash under the file's digest. `bcir_tok_hash.h` is now the
+    one copy for both tokenizers.
+  - Three oracle defects are fixed on both rails:
+    - a byte piece's digits were read with `int(x, 16)`, which takes white space, signs, lowercase
+      and Arabic-Indic digits. A byte piece is now exactly `<0xHH>`, as SentencePiece writes it;
+    - decode chose bytes by a piece's spelling, so a normal piece spelled `<0xZZ>` crashed it. It
+      renders by type now;
+    - an id that named no piece was dropped silently. It is refused, as the BPE twin and
+      SentencePiece refuse it.
+
+  `test_c_spm_tokenizer.py` joins the `tokenizer` section's comparison. It covers five models: one
+  trained with scores tied in threes, one with no byte alphabet, one of every piece type, and the
+  mini one twice, the second time in odd but valid wire form. It also covers 56 rule documents,
+  byte mutations, and every one- and two-octet run of the octets UTF-8 is decided by, through the
+  byte pieces. `test_spm.c` pins each replacement subpart and fails every allocation in turn;
+  `fuzz_spm.c` holds every decode to UTF-8. Thirteen injected faults were each caught. Three first
+  escaped the comparison, and the corpus now reaches all three:
+  - a control piece that two symbols could make;
+  - a control piece that one symbol is;
+  - an oversized varint in a field that is otherwise skipped.
+
+  The file-writing tool had turned `\uXXXX` escapes into literal characters in both tokenizer
+  tests, U+2028 and U+00A0 among them. They are escapes again. The inventory goes to 70 twinned
+  modules (C 51).
+
 - **2026-11-10 — PORT-2a: the byte-level BPE tokenizer in C, over one JSON reader.**
   - `bcir_bpe.c` (library `bcir_tokenizer`, hosted) loads a `tokenizer.json` of the GPT-2/Qwen
     family, encodes UTF-8 text to ids and decodes ids back. `bcir-tokenize` is its command line

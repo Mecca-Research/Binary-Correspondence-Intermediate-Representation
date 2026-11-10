@@ -50,6 +50,7 @@ hosted_tool bcir_microbench.c
 hosted_tool bcir_pack_cli.c
 hosted_tool bcir_bundle_cli.c
 hosted_tool bcir_bpe.c
+hosted_tool bcir_spm.c
 hosted_tool bcir_tokenize_cli.c
 hosted_tool bcir_q8_model.c
 hosted_tool bcir_q4_kernel.c
