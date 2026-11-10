@@ -86,8 +86,11 @@ static const bcir_bpe *mini(void) {
   for (unsigned b = 0; b < 256u; b++) {
     int printable = (b >= 0x21u && b <= 0x7Eu) || (b >= 0xA1u && b <= 0xACu) || (b >= 0xAEu && b <= 0xFFu);
     unsigned cp = printable ? b : 256u + (unsigned)shifted++;
-    n += (size_t)snprintf(json + n, sizeof json - n, "%s\"\\u%04X\":%u", b ? "," : "", cp, b);
+    int w = snprintf(json + n, sizeof json - n, "%s\"\\u%04X\":%u", b ? "," : "", cp, b);
+    if (w < 0 || (size_t)w >= sizeof json - n) die("the mini tokenizer outgrew its buffer");
+    n += (size_t)w;
   }
+  if (sizeof MINI_TAIL - 1u > sizeof json - n) die("the mini tokenizer outgrew its buffer");
   memcpy(json + n, MINI_TAIL, sizeof MINI_TAIL - 1u);
   n += sizeof MINI_TAIL - 1u;
   if (bcir_bpe_load((const uint8_t *)json, n, NULL, &t, NULL) != BCIR_BPE_OK) die("the mini tokenizer");
