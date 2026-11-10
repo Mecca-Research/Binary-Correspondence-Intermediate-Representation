@@ -156,7 +156,8 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    compilation; they are not resident device drivers.
 9. The **first machine/HAL operator slices are code-backed**: `bcir-pack dis/hexdump`
    validate before displaying exact codec-derived record spans -- in Python and, octet for
-   octet, in freestanding C (`bcir_sp_listing.c` over the runtime's own record walk, PORT-1) --
+   octet, in freestanding C (`bcir_sp_listing.c` over the runtime's own record walk, PORT-1;
+   `bcir-bundle` likewise, over the BCAB reader) --
    and `bcir-registry`
    show/getp/setp advances `data_gen` so stale packs fail R11. Both remain in-process
    baselines, not hardware tools.

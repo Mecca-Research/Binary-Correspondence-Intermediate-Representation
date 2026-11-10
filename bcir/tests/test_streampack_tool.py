@@ -142,14 +142,16 @@ def test_quoted_strings_do_not_depend_on_the_interpreters_unicode_database():
     from bcir.gem.streampack import LaneSegment, StreamPack, TraceNote
     from bcir.model import Lane
 
-    pack = StreamPack(source_plan="\U0001fae8͸\xe9 it's")
-    pack.segments.append(LaneSegment("sĀ", 1, 0, Lane.U, 4, "op", (), (), fence_before=("͸",)))
+    pack = StreamPack(source_plan="\U0001fae8\u0378\xe9 it's")
+    pack.segments.append(
+        LaneSegment("s\u0100", 1, 0, Lane.U, 4, "op", (), (), fence_before=("\u0378",))
+    )
     pack.trace_notes.append(TraceNote(1))
     blob = encode(pack)
     listing = format_listing(blob)
     assert 'source_plan "\\U0001fae8\\u0378\\xe9 it\'s"\n' in listing
     assert "    fences before=['\\u0378'] after=[]\n" in listing
-    assert "  sĀ: op " in listing  # unquoted fields stay the record's own text
+    assert "  s\u0100: op " in listing  # unquoted fields stay the record's own text
     assert "# segment[0] 's\\u0100' offset=" in format_hexdump(blob)
     assert (
         format_listing(encode(StreamPack(source_plan="plan0"))).count("source_plan 'plan0'\n") == 1
@@ -162,7 +164,7 @@ def test_cli_writes_utf8_octets_whatever_the_console():
     import sys
 
     pack = StreamPack(source_plan="p")
-    pack.segments.append(LaneSegment("s\xe9g", 1, 0, Lane.U, 4, "Ā", (), ()))
+    pack.segments.append(LaneSegment("s\xe9g", 1, 0, Lane.U, 4, "\u0100", (), ()))
     blob = encode(pack)
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "sample.bspk"

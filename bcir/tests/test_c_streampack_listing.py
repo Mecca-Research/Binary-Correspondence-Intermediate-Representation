@@ -57,7 +57,7 @@ _STRINGS = (
     "both ' and \"",
     "a\\b\tc\nd\re",
     "\x00\x01\x1f\x7f",
-    "\xe9Ā\U0001fae8͸",
+    "\xe9\u0100\U0001fae8\u0378",
     "",
 )
 
@@ -248,7 +248,7 @@ def test_the_two_command_lines_write_the_same_octets_whatever_the_console():
     """An ASCII console: the Python tool still writes UTF-8 octets with "\\n" line ends, and they are
     the C tool's."""
     pack = StreamPack(source_plan="\U0001fae8")
-    pack.segments.append(LaneSegment("ség", 1, 0, Lane.U, 4, "Ā", (), ()))
+    pack.segments.append(LaneSegment("s\xe9g", 1, 0, Lane.U, 4, "\u0100", (), ()))
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build(tmp)
         if exe is None:

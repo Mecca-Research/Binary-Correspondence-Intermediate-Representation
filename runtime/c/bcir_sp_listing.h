@@ -8,33 +8,24 @@
  * octet reaches the sink.
  *
  * Freestanding, no heap: output goes through the caller's sink in pieces of at most
- * BCIR_LISTING_CHUNK octets, so a listing of any length needs no buffer of that length. The listing
- * borrows scratch for its trace index (bcir_sp_listing_scratch_bytes says how much); the dump
- * borrows none.
- *
- * Quoted strings are spelled as Python's ascii() spells a str: repr's quote choice and escapes, with
- * every code point past U+007E escaped (\xhh, \uhhhh, \Uhhhhhhhh). repr itself keeps a printable
- * non-ASCII character literal, and which characters are printable is the interpreter's Unicode
- * database -- a listing that changed with the Python that printed it would not be deterministic.
+ * BCIR_LISTING_CHUNK octets (bcir_listing_text.h, the MC1 listings' one text writer; a sink that
+ * refuses makes the call return BCIR_ERR_NOSPACE), so a listing of any length needs no buffer of
+ * that length. The listing borrows scratch for its trace index (bcir_sp_listing_scratch_bytes says
+ * how much); the dump borrows none. Quoted strings are spelled as Python's ascii() spells a str
+ * (bcir_lt_quoted says why not repr).
  *===----------------------------------------------------------------------===*/
 #ifndef BCIR_SP_LISTING_H
 #define BCIR_SP_LISTING_H
 
+#include "bcir_listing_text.h"
 #include "bcir_runtime.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* The most octets one sink call carries. */
-#define BCIR_LISTING_CHUNK 1024u
-
 /* The widest hexadecimal-dump row (format_hexdump's [1, 64]). */
 #define BCIR_HEXDUMP_WIDTH_MAX 64u
-
-/* Take `len` octets of output; return 0 when taken, nonzero to refuse (the format call then stops
- * and returns BCIR_ERR_NOSPACE). */
-typedef int (*bcir_sink_fn)(void *ctx, const char *text, size_t len);
 
 /* The scratch octets bcir_sp_format_listing borrows for `data`: 12 per trace record. The whole pack
  * is checked first, so the answer is never more than half its length; a refused pack returns its

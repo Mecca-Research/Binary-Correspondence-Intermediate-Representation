@@ -49,7 +49,8 @@ typedef enum bcir_ab_status {
   BCIR_AB_ERR_SHA256 = 8,
   BCIR_AB_ERR_PAYLOAD = 9,
   BCIR_AB_ERR_INCOMPATIBLE = 10,
-  BCIR_AB_ERR_NOT_FOUND = 11
+  BCIR_AB_ERR_NOT_FOUND = 11,
+  BCIR_AB_ERR_OUTPUT = 12   /* a caller's sink refused the listing's output (bcir_ab_listing.h) */
 } bcir_ab_status;
 
 typedef enum bcir_ab_kind {

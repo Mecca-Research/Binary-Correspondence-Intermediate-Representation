@@ -318,8 +318,8 @@ typed target/device edges, StreamPack/operator tools, verification, device-comma
 BCAB v1 packaging/selection around unmodified standard artifacts. BCAB is not MC7 pack linking or
 MC11 object linking. The next sequence is:
 
-1. Complete source-module symbol resolution and the BCAB half of MC1's C twin (`bcir-bundle`'s
-   listing; the StreamPack half, `bcir-pack` in C, landed as PORT-1's first slice).
+1. Complete source-module symbol resolution. MC1's freestanding C twin landed as PORT-1:
+   `bcir-pack` and `bcir-bundle` in C print the oracle's octets.
 2. Bind MC2 registry operations through RuntimeChannel only after a real driver resource exists.
 3. Build MC3–MC9 from the concrete UART/virtio command and lifecycle needs.
 4. Treat MC10–MC14—native isel, object/link, ABI frame, debug metadata, and binary trust—as a
@@ -598,8 +598,7 @@ History explains past decisions but does not reopen superseded sequencing.
 3. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
    twin's form), the one UART slice left open across rails. It can ride between slices of either
    phase, and so can the native port audit's small slices: PORT-0 (the inventory counts C++ and
-   MLIR twins), PORT-1 (MC1 disassembly in C: its BCAB half remains) and PORT-2 (the tokenizers
-   in C).
+   MLIR twins) and PORT-1 (MC1 in C) have landed; PORT-2 (the tokenizers in C) is next.
 4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
    event timers and DMA, whose blueprints exist; virtio-net, and with it native networking, comes
    with row 3. Alternate the drivers one slice at a time with the deferred work:

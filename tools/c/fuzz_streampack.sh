@@ -257,9 +257,12 @@ add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"
 
 # BCAB is a multi-backend artifact handed to the runtime. Its checksum and digest
-# layers are deliberately exercised from a canonical seed as well as arbitrary bytes.
+# layers are deliberately exercised from a canonical seed as well as arbitrary bytes, and
+# every input is resealed too, so mutations reach the directory, the listing and the dump
+# (PORT-1: a refused bundle reaches no sink).
 add_target artifact "BCAB artifact bundle" "-max_len=16384" \
-  "${C}/fuzz_artifact_bundle.c" "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
+  "${C}/fuzz_artifact_bundle.c" "${C}/bcir_artifact_bundle.c" "${C}/bcir_ab_listing.c" \
+  "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
 
 # The MC1 record walk and the listing/dump over it (PORT-1): a listing tool reads packs anyone hands
 # it. Driven raw and resealed; the harness holds the spans to a partition, the format calls to the
