@@ -1,5 +1,7 @@
 //===- BCIRScheduleEftPass.cpp - duration-aware EFT + pipelined token scheduling -*- C++ -*-===//
 //
+// The law-rail twin of bcir/gem/schedule.py and bcir/gem/async_tokens.py.
+//
 // Three passes over the ONE canonical schedule artifact (BCIRSchedule.h, the law-rail twin of
 // gem.schedule.schedule_plan -- G1 / S1-A), built on per-claim durations from the K_BCIR plan
 // (the coupled step costs) and the hazard DAG over every claim of a phase (data hazards AND

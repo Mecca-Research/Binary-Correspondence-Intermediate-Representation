@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The oracle inventory (CXX0): every module of the Python oracle, its native twin or none, the
+"""The oracle inventory (CXX0): every module of the Python oracle, its native twins or none, the
 gates that hold each twin to it, and the hot paths the before/after audit times.
 
 The 2026-10-06 audit (item 17) found the whole-oracle inventory the migration proposal asked for
@@ -8,9 +8,16 @@ still Python-only was known only by reading the tree. This tool reads it out of 
 sources -- never a mirrored list (a mirror list drifts):
 
 * the oracle: every `bcir/**/*.py` outside `bcir/tests`;
-* the twins: each C unit of `runtime/c` (a library or tool source in `runtime/manifest.json`)
-  names the oracle modules it mirrors in its leading comment -- `bcir/abi/planner_abi.py` or
-  `bcir.gem.handoff.freeze_claims` -- and a unit whose header names them shares them;
+* the twins, on three rails, each unit naming the oracle modules it mirrors in its leading
+  comment:
+  - each C unit of `runtime/c` (a library or tool source in `runtime/manifest.json`), by
+    `bcir/abi/planner_abi.py` or `bcir.gem.handoff.freeze_claims`; a unit whose header names
+    them shares them;
+  - each C++ unit of `runtime/cpp` (a `seam_libraries` source), by the same rules, its `.hpp` or
+    `.h` sharing its names;
+  - each source of the MLIR law rail (`mlir/lib`), by path only (`bcir/gem/overlap.py`,
+    `kbcir/sensing.py`), because its comments spell dialect operations (`bcir.kbcir.select`)
+    that a dotted reference would mistake for a module (PORT-0, 2026-11-10);
 * the gates: the manifest's harnesses, sections and fuzzers that build each unit;
 * the hot paths: `tools/perf/ab_audit.py`'s row functions, each importing the oracle entry points
   it times.
@@ -32,6 +39,8 @@ import sys
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 OUT = os.path.join("docs", "BCIR_ORACLE_INVENTORY.md")
 _C_DIR = os.path.join("runtime", "c")
+_CPP_DIR = os.path.join("runtime", "cpp")
+_MLIR_DIR = os.path.join("mlir", "lib")
 _LEAD = 60  # the leading comment of a C unit: where it names what it mirrors
 _PATH_REF = re.compile(r"\bbcir/([A-Za-z0-9_/]+?)(?:\.py\b|/?(?=[\s`'\",;:).]|$))")
 _DOTTED_REF = re.compile(r"\bbcir\.([A-Za-z0-9_.]+)")
@@ -143,10 +152,14 @@ def _unit_texts(unit: str) -> list[str]:
     return texts
 
 
-def _references(text: str, modules: set[str], packages: set[str]) -> tuple[set[str], set[str]]:
+def _references(
+    text: str, modules: set[str], packages: set[str], dotted: bool = True
+) -> tuple[set[str], set[str]]:
     """(modules, packages) a comment names: `bcir/x/y.py`, `bcir.x.y.attr`, a path below `bcir/`
     without its prefix when exactly one module ends with it (`cfront/diagnostics.py`), and a
-    package by its directory (`bcir/asn1/`)."""
+    package by its directory (`bcir/asn1/`). With `dotted` false only the path forms count: the
+    MLIR rail's comments name dialect operations (`bcir.kbcir.select`, `bcir.gem.lane_segment`)
+    that a dotted reference would read as the packages `bcir.kbcir` and `bcir.gem`."""
     named, whole = set(), set()
     for ref in _PATH_REF.findall(text):
         module = _resolve_path(ref, modules)
@@ -154,7 +167,7 @@ def _references(text: str, modules: set[str], packages: set[str]) -> tuple[set[s
             named.add(module)
         elif "bcir." + ref.strip("/").replace("/", ".") in packages:
             whole.add("bcir." + ref.strip("/").replace("/", "."))
-    for ref in _DOTTED_REF.findall(text):
+    for ref in _DOTTED_REF.findall(text) if dotted else ():
         module = _resolve_dotted(ref, modules)
         if module is not None:
             named.add(module)
@@ -186,6 +199,82 @@ def twins(manifest: dict, modules: list[str]) -> dict[str, tuple[list[str], list
         if named or whole:
             out[unit] = (sorted(named), sorted(whole))
     return out
+
+
+def cpp_units(manifest: dict) -> list[str]:
+    """The C++ units of the hosted seam: every `seam_libraries` source in the manifest."""
+    units = set()
+    for entry in manifest.get("seam_libraries", {}).values():
+        units.update(entry.get("sources", []))
+    return sorted(units)
+
+
+def _cpp_texts(unit: str) -> list[str]:
+    """A C++ unit's leading comment and its header's (`.hpp`, or `.h` for a C-ABI header)."""
+    stem = unit.rsplit(".", 1)[0]
+    texts = []
+    for name in (unit, stem + ".hpp", stem + ".h"):
+        path = _rel(_CPP_DIR, name)
+        if os.path.isfile(path):
+            texts.append(_lead(path))
+    return texts
+
+
+def mlir_units() -> list[str]:
+    """The MLIR law rail's sources (`mlir/lib`, `.cpp` and `.h`), relative to `mlir/lib`. An
+    installed package carries no `mlir/` tree, and then there are none."""
+    root = _rel(_MLIR_DIR)
+    out = []
+    for base, dirs, files in os.walk(root):
+        dirs.sort()
+        for name in sorted(files):
+            if name.endswith((".cpp", ".h")):
+                out.append(os.path.relpath(os.path.join(base, name), root).replace(os.sep, "/"))
+    return sorted(out)
+
+
+def _twins_of(
+    units: list[str], texts_of, modules: list[str], dotted: bool
+) -> dict[str, tuple[list[str], list[str]]]:
+    known = set(modules)
+    packages = {m for m in modules if _source(m).endswith("__init__.py")}
+    out = {}
+    for unit in units:
+        named, whole = set(), set()
+        for text in texts_of(unit):
+            n, w = _references(text, known, packages, dotted)
+            named |= n
+            whole |= w
+        whole = {p for p in whole if not any(m.startswith(p + ".") or m == p for m in named)}
+        if named or whole:
+            out[unit] = (sorted(named), sorted(whole))
+    return out
+
+
+def cpp_twins(manifest: dict, modules: list[str]) -> dict[str, tuple[list[str], list[str]]]:
+    """C++ unit -> (the oracle modules it names, the packages it names as a whole)."""
+    return _twins_of(cpp_units(manifest), _cpp_texts, modules, dotted=True)
+
+
+def mlir_twins(modules: list[str]) -> dict[str, tuple[list[str], list[str]]]:
+    """MLIR source -> (the oracle modules it names by path, the packages it names as a whole)."""
+    return _twins_of(
+        mlir_units(), lambda unit: [_lead(_rel(_MLIR_DIR, unit))], modules, dotted=False
+    )
+
+
+def seam_gates(manifest: dict) -> dict[str, list[str]]:
+    """C++ unit -> the seam tests that link its library."""
+    owner = {}
+    for name, entry in manifest.get("seam_libraries", {}).items():
+        for unit in entry.get("sources", []):
+            owner[unit] = name
+    out: dict[str, list[str]] = {}
+    for test, entry in manifest.get("seam_tests", {}).items():
+        for unit, library in owner.items():
+            if library in entry.get("libraries", []):
+                out.setdefault(unit, []).append(test)
+    return {unit: sorted(tests) for unit, tests in out.items()}
 
 
 def gates(manifest: dict) -> dict[str, dict[str, list[str]]]:
@@ -266,12 +355,19 @@ def render() -> str:
     with open(_rel("runtime", "manifest.json"), encoding="utf-8") as f:
         manifest = json.load(f)
     modules = oracle_modules()
-    twin_of = twins(manifest, modules)
+    rails = (
+        ("C", twins(manifest, modules)),
+        ("C++", cpp_twins(manifest, modules)),
+        ("MLIR", mlir_twins(modules)),
+    )
     held = gates(manifest)
-    mirrored: dict[str, list[str]] = {}
-    for unit, (named, _whole) in twin_of.items():
-        for module in named:
-            mirrored.setdefault(module, []).append(unit)
+    seam_held = seam_gates(manifest)
+    mirrored: dict[str, dict[str, list[str]]] = {rail: {} for rail, _ in rails}
+    for rail, twin_of in rails:
+        for unit, (named, _whole) in twin_of.items():
+            for module in named:
+                mirrored[rail].setdefault(module, []).append(unit)
+    anywhere = {m for rail in mirrored.values() for m in rail}
     paths = hot_paths(modules)
     hot_modules = {entry.rsplit(".", 1)[0] for _row, entries in paths for entry in entries}
 
@@ -285,72 +381,124 @@ def render() -> str:
         "<!-- Generated by tools/perf/oracle_inventory.py from the tree's own sources; do not edit.",
         "     `python3 tools/perf/oracle_inventory.py --check` fails when this file is stale. -->",
         "",
-        "Every module of the Python oracle (`bcir/`, tests excluded), whether a C unit of the",
-        "production rail mirrors it, the gates that hold each twin to it, and the hot paths the",
-        "before/after audit (`tools/perf/ab_audit.py`) times. A twin is a unit that names the module",
-        "in its leading comment; its gates are the `runtime/manifest.json` sections and fuzzers",
-        "that build it. The measured numbers are not here: they live in the GEM+ harness",
-        "(`tools/perf/gemplus_baseline.py`) and the A/B audit, by the row names below.",
+        "Every module of the Python oracle (`bcir/`, tests excluded), the native units that mirror",
+        "it on each rail, the gates that hold each twin to it, and the hot paths the before/after",
+        "audit (`tools/perf/ab_audit.py`) times. The rails:",
+        "",
+        "- **C**: the production rail, `runtime/c`. Its gates are the `runtime/manifest.json`",
+        "  sections and fuzzers that build each unit.",
+        "- **C++**: the hosted seam, `runtime/cpp`. Its gates are the manifest's seam tests.",
+        "- **MLIR**: the law rail, `mlir/lib`, held by the `mlir` preset's `ctest -L mlir`.",
+        "",
+        "A twin is a unit that names the module in its leading comment. MLIR sources count only a",
+        "path (`bcir/gem/overlap.py`), because their comments spell dialect operations",
+        "(`bcir.kbcir.select`) that are not modules. The measured numbers are not here: they live",
+        "in the GEM+ harness (`tools/perf/gemplus_baseline.py`) and the A/B audit, by the row names",
+        "below.",
         "",
         "## Summary",
         "",
-        "| package | modules | with a native twin | on a timed hot path |",
-        "|---|---:|---:|---:|",
+        "| package | modules | with a C twin | with a C++ twin | with an MLIR twin | with any twin |"
+        " on a timed hot path |",
+        "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for package in sorted(packages):
         members = packages[package]
+        counts = [sum(m in mirrored[rail] for m in members) for rail, _ in rails]
         lines.append(
-            f"| `{package}` | {len(members)} | {sum(m in mirrored for m in members)} | "
+            f"| `{package}` | {len(members)} | "
+            + " | ".join(str(c) for c in counts)
+            + f" | {sum(m in anywhere for m in members)} | "
             f"{sum(m in hot_modules for m in members)} |"
         )
+    totals = [len(mirrored[rail]) for rail, _ in rails]
     lines += [
-        f"| **all** | **{len(modules)}** | **{len(mirrored)}** | **{len(hot_modules)}** |",
+        f"| **all** | **{len(modules)}** | "
+        + " | ".join(f"**{c}**" for c in totals)
+        + f" | **{len(anywhere)}** | **{len(hot_modules)}** |",
         "",
         "## Hot paths",
         "",
-        "Each row of the A/B audit, the oracle entry points it times, and whether their module has",
-        "a native twin.",
+        "Each row of the A/B audit, the oracle entry points it times, and the twins of their",
+        "modules on each rail.",
         "",
-        "| A/B row | oracle entry points | native twin of the module |",
-        "|---|---|---|",
+        "| A/B row | oracle entry points | C | C++ | MLIR |",
+        "|---|---|---|---|---|",
     ]
     for row, entries in paths:
-        units = sorted({u for e in entries for u in mirrored.get(e.rsplit(".", 1)[0], [])})
-        twin = ", ".join(f"`{u}`" for u in units) or "Python-only"
-        lines.append(f"| `{row}` | {', '.join(f'`{e}`' for e in entries)} | {twin} |")
+        cells = []
+        for rail, _ in rails:
+            units = sorted(
+                {u for e in entries for u in mirrored[rail].get(e.rsplit(".", 1)[0], [])}
+            )
+            cells.append(", ".join(f"`{u}`" for u in units) or "—")
+        lines.append(
+            f"| `{row}` | {', '.join(f'`{e}`' for e in entries)} | " + " | ".join(cells) + " |"
+        )
     lines += [
         "",
-        "## Native twins",
+        "## C twins",
         "",
         "| C unit | oracle modules it mirrors | sections | fuzzers |",
         "|---|---|---|---|",
     ]
-    for unit in sorted(twin_of):
+    c_twins = rails[0][1]
+    for unit in sorted(c_twins):
         g = held.get(unit, {"sections": [], "fuzzers": []})
-        named, whole = twin_of[unit]
+        named, whole = c_twins[unit]
         mirrors = [f"`{m}`" for m in named] + [f"`{p}` (the package)" for p in whole]
         lines.append(
             f"| `{unit}` | {', '.join(mirrors)} | "
             f"{', '.join(g['sections']) or '—'} | {', '.join(g['fuzzers']) or '—'} |"
         )
-    silent = [u for u in native_units(manifest) if u not in twin_of]
+    silent = [u for u in native_units(manifest) if u not in c_twins]
     lines += [
         "",
         "A unit that names a package mirrors it as a whole, and is not counted against any one",
         "of its modules above. The units that name no oracle module are native-only (the model",
         "loaders and kernels, the quarantine, the driver hooks, the shared digests) or speak",
         "through another unit's interface: " + ", ".join(f"`{u}`" for u in silent) + ".",
+        "",
+        "## C++ twins",
+        "",
+        "| C++ unit | oracle modules it mirrors | seam tests |",
+        "|---|---|---|",
     ]
+    cpp = rails[1][1]
+    for unit in sorted(cpp):
+        named, whole = cpp[unit]
+        mirrors = [f"`{m}`" for m in named] + [f"`{p}` (the package)" for p in whole]
+        lines.append(
+            f"| `{unit}` | {', '.join(mirrors)} | {', '.join(seam_held.get(unit, [])) or '—'} |"
+        )
+    cpp_silent = [u for u in cpp_units(manifest) if u not in cpp]
+    lines += [
+        "",
+        "The C++ units that name no oracle module are native-only: "
+        + (", ".join(f"`{u}`" for u in cpp_silent) or "none")
+        + ".",
+        "",
+        "## MLIR twins",
+        "",
+        "| MLIR source (`mlir/lib`) | oracle modules it mirrors |",
+        "|---|---|",
+    ]
+    mlir = rails[2][1]
+    for unit in sorted(mlir):
+        named, whole = mlir[unit]
+        mirrors = [f"`{m}`" for m in named] + [f"`{p}` (the package)" for p in whole]
+        lines.append(f"| `{unit}` | {', '.join(mirrors)} |")
     lines += [
         "",
         "## Python-only, by package",
         "",
-        "The oracle modules no C unit mirrors: the semantics, the research and the generators the",
-        "migration proposal keeps in Python (its §8.2), and the candidates for the next twin.",
+        "The oracle modules no unit on any rail mirrors: the semantics, the research and the",
+        "generators the migration proposal keeps in Python (its §8.1), and the candidates for the",
+        "next twin ([`research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md`](research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md)).",
         "",
     ]
     for package in sorted(packages):
-        rest = [m for m in packages[package] if m not in mirrored]
+        rest = [m for m in packages[package] if m not in anywhere]
         if rest:
             lines.append(f"- `{package}` ({len(rest)}): " + ", ".join(f"`{m}`" for m in rest))
     return "\n".join(lines) + "\n"

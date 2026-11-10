@@ -1,5 +1,6 @@
-"""CXX0: the oracle inventory -- every oracle module, its native twin or none, the gates that hold
-each twin, and the hot paths the A/B audit times -- read out of the tree's own sources.
+"""CXX0: the oracle inventory -- every oracle module, its native twins or none, the gates that hold
+each twin, and the hot paths the A/B audit times -- read out of the tree's own sources. PORT-0
+(2026-11-10) reads the C++ seam and the MLIR law rail beside the C rail.
 
 The 2026-10-06 audit (item 17) found the whole-oracle inventory never done. These witnesses hold
 the committed inventory to the sources (`--check` fails on a stale file), pin the twins the tree
@@ -109,3 +110,58 @@ def test_every_twin_is_held_by_a_gate_or_said_not_to_be():
     text = oi.render()
     for unit in oi.twins(manifest, oi.oracle_modules()):
         assert f"| `{unit}` |" in text, unit
+
+
+def test_the_cpp_and_mlir_twins():
+    """PORT-0: a C++ seam unit and an MLIR source mirror an oracle module the way a C unit does,
+    by naming it in their leading comment; the inventory reads all three rails."""
+    modules = oi.oracle_modules()
+    cpp = {unit: named for unit, (named, _whole) in oi.cpp_twins(_manifest(), modules).items()}
+    assert "bcir.gem.handoff" in cpp["bcir_handoff.cpp"]
+    if not oi.mlir_units():
+        return  # an installed package carries no mlir/ tree
+    mlir = {unit: named for unit, (named, _whole) in oi.mlir_twins(modules).items()}
+    assert mlir["passes/BCIROverlapPass.cpp"] == ["bcir.gem.overlap"]
+    assert "bcir.kbcir.cost" in mlir["passes/BCIRCostModel.h"]
+    assert "bcir.gem.schedule" in mlir["passes/BCIRSchedule.h"]
+    assert "bcir.gem.async_tokens" in mlir["passes/BCIRScheduleEftPass.cpp"]
+    assert {"bcir.gem.cim", "bcir.gem.dvfs"} <= set(mlir["passes/BCIRCimDvfsPass.cpp"])
+    assert "bcir.kbcir.allocator" in mlir["passes/BCIRAllocPoolPass.cpp"]
+    assert "bcir.verify" in mlir["passes/BCIRVerifyPass.cpp"]
+    # a dialect operation's spelling makes no twin: no source names the packages by path
+    assert not any({"bcir.kbcir", "bcir.gem"} & set(named) for named in mlir.values())
+
+
+def test_a_dialect_operation_is_no_module_on_the_law_rail():
+    """The MLIR rail spells dialect operations that look like dotted module names: read with the
+    dotted rule, `bcir.kbcir.select` would make every pass that mentions it a twin of the
+    `bcir.kbcir` package. The law rail counts paths only."""
+    modules = set(oi.oracle_modules())
+    packages = {m for m in modules if oi._source(m).endswith("__init__.py")}
+    text = "annotates bcir.kbcir.select and bcir.gem.lane_segment"
+    named, _ = oi._references(text, modules, packages)
+    assert named  # the hazard, under the C rail's rule
+    assert oi._references(text, modules, packages, dotted=False) == (set(), set())
+    named, _ = oi._references("the C++ port of bcir/gem/overlap.py", modules, packages, False)
+    assert named == {"bcir.gem.overlap"}
+
+
+def test_the_twins_that_did_not_name_their_module():
+    """Two C units mirrored an oracle module without naming it, so the inventory listed the
+    module as Python-only (the native port audit, 2026-11-09): BCAB's reader and selection, and
+    the BCIRQ4T v1 kernel."""
+    twins = {u: named for u, (named, _w) in oi.twins(_manifest(), oi.oracle_modules()).items()}
+    assert "bcir.abi.artifact_bundle" in twins["bcir_artifact_bundle.c"]
+    assert "bcir.kbcir.lowbit" in twins["bcir_q4_kernel.c"]
+
+
+def test_a_hot_path_shows_its_twins_on_every_rail():
+    """The A/B audit's scheduler rows read Python-only while only `runtime/c` was read; their
+    modules are held to MLIR passes."""
+    if not oi.mlir_units():
+        return
+    text = oi.render()
+    row = next(line for line in text.splitlines() if line.startswith("| `sched_eft` |"))
+    assert "`passes/BCIRSchedule.h`" in row
+    row = next(line for line in text.splitlines() if line.startswith("| `plan` |"))
+    assert "`bcir_kplan.c`" in row and "`passes/BCIRPlanPass.cpp`" in row

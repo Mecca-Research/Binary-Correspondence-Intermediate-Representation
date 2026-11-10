@@ -3,6 +3,9 @@
  * Allocation-free, fail-closed reader/selector for the BCIR Artifact Bundle.
  * Input and selected payloads are BORROWED immutable spans; callers retain the
  * backing bytes for the lifetime of every view. No pointer crosses the wire.
+ * The C twin of bcir/abi/artifact_bundle.py's reader and variant selection
+ * (decode_bundle, inspect_bundle, select_variant); its writer stays in Python,
+ * where bundles are built.
  *===----------------------------------------------------------------------===*/
 #ifndef BCIR_ARTIFACT_BUNDLE_H
 #define BCIR_ARTIFACT_BUNDLE_H

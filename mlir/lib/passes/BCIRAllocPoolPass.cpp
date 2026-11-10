@@ -1,5 +1,7 @@
 //===- BCIRAllocPoolPass.cpp - liveness-based memory pool planning -*- C++ -*-===//
 //
+// The law-rail twin of bcir/kbcir/allocator.py's pool_plan.
+//
 // -bcir-alloc-pool: the law-rail port of kbcir.allocator.pool_plan -- predictive pool
 // allocation. Resources whose live ranges (the [first_phase, last_phase] span over the phase
 // order) do NOT overlap can share one memory arena, so the peak footprint (sum of arena sizes)

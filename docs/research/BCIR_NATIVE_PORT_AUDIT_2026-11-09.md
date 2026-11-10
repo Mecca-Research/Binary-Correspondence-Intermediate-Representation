@@ -243,7 +243,7 @@ containers by hand for code that never runs on a target.
 
 | Slice | What | When |
 |---|---|---|
-| **PORT-0** | The inventory reads `runtime/cpp/` and `mlir/lib/` and counts their twins. C units that mirror a module without naming it name it (`bcir_artifact_bundle.c`, `bcir_q4_kernel.c`). The A/B audit's Python-only rows show their MLIR pass where one exists. | First; small, tooling only |
+| **PORT-0** (**landed 2026-11-10**: 45 twinned modules became 66; C 47, C++ 1, MLIR 21) | The inventory reads `runtime/cpp/` and `mlir/lib/` and counts their twins. C units that mirror a module without naming it name it (`bcir_artifact_bundle.c`, `bcir_q4_kernel.c`). The A/B audit's Python-only rows show their MLIR pass where one exists. | First; small, tooling only |
 | **PORT-1** | N1, MC1 disassembly in C | Between interface-phase slices |
 | **PORT-2** | N2, the tokenizers in C | Between slices; before SLM-1 |
 | **PORT-3** | The C verifier's R19/R20 | With driver row 1 |

@@ -289,6 +289,23 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-10 — PORT-0: the oracle inventory reads every native rail.** `tools/perf/oracle_inventory.py`
+  read only `runtime/c`. It now reads three rails:
+  - the C units, as before;
+  - the C++ seam's units (`seam_libraries`), under the same reference rules;
+  - the MLIR law rail's sources, by path references only. Their comments spell dialect
+    operations such as `bcir.kbcir.select`, which the dotted rule would read as the packages
+    `bcir.kbcir` and `bcir.gem`; a witness shows that hazard and refuses it.
+
+  Twins that mirrored a module without naming it now name it (comments only):
+  - BCAB's reader and selection, and the BCIRQ4T v1 kernel, in C;
+  - the hand-off seam in C++;
+  - the async-token, CIM/DVFS, allocation-pool and verifier passes in MLIR.
+
+  The inventory goes from 45 twinned modules to 66: C 47, C++ 1, MLIR 21. The A/B audit's
+  scheduler rows now show their MLIR passes. Four new witnesses were RED before the change; the
+  dotted-rule fault injected into the MLIR reader is caught.
+
 - **2026-11-10 — C-SUBSET-AUDIT: the verified C subset against the runtime's own C.**
   `docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md` ran `bcir-cfront` over the 33 runtime
   library units.

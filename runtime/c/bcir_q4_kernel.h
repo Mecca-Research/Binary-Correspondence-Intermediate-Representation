@@ -1,3 +1,8 @@
+/*===- bcir_q4_kernel.h - the BCIRQ4T v1 packed-Q4 kernels -----------------===*
+ *
+ * The C twin of the BCIRQ4T v1 packed-Q4 tensor format bcir/kbcir/lowbit.py
+ * defines: low nibble first, signed two's complement, -8 forbidden.
+ *===----------------------------------------------------------------------===*/
 #ifndef BCIR_Q4_KERNEL_H
 #define BCIR_Q4_KERNEL_H
 
