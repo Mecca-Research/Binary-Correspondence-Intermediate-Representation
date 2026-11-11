@@ -280,7 +280,8 @@ def law_documents() -> list[tuple[str, bytes]]:
         ("varint-truncated", b"\x80"),
         ("varint-11", b"\x80" * 10 + b"\x01"),
         ("varint-10th-2", b"\xff" * 9 + b"\x02"),
-        ("varint-10th-2-skipped", unk + _tag(2, 0) + b"\xff" * 9 + b"\x02"),  # refused though skipped
+        # refused though the field it holds is one the reader skips
+        ("varint-10th-2-skipped", unk + _tag(2, 0) + b"\xff" * 9 + b"\x02"),
         ("varint-10th-1-length", _tag(2, 2) + b"\xff" * 9 + b"\x01"),
         ("varint-10th-0", unk + _tag(2, 0) + b"\x80" * 9 + b"\x00"),
         ("field-zero", unk + b"\x02\x00"),
