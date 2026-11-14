@@ -289,6 +289,26 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-14 — CSUB-2a: array parameters of function types, and `_Alignas` on objects.**
+  - The first slice of the table-idioms rung, on both rails. A function-pointer type's array parameter is a pointer
+    to its element (C11 6.7.6.3p7), as a definition's is. `bcir_shard_manifest.h`'s `const uint8_t digest[32]`
+    had been a parse error on both rails.
+  - `_Alignas(N)` / `alignas(N)` works on locals, block statics and file-scope objects. Each emit spells it where
+    the object is declared. The oracle had read a file-scope one and dropped it, a silent loss of alignment, and
+    the twin had refused it.
+  - Every form C forbids or the emit cannot spell is refused alike, for one reason, by checks at the same points on
+    both rails. The twin's definition and function-pointer parameters now decay by one predicate.
+  - **Evidence.** `cfront_csub2_decl.c` runs as the original under Clang and GCC on each rail. Each of its functions
+    reads the address of what it aligns, and dropping the specifier from either emit was caught by both the
+    differential and the parity gates. A cross-rail test holds 6 lowered forms to one digest and 18 refused ones
+    to one reason each. The fixture keeps the escape corpus private: no local array of it leaves its function, so
+    `escape.unproved` stays on its floor of 0 and `icall.unresolved` within its range.
+  - **Standing faults.** `cfront-csub2.json` holds 12, each swept RED by the cross-rail test. The slice moved code
+    that nine existing faults inject into (FT7, TL5, LT10–LT12, O43, HO2, T28 and `volatile.json`'s row-pointer
+    decay); each is re-anchored and was swept RED again.
+  - **The ratchet.** `bcir_shard_manifest.c` compiles clean (22 of 58 units). `bcir_handoff.c` and
+    `bcir_tensor.c` stop at this rung's next constructs.
+
 - **2026-11-11 — CSUB-1: the C subset's conformance rung, a ratchet over the runtime, one macro engine.**
   - **The rung, on both rails.** A function-like invocation may run across lines (C11 6.10.3p10).
     `static_assert` and `_Static_assert` work at file, block and member scope. The freestanding

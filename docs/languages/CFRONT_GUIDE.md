@@ -520,6 +520,12 @@ _mm_sfence();                      //                   store (release) fence ->
   code unit, a universal character name, an escape C does not define, a source character past ASCII, more than one
   character behind a prefix); an operand C leaves unevaluated refuses for none of the operators' reasons. A `#if`
   holds at most 512 tokens of at most 63 characters, nested at most 63 deep.
+- An array parameter of a function-pointer type -- in a typedef, a member or an inline declarator, `typedef int
+  (*fetch_fn)(const uint8_t digest[32], size_t n);` -- is a pointer to its element (C11 6.7.6.3p7), as a definition's
+  array parameter is (CSUB-2a).
+- `_Alignas(N)` / `alignas(N)` on an object (C11 6.7.5) -- a local, each declarator off one specifier, a block static,
+  a file-scope object of any storage class -- with the strictest of several specifiers. Each emit spells it on the
+  object's declaration: the function-level emit a block object's, the linkable emit a global's (CSUB-2a).
 
 ## Known limits
 
@@ -637,13 +643,22 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   cannot compile `_Decimal`, so the form is un-validatable under the Clang-equivalence methodology and
   is gated out until a `_Decimal`-capable reference compiler is available.
 - Cross-target builds are layout-only here; running them needs a cross toolchain.
+- An alignment specifier the subset does not take, refused on both rails for one reason (CSUB-2a):
+  - an alignment that is no power of two (`requested alignment is not a power of 2`), or is past 4096;
+  - one weaker than its type (`requested alignment is less than the minimum alignment of its type`, C11 6.7.5p4);
+  - the type-name form `_Alignas(T)`;
+  - one on anything but the declaration of an object -- a typedef, a parameter, a function, a cast, `sizeof`;
+  - one on a variable-length array, or on a declaration that defines the struct or union it aligns.
+
+  A function-pointer parameter declared as an array of arrays, or as a variable-length array, is refused as well.
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
 **Measured against the runtime's own C.** [`../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)
 ran this compiler over the runtime's units. Its first rung, CSUB-1 (2026-11-11), closed the three gaps that blocked
 most of them: multi-line macro invocations, static assertions and the standard headers above. `bcir-cc` now
-compiles 21 of the runtime's 58 production units with R1-R18 clean, where it compiled 4. The ratchet gate
+compiled 21 of the runtime's 58 production units with R1-R18 clean, where it had compiled 4; CSUB-2a (2026-11-14)
+brought it to 22. The ratchet gate
 `tools/c/csub_ratchet.py` (the `csub_ratchet` section of `tools/c/check_runtime.sh`) holds each unit
 `runtime/c/MEMORY_CLASSIFICATION.txt` lists to its record in `runtime/c/csub_ratchet.json`: clean, or blocked with
 its first refusal, the construct it is about and the rung that lifts it. A unit added to the runtime is added to the
