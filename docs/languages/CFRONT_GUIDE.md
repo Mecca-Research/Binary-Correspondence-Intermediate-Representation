@@ -495,7 +495,9 @@ _mm_sfence();                      //                   store (release) fence ->
   and `<math.h>`'s `NAN`, `INFINITY`, `HUGE_VAL`/`HUGE_VALF`/`HUGE_VALL` with `isfinite`, `isnan`, `isinf`,
   `signbit` and `isnormal`. Each macro's value and type is the target's, as Clang's own header gives it (a
   `UINT16_MAX` is an `int`, C's promotion of `uint16_t`; `LONG_MAX` follows the data model; `MB_LEN_MAX` is the
-  hosted C library's, 16 on glibc and 5 on MSVC; `FLT_EVAL_METHOD` is 2 on i386). `offsetof(T, m)` folds to the
+  hosted C library's, 16 on glibc and 5 on MSVC; `FLT_EVAL_METHOD` is 2 on i386, whose target names the x87
+  `i686` baseline, so the witnesses ask Clang with `-march=i686`: Clang 23's default for the triple, `pentium4`,
+  computes in SSE2 and reports 0). `offsetof(T, m)` folds to the
   member's offset in the target's layout of `T`, a nested member or a constant subscript included
   (`offsetof(struct r, v[2])`); it refuses a type that is not a struct or union, a bit-field, a designator that is
   not a member or a constant subscript, and an incomplete struct or union. `__has_include(<stdint.h>)` is true of

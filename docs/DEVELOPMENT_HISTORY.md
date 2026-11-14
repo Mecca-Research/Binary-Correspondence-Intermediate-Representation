@@ -295,7 +295,10 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     headers are built in per target: `<stdint.h>`, `<stddef.h>` with `offsetof` and
     `max_align_t`, `<stdbool.h>`, `<limits.h>`, `<float.h>`, `<iso646.h>`, `<stdalign.h>`, and
     `<math.h>`'s constants and classification macros. Clang's own headers are the reference on
-    five targets. Each construct has a Clang-equivalence fixture (`cfront_stdheaders.c`).
+    five targets. Each construct has a Clang-equivalence fixture (`cfront_stdheaders.c`). The
+    i386 target now names its CPU, the x87 `i686` baseline (`TargetABI.march`), where
+    `FLT_EVAL_METHOD` is 2. Clang 23 had moved that triple's default to `pentium4`, whose SSE2
+    arithmetic reports 0, so the reference had changed while BCIR's own i386 code had not.
   - **The ratchet.** `tools/c/csub_ratchet.py` (section `csub_ratchet`) runs `bcir-cc` over every
     production unit `MEMORY_CLASSIFICATION.txt` lists. It holds each to `runtime/c/csub_ratchet.json`:
     clean, or blocked with its first refusal, its construct and the rung that lifts it. 21 of the

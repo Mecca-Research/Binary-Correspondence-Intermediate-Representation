@@ -9934,13 +9934,14 @@ def _probe_expansions(text: str) -> dict:
     return out
 
 
-def _clang_expansions(src: str, triple: str | None, hosted: bool) -> dict | None:
+def _clang_expansions(src: str, abi, hosted: bool) -> dict | None:
+    """Clang's expansion of each probe in `src` for the target `abi` (`TargetABI.clang_target`; None: the host)."""
     clang = shutil.which("clang")
     if clang is None:
         return None
     cmd = [clang, "-std=c23", "-E", "-P", "-x", "c", "-"]
-    if triple:
-        cmd[1:1] = [f"--target={triple}"]
+    if abi is not None:
+        cmd[1:1] = abi.clang_target
     if not hosted:
         cmd.insert(1, "-ffreestanding")
     r = subprocess.run(cmd, input=src, capture_output=True, text=True)
@@ -9948,11 +9949,12 @@ def _clang_expansions(src: str, triple: str | None, hosted: bool) -> dict | None
     return _probe_expansions(r.stdout)
 
 
-def _clang_syntax(src: str, triple: str | None, hosted: bool) -> str:
-    """Clang's verdict on `src` (C23, syntax only): "" accepted, else its diagnostics."""
+def _clang_syntax(src: str, abi, hosted: bool) -> str:
+    """Clang's verdict on `src` (C23, syntax only) for the target `abi` (None: the host): "" accepted, else its
+    diagnostics."""
     cmd = [shutil.which("clang"), "-std=c23", "-fsyntax-only", "-x", "c", "-"]
-    if triple:
-        cmd[1:1] = [f"--target={triple}"]
+    if abi is not None:
+        cmd[1:1] = abi.clang_target
     if not hosted:
         cmd.insert(1, "-ffreestanding")
     r = subprocess.run(cmd, input=src, capture_output=True, text=True)
@@ -9996,7 +9998,7 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
             diffs = [(probes[k][1], ours[k], twin.get(k)) for k in ours if twin.get(k) != ours[k]]
             assert not diffs, (name, diffs[:6])
         fs_unit = "struct __probe { int a; short b[4]; };\n" + _std_probe_unit(probes, libc=False)
-        clang = _clang_expansions(fs_unit, abi.triple, hosted=False)
+        clang = _clang_expansions(fs_unit, abi, hosted=False)
         if clang is None:
             continue
         asserts, mismatched = [], []
@@ -10023,7 +10025,7 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
                 mismatched.append((macro, ours[k], clang.get(k)))
         assert not mismatched, (name, mismatched)
         includes = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if h != "math.h")
-        verdict = _clang_syntax(includes + "\n".join(asserts) + "\n", abi.triple, hosted=False)
+        verdict = _clang_syntax(includes + "\n".join(asserts) + "\n", abi, hosted=False)
         assert not verdict, (name, verdict)
         if (
             name == "x86_64-linux"
@@ -10079,7 +10081,7 @@ def test_the_standard_headers_lay_out_their_types_as_clang_on_every_target():
         r = subprocess.run(
             [
                 clang,
-                f"--target={abi.triple}",
+                *abi.clang_target,
                 "-std=c23",
                 "-ffreestanding",
                 "-S",
@@ -16647,7 +16649,7 @@ def test_if_expressions_take_the_branch_clang_takes_on_each_target():
                 assert _pparith_branch(run.stdout) == oracle, f"#if {expr} on {t}: the rails part"
                 if clang:
                     ref = subprocess.run(
-                        [clang, "-target", abi.triple, "-std=c2x", "-E", "-P", path],
+                        [clang, *abi.clang_target, "-std=c2x", "-E", "-P", path],
                         capture_output=True,
                         text=True,
                     )
