@@ -239,6 +239,7 @@
     "fuzz_sp_listing": {"sources": ["fuzz_sp_listing.c"], "libraries": ["bcir_listing", "bcir_artifact", "bcir_base"], "max_len": "16384"},
     "fuzz_bpe": {"sources": ["fuzz_bpe.c"], "libraries": ["bcir_tokenizer", "bcir_asn1", "bcir_base"], "max_len": "32768"},
     "fuzz_spm": {"sources": ["fuzz_spm.c"], "libraries": ["bcir_tokenizer", "bcir_asn1", "bcir_base"], "max_len": "65536"},
+    "fuzz_cpp": {"sources": ["fuzz_cpp.c"], "libraries": ["bcir_cfront", "bcir_base"], "max_len": "8192"},
     "fuzz_exec": {"sources": ["fuzz_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_encode": {"sources": ["fuzz_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_binrec": {"sources": ["fuzz_binrec.c"], "libraries": ["bcir_streampack"], "max_len": "64"},

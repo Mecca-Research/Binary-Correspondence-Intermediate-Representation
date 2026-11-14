@@ -315,8 +315,11 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     - the twin reads integer libm results as signed.
   - **Evidence.** A generated differential holds the rails to one answer on 400 programs. Every
     `cfront_pp_*.c` fixture matches Clang and GCC on both rails. The work bound's edge is the same
-    on both, where empty expansions, hide sets and output bytes each carry the charge. 28 injected
-    faults across the rung, the ratchet, the PER fix and the two engines were each caught.
+    on both, where empty expansions, hide sets and output bytes each carry the charge. A new libFuzzer
+    target, `fuzz_cpp`, runs each input on a shared context twice and on a fresh one, and holds the
+    three to one verdict, so a state leak shows the first time it matters. 28 injected faults across
+    the rung, the ratchet, the PER fix and the two engines were each caught, and a planted leak was
+    caught by `fuzz_cpp`.
   - **Left open, refusals only:** the twin's 1 024-macro table; a computed `#include MACRO` on the
     twin; `sizeof` of an object in an integer constant expression. Also open: both PER rails
     accept an indefinite-length integer in more octets than it needs.

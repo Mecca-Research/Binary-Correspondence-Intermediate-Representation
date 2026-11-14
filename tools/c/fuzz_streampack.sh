@@ -282,6 +282,12 @@ add_target bpe "BPE tokenizer" "-max_len=32768" \
 add_target spm "SentencePiece tokenizer" "-max_len=65536" \
   "${C}/fuzz_spm.c" "${C}/bcir_spm.c" "${C}/bcir_jer.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
 
+# The C preprocessor (CSUB-1): a translation unit is text from anyone, and since CSUB-1 the macro engine
+# keeps grown buffers and interned hide sets between expansions. Each input runs twice on one shared
+# context, and the two runs must give one verdict, the same text or the same refusal.
+add_target cpp "C preprocessor" "-max_len=8192" \
+  "${C}/fuzz_cpp.c" "${C}/bcir_cpp.c"
+
 # bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
 # pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
 add_target exec "executor" "" \
@@ -394,6 +400,10 @@ out = Path(sys.argv[1])
 for name, blob in models() + [("law-" + n, b) for n, b in law_documents()]:
     out.joinpath(f"{name}.model").write_bytes(blob)
 PY
+
+# The preprocessor corpus is the fixtures both rails' preprocessor differentials compare.
+cp "${C}"/cfront_pp_*.c "${C}"/cfront_stdheaders.c "${C}"/cfront_sec_cppmacro.c "${tmp}/corpus_cpp/" ||
+  { echo "  FAIL: preprocessor seed corpus"; exit 1; }
 
 if ! python3 - "${tmp}/corpus_artifact" <<'PY'
 import sys
