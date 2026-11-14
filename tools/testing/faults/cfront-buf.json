@@ -184,7 +184,7 @@
       "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
       "label": "B24 the twin bounds no name a #if looks up after expansion",
       "new": "  while(1){\n",
-      "old": "  while(1){int q=j; if(ident_at(state->conditional_expanded,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME);\n",
+      "old": "  while(1){int q=j; if(ident_at(ex,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME);\n",
       "path": "runtime/c/bcir_cpp.c"
     },
     {

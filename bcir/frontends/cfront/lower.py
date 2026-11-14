@@ -1131,10 +1131,9 @@ def _kfloat_cast(spelling: str, t: _KVal, live: bool) -> _KVal:
     rails."""
     text = spelling.replace("'", "")
     suffix = text[-1:].lower() if text[-1:] in ("f", "F", "l", "L") else ""
+    # ... and so is a float builtin (`__builtin_inff()`, CSUB-1): a NaN or an infinity, which no integer holds
     if suffix == "l" or len(text) > _FLOAT_SPELLING or text.startswith("__builtin_"):
-        raise CLowerError(
-            ICE_NOT
-        )  # ... and a NaN or an infinity, which no integer holds (6.3.1.4p1)
+        raise CLowerError(ICE_NOT)
     v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix])
     if t.kind == "b":
         return t._replace(v=int(live and (v is None or v != 0)))
