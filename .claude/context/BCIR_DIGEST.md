@@ -43,11 +43,12 @@ PORT-0 landed: the oracle inventory reads all three rails (C, the C++ seam, the 
 path only), so 66 modules show a twin where 45 did.
 
 **The verified C subset against the runtime** (`docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`):
-- `bcir-cfront` parses 6 of 33 runtime units and compiles 10 once CSUB-1 lands (multi-line
-  macro calls, file-scope `static_assert`, the standard headers' macros).
-- CSUB-2 to CSUB-6 add table idioms, `<stdbit.h>`/`<stdckdint.h>`, `<stdatomic.h>` calls, a
-  hosted profile and AI numerics.
-- R18 stays: `bcir_per.c`'s one-level recursion gets fixed instead.
+- CSUB-1 landed: multi-line macro calls, `static_assert`, built-in freestanding headers per target,
+  and one macro engine (Prosser, prescan, `#` spacing) on both rails.
+- `tools/c/csub_ratchet.py` holds `bcir-cc`'s verdict on every production unit to
+  `runtime/c/csub_ratchet.json`, naming each blocked unit's rung. CSUB-2 (table idioms) is next.
+- CSUB-3 to CSUB-6 add `<stdbit.h>`/`<stdckdint.h>`, `<stdatomic.h>` calls, a hosted profile and
+  AI numerics. R18 stays: `bcir_per.c` dropped its recursion instead.
 - Subsystems needed now: a counter-based RNG, a native data loader, hardware digests.
 
 After the interface phase comes the **foundation phase**, owned by `docs/BCIR_MASTER_ROADMAP.md`

@@ -474,7 +474,38 @@ _mm_sfence();                      //                   store (release) fence ->
 - `_Thread_local` globals and `static _Thread_local` locals: each thread has its own object, and both emits
   keep the storage class.
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
-  predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
+  predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators. Both rails run one engine,
+  C's rescanning rule by Prosser's hide sets (C11 6.10.3.4): a name is not re-expanded inside its own expansion
+  (`#define EPERM EPERM`), a macro's result is rescanned once with what follows it and a token once passed is never
+  looked at again, an argument is macro-replaced on its own before it is substituted (6.10.3.1) except as an operand
+  of `#` or `##`, and an empty `##` operand is a placemarker (6.10.3.3p2). `#` keeps an argument's spacing as Clang
+  and GCC keep it: one space where white space came between two tokens, none elsewhere (`S(a + b)` is `"a + b"`,
+  6.10.3.2p2). An argument's prescan nests at most 63 deep (`macro expansion nesting too deep`) and one expansion
+  does at most 2^22 units of work (`macro expansion is too large`), counted alike on both rails. A
+  function-like invocation may run across lines, its `(` included (6.10.3p10): the lines it spans become one, and
+  blank lines keep the next line's number. An invocation left open at the end of the unit (`unterminated macro
+  argument list`), a directive inside its arguments (`preprocessing directive inside macro arguments`, 6.10.3p11)
+  and `__LINE__` on one of its continued lines (`__LINE__ on a continued line of a macro invocation`: neither rail
+  tracks a line per token) are refused on both rails (CSUB-1).
+- The freestanding headers, built in per target when no `-I` directory supplies one: `<stdint.h>` (the least and
+  max-width types; the limits and C23 widths of these and the exact-width types; `SIZE_MAX`, `PTRDIFF_MIN`/`MAX`,
+  `INTPTR_*`, `UINTPTR_*`, `WCHAR_*`, `WINT_*` and `SIG_ATOMIC_*`; and the `INTn_C`/`UINTn_C`/`INTMAX_C`/`UINTMAX_C`
+  macros), `<stddef.h>` (`NULL`, `offsetof`, `ptrdiff_t` and `max_align_t`; `size_t` and `wchar_t` are the front
+  end's own, with or without it), `<stdbool.h>`, `<limits.h>`, `<float.h>`, `<iso646.h>`, `<stdalign.h>`
+  and `<math.h>`'s `NAN`, `INFINITY`, `HUGE_VAL`/`HUGE_VALF`/`HUGE_VALL` with `isfinite`, `isnan`, `isinf`,
+  `signbit` and `isnormal`. Each macro's value and type is the target's, as Clang's own header gives it (a
+  `UINT16_MAX` is an `int`, C's promotion of `uint16_t`; `LONG_MAX` follows the data model; `MB_LEN_MAX` is the
+  hosted C library's, 16 on glibc and 5 on MSVC; `FLT_EVAL_METHOD` is 2 on i386). `offsetof(T, m)` folds to the
+  member's offset in the target's layout of `T`, a nested member or a constant subscript included
+  (`offsetof(struct r, v[2])`); it refuses a type that is not a struct or union, a bit-field, a designator that is
+  not a member or a constant subscript, and an incomplete struct or union. `__has_include(<stdint.h>)` is true of
+  each. Left out on purpose: the `int_fastN_t` types and their limits (their widths are the C library's choice),
+  `FLT_ROUNDS` (the current rounding mode, not a constant), C23's `nullptr_t` and `unreachable()` (CSUB-6), and
+  the rest of `<math.h>`, whose functions are the libm edges below.
+- `static_assert` and `_Static_assert` at file scope, in a block and in a struct or union's member list (C11
+  6.7.10), with or without the message C23 makes optional: the condition is an integer constant expression folded as a dimension is, and a
+  false one is refused at its keyword on both rails (`static assertion failed`). `true` and `false` are C23's `bool`
+  constants, in code and in a constant expression (`sizeof(true)` is 1).
 - `#if` and `#elif` in C's arithmetic (C11 6.10.1p4): every operand an `intmax_t` or a `uintmax_t` (64 bits), an
   integer constant unsigned where its suffix has `u` or its value is past `INTMAX_MAX`, an unsigned operand making
   the operation unsigned, `true` 1 and any other identifier 0; `?:`, the comma operator in an operand C leaves
@@ -607,14 +638,12 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
-**Measured against the runtime's own C (2026-11-10).** [`../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)
-runs this compiler over the 33 runtime library units. Three gaps above the documented limits
-block most of them:
-- a function-like macro call whose arguments span lines (`unterminated macro argument list`,
-  which C11 6.10.3p10 allows);
-- a file-scope `static_assert` or `_Static_assert`;
-- the standard headers' macros (`NULL`, `SIZE_MAX`, `UINT32_MAX`, `UINT64_C`, `INT_MAX`, `NAN`,
-  `true`).
-
-Each is refused on both rails. The audit's CSUB ladder closes them and the table idioms behind
-them.
+**Measured against the runtime's own C.** [`../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)
+ran this compiler over the runtime's units. Its first rung, CSUB-1 (2026-11-11), closed the three gaps that blocked
+most of them: multi-line macro invocations, static assertions and the standard headers above. `bcir-cc` now
+compiles 21 of the runtime's 58 production units with R1-R18 clean, where it compiled 4. The ratchet gate
+`tools/c/csub_ratchet.py` (the `csub_ratchet` section of `tools/c/check_runtime.sh`) holds each unit
+`runtime/c/MEMORY_CLASSIFICATION.txt` lists to its record in `runtime/c/csub_ratchet.json`: clean, or blocked with
+its first refusal, the construct it is about and the rung that lifts it. A unit added to the runtime is added to the
+record, or the gate fails. The audit's later rungs close the table idioms (CSUB-2) and the hosted profile (CSUB-5)
+that block most of the rest.

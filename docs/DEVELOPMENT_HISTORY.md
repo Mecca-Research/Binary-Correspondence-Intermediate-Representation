@@ -289,6 +289,38 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-11 — CSUB-1: the C subset's conformance rung, a ratchet over the runtime, one macro engine.**
+  - **The rung, on both rails.** A function-like invocation may run across lines (C11 6.10.3p10).
+    `static_assert` and `_Static_assert` work at file, block and member scope. The freestanding
+    headers are built in per target: `<stdint.h>`, `<stddef.h>` with `offsetof` and
+    `max_align_t`, `<stdbool.h>`, `<limits.h>`, `<float.h>`, `<iso646.h>`, `<stdalign.h>`, and
+    `<math.h>`'s constants and classification macros. Clang's own headers are the reference on
+    five targets. Each construct has a Clang-equivalence fixture (`cfront_stdheaders.c`).
+  - **The ratchet.** `tools/c/csub_ratchet.py` (section `csub_ratchet`) runs `bcir-cc` over every
+    production unit `MEMORY_CLASSIFICATION.txt` lists. It holds each to `runtime/c/csub_ratchet.json`:
+    clean, or blocked with its first refusal, its construct and the rung that lifts it. 21 of the
+    58 units compile with R1–R18 clean, where 4 did. `bcir_per.c` dropped its one-level recursion
+    (R18), and a malformed-length witness holds the range check that recursion had made.
+  - **One macro engine.** The twin's preprocessor rewrote a line until it stopped changing, with
+    no hide sets and no argument prescan. It miscompiled `f(1)(2)` of `#define f(x) (x) + f` as
+    `(1) + (2) + f`, `f(f)(y)` and `f LP 1)`, refused `#define EPERM EPERM` and any line expanding
+    past 8 KiB, and spelled a two-level `XSTR(__LINE__)` as `"__LINE__"`. It now runs the oracle's
+    Prosser engine, ported step for step. The suite's three pinned twin divergences are gone.
+  - **Fixed on both rails:**
+    - `#` keeps an argument's spacing (`S(a + b)` had been `"a+b"`);
+    - a number before a character constant stays two tokens;
+    - the twin's `#if` reads the oracle's text (it had read `defined(A) defined(B)` as `11`);
+    - one prescan depth (63) and one work bound for an expansion, counted at the same events (the
+      oracle had crashed on arguments nested some 400 deep);
+    - the twin reads integer libm results as signed.
+  - **Evidence.** A generated differential holds the rails to one answer on 400 programs. Every
+    `cfront_pp_*.c` fixture matches Clang and GCC on both rails. The work bound's edge is the same
+    on both, where empty expansions, hide sets and output bytes each carry the charge. 28 injected
+    faults across the rung, the ratchet, the PER fix and the two engines were each caught.
+  - **Left open, refusals only:** the twin's 1 024-macro table; a computed `#include MACRO` on the
+    twin; `sizeof` of an object in an integer constant expression. Also open: both PER rails
+    accept an indefinite-length integer in more octets than it needs.
+
 - **2026-11-10 — PORT-2b: SentencePiece in C, and PORT-2 is complete.**
   - `bcir_spm.c` (library `bcir_tokenizer`, hosted) loads a `tokenizer.model`, the Llama family's
     and TinyLlama's, and encodes and decodes id for id with `frontends.models.spm`.

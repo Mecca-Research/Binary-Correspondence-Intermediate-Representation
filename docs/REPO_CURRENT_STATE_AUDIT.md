@@ -99,7 +99,11 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
   frontend → `bcir_verify.c` → `bcir_plan`/`bcir_hydrate`/`bcir_exec`, driven by the
   cc-like `bcir-cc`), Python↔C parity-gated per stage (structural digest + emitted-C
   Clang equivalence) over the shared `cfront_*.c` fixture corpus, with
-  libFuzzer+ASan/UBSan on every trust boundary. The model data plane includes the
+  libFuzzer+ASan/UBSan on every trust boundary. The subset is held against the runtime's own
+  C: a ratchet (`tools/c/csub_ratchet.py`, record `runtime/c/csub_ratchet.json`) holds
+  `bcir-cc`'s verdict on every production unit -- clean, or blocked with its first refusal and
+  the CSUB rung that lifts it. Since CSUB-1 both rails' preprocessors run one macro engine,
+  held to one answer on generated programs. The model data plane includes the
   fully validating BCIRQ8 loader, standalone GQA decoder, native Q8 projections,
   byte-identical Q8/Q4 conversion, exact Q15 top-k, and the bounded C measurement twin.
   `runtime/cpp/` is the small C↔C++ hand-off seam, realized by G16 (S3-C):
