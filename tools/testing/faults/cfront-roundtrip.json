@@ -208,8 +208,8 @@
     {
       "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
       "label": "O43 `_Atomic` no cast's type name on the oracle",
-      "new": "            )  # `(_Atomic T *)p` (CF-RTFP)",
-      "old": "                \"_Atomic\",\n            )  # `(_Atomic T *)p` (CF-RTFP)",
+      "new": "                \"_Alignas\",  # read as a type name",
+      "old": "                \"_Atomic\",\n                \"_Alignas\",  # read as a type name",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {

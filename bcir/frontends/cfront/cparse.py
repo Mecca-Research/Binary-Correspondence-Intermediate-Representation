@@ -21,7 +21,14 @@ from .lower import (
     DIM_RANGE,
     ENUM_INCOMPLETE,
     ENUM_NOT_INT,
+    ALIGN_AGG,
+    ALIGN_LARGE,
+    ALIGN_PLACE,
+    ALIGN_POW2,
+    ALIGN_TYPE,
     FN_RET_FP,
+    FP_PARAM_ROWS,
+    FP_PARAM_VLA,
     GENERIC_QUALIFIED,
     QUAL_DEEP,
     QUAL_LEVELS,
@@ -236,6 +243,10 @@ class _Parser:
         self._layout_memo = None  # (the aggregate definitions laid out, their layouts): `_layouts`
         self._depth = 0  # recursive-descent nesting depth (see _MAX_DEPTH / _descend)
         self._declared: set = set()  # the file-scope functions declared so far (`Func.declared`)
+        # `_Alignas(N)` in the declaration being parsed: `align_ok` while an object declaration's specifiers are read
+        # (`_decl_stmt`), `align` the strictest N they ask (C11 6.7.5p6; CSUB-2)
+        self.align_ok = False
+        self.align = 0
         # how C names each anonymous aggregate (`$anonN`, `Unit.anon_spelling`): the file-scope typedef that
         # names it (`typedef struct {...} P;`), else the named member it is the type of -- the aggregate that
         # holds the member, the member's name, and its declarator's `*`s and array dimensions
@@ -335,7 +346,7 @@ class _Parser:
         return self.nxt()
 
     # --- unit ---
-    def _attributes(self) -> dict:
+    def _attributes(self, alignas: bool = True) -> dict:
         """Consume `__attribute__((packed))` / `__attribute__((aligned(N)))` / `alignas(N)` runs, plus a
         C23 `[[ ... ]]` attribute run. The only C23 attributes acted on are the value-neutral hints
         `[[unsequenced]]` / `[[reproducible]]` (recorded in the dict); any other C23 attribute (incl.
@@ -373,7 +384,7 @@ class _Parser:
                         self.nxt()
                 self.eat("PUNCT", ")")
                 self.eat("PUNCT", ")")
-            elif self.at("IDENT", "alignas") or self.at("IDENT", "_Alignas"):
+            elif alignas and (self.at("IDENT", "alignas") or self.at("IDENT", "_Alignas")):
                 self.nxt()
                 self.eat("PUNCT", "(")
                 attrs["aligned"] = self._const_int()
@@ -453,7 +464,8 @@ class _Parser:
             self.storage = set()
             self._typedef(unit)
             return
-        lead = self._attributes()
+        # an `_Alignas(N)` is left for the specifiers to read: of an object it is kept, of anything else refused (CSUB-2)
+        lead = self._attributes(alignas=False)
         self.storage = set()  # per-item storage-class record (see _type_spec)
         if self.at("IDENT", "typedef"):  # a type alias (resolved at parse time)
             start = self.i
@@ -484,12 +496,22 @@ class _Parser:
                 unit.type_defs.append(self._spelled(save, self.i))
                 return
             self.i = save  # a struct *type* (func ret / global)
-        base = self._type_spec()
+        self.align_ok, self.align = (
+            True,
+            0,
+        )  # a declaration of objects may ask an alignment; a function may not
+        try:
+            base = self._type_spec()
+        finally:
+            self.align_ok = False
+        align, align_at = self.align, self.peek().pos
         if self._fn_returning_fp_at():  # `T (*f(P))(Q)` (CF-FPRET)
             raise CParseError(FN_RET_FP, pos=self.peek().pos)
         # a global may be a function pointer, an array of them or a pointer to one (CF-FPTAB)
         tref, name = self._declarator_or_funcptr(base)
         if self.at("PUNCT", "("):  # a function definition (or a prototype)
+            if align:
+                raise CParseError(ALIGN_PLACE, pos=align_at)
             fn = self._func_body(
                 tref,
                 name,
@@ -499,15 +521,21 @@ class _Parser:
             if fn is not None:  # None == a prototype (recorded in protos)
                 unit.funcs.append(fn)
         else:  # file-scope global variables: one per declarator off the specifier (C11 6.7p1)
-            self._globals(unit, base, tref, name)
+            self._globals(unit, base, tref, name, align)
 
-    def _globals(self, unit: cast.Unit, base: cast.TypeRef, tref: cast.TypeRef, name: str) -> None:
+    def _globals(
+        self, unit: cast.Unit, base: cast.TypeRef, tref: cast.TypeRef, name: str, align: int = 0
+    ) -> None:
         """The declarators of one file-scope declaration, `T a[3], *p, b = 5;`, each a global of its own
         type -- its `*`s and dimensions its own, the specifier's storage class every one's -- then its `;`.
         The first declarator (`tref`, `name`) is already parsed. The twin's `p_global`."""
         extern, static = "extern" in self.storage, "static" in self.storage
         while True:
-            unit.globals.append(self._global(tref, name, extern=extern, static=static))
+            unit.globals.append(
+                dataclasses.replace(
+                    self._global(tref, name, extern=extern, static=static), align=align
+                )
+            )
             if not self.at("PUNCT", ","):
                 break
             self.nxt()
@@ -651,7 +679,7 @@ class _Parser:
                     )
                 if self.at("IDENT"):  # an optional parameter name (ignored)
                     self.nxt()
-                params.append(pt)
+                params.append(self._fp_array_param(pt))
                 if self.at("PUNCT", ","):
                     self.nxt()
                     continue
@@ -710,6 +738,26 @@ class _Parser:
         if self._is_funcptr_declarator(abstract):
             return self._funcptr_declarator(base, abstract)
         return self._declarator(base, abstract)
+
+    def _fp_array_param(self, pt: cast.TypeRef) -> cast.TypeRef:
+        """A parameter of a function-pointer type declared as an array, `T name[N]` or `T name[]` (CSUB-2): a pointer
+        to `T` (C11 6.7.6.3p7), as a definition's array parameter decays (`lower._param_type`) and as the twin's
+        `fp_param_list` reads it -- `bcir_shard_manifest.h`'s `const uint8_t digest[32]`. The dimension is read as
+        any is (`_dim`), and must be a constant (`FP_PARAM_VLA`). A second dimension, or an element that is an array
+        already, would make a pointer to an array, which no function type spells here (`FP_PARAM_ROWS`)."""
+        if not self.at("PUNCT", "["):
+            return pt
+        pos = self.peek().pos
+        self.nxt()
+        if not self.at("PUNCT", "]") and not isinstance(self._dim(self._assign()), int):
+            raise CParseError(FP_PARAM_VLA, pos=pos)
+        self.eat("PUNCT", "]")
+        if self.at("PUNCT", "[") or pt.array:
+            raise CParseError(FP_PARAM_ROWS, pos=pos)
+        levels = tuple(pt.ptr_quals or ((),) * pt.ptr) + ((),)
+        return dataclasses.replace(
+            pt, ptr=pt.ptr + 1, ptr_quals=_qual_levels(levels) if any(levels) else ()
+        )
 
     def _fn_returning_fp_at(self) -> bool:
         """Whether the cursor is at `( * NAME (` -- the declarator of a function that returns a function pointer,
@@ -991,6 +1039,51 @@ class _Parser:
             return self._type_spec_inner()
 
     def _type_spec_inner(self) -> cast.TypeRef:
+        # an alignment specifier belongs to this run of specifiers alone: a nested type name (`typeof(T)`,
+        # `_Atomic(T)`) is read with none allowed
+        align_ok, self.align_ok = self.align_ok, False
+        try:
+            return self._type_spec_run(align_ok)
+        finally:
+            self.align_ok = align_ok
+
+    def _alignas(self, align_ok: bool) -> None:
+        """`_Alignas ( N )` / `alignas ( N )` at the cursor, among a declaration's specifiers (C11 6.7.5): kept in
+        `self.align` where an object declaration asks for one (`align_ok`), the strictest of several (6.7.5p6), and
+        refused anywhere else (`ALIGN_PLACE`) and in its type-name form `_Alignas(T)` (`ALIGN_TYPE`). N is 0 (no effect,
+        6.7.5p6) or a power of two (`ALIGN_POW2`) at most 4096 (`ALIGN_LARGE`), checked here, as the twin's
+        `alignas_spec` checks it; against the object's type it is checked where each declarator ends
+        (`lower._object_align`)."""
+        pos = self.peek().pos
+        k, depth = (
+            1,
+            0,
+        )  # a declaration that defines the struct it aligns: refused first (`ALIGN_AGG`)
+        while True:
+            t = self.peek(k)
+            depth += (t.text == "(") - (t.text == ")") if t.kind == "PUNCT" else 0
+            k += 1
+            if depth <= 0 or t.kind == "EOF":
+                break
+        if self.peek(k).kind == "IDENT" and self.peek(k).text in ("struct", "union"):
+            k += 1 + (self.peek(k + 1).kind == "IDENT")
+            if self.peek(k).kind == "PUNCT" and self.peek(k).text == "{":
+                raise CParseError(ALIGN_AGG, pos=pos)
+        if not align_ok:
+            raise CParseError(ALIGN_PLACE, pos=pos)
+        self.nxt()
+        self.eat("PUNCT", "(")
+        if self._is_decl_start():
+            raise CParseError(ALIGN_TYPE, pos=pos)
+        n = self._const_int()
+        if n < 0 or n & (n - 1):
+            raise CParseError(ALIGN_POW2, pos=pos)
+        if n > 4096:
+            raise CParseError(ALIGN_LARGE, pos=pos)
+        self.align = max(self.align, n)
+        self.eat("PUNCT", ")")
+
+    def _type_spec_run(self, align_ok: bool) -> cast.TypeRef:
         quals: list[str] = []
         words: list[str] = []
         aggregate = ""
@@ -1031,6 +1124,8 @@ class _Parser:
             if w in ("const", "volatile", "_Atomic"):
                 quals.append(w)
                 self.nxt()
+            elif w in ("_Alignas", "alignas"):  # an alignment specifier (CSUB-2)
+                self._alignas(align_ok)
             elif w in ("static", "extern", "_Thread_local", "thread_local", "inline"):
                 self.storage.add(w)  # recorded (linkable emit reads `extern` and
                 self.nxt()  # `static`); otherwise storage/inline ignored
@@ -1436,6 +1531,7 @@ class _Parser:
             or w == "enum"
             or is_scalar_name(w)
             or w in ("va_list", "__builtin_va_list", "_Atomic")
+            or w in ("_Alignas", "alignas")  # an alignment specifier opens a declaration (CSUB-2)
             or self._typedef_visible(w)
         )
 
@@ -1758,7 +1854,15 @@ class _Parser:
         its own pointer/array shape from the base (so `int *p, q;` types p pointer, q int)."""
         self.storage = set()  # this declaration's own storage classes, wherever they are spelled
         start = self.i
-        base = self._type_spec()
+        self.align_ok, self.align = (
+            True,
+            0,
+        )  # an object declaration: `_Alignas(N)` may be among its specifiers
+        try:
+            base = self._type_spec()
+        finally:
+            self.align_ok = False
+        align = self.align
         # `enum [tag] { ... };`: a declaration of the enumeration's constants (and tag) alone, in scope to the end of
         # the block (C11 6.7p2; CF-CONSTEXPR2)
         spec = {t.text for t in self.t[start : self.i]}
@@ -1791,7 +1895,14 @@ class _Parser:
                 self.nxt()
                 init = self._init_value()
             decls.append(
-                cast.Decl(tref, name, init, static_storage=is_static, thread_storage=is_thread)
+                cast.Decl(
+                    tref,
+                    name,
+                    init,
+                    static_storage=is_static,
+                    thread_storage=is_thread,
+                    align=align,
+                )
             )
             if self.at("PUNCT", ","):  # another declarator off the same specifier
                 self.nxt()
@@ -1971,6 +2082,8 @@ class _Parser:
                 "const",
                 "volatile",
                 "_Atomic",
+                "_Alignas",  # read as a type name, whose specifiers refuse it (ALIGN_PLACE; CSUB-2)
+                "alignas",
             )  # `(_Atomic T *)p` (CF-RTFP)
             or is_scalar_name(w)
             or self._typedef_visible(w)

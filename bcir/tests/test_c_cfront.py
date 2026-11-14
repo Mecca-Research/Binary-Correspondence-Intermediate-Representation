@@ -309,6 +309,8 @@ _PTRVALUE = [
     "cfront_enumobj.c",  # objects of an enumerated type -- locals, globals, parameters, returns, members, a bit-field,
     #   typedef names -- typed as the enumeration's compatible type: `unsigned int` with no negative enumerator on System
     #   V, `int` otherwise and on MSVC (CF-ENUMOBJ)
+    "cfront_csub2_decl.c",  # array parameters of function-pointer types, `_Alignas` on locals, statics and globals,
+    #   each object's address showing its alignment kept by the emit (CSUB-2a)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10140,6 +10142,171 @@ def test_the_standard_headers_lay_out_their_types_as_clang_on_every_target():
                 name,
                 _twin_line(exe, unit, "--target", name),
             )
+
+
+# CSUB-2a: units each rail lowers to one digest, and the `_Alignas(N)` each emit must spell (the function-level emit for a
+# block object, the linkable one for a global)
+_CSUB2_ALIGN_LOWERED = (
+    (
+        "uint32_t f(uint32_t k) { _Alignas(64) uint8_t b[64]; alignas(16) uint32_t w = k; b[0] = (uint8_t)k;"
+        " return b[0] + w; }",
+        ("_Alignas(64) uint8_t", "_Alignas(16) uint32_t"),
+        (),
+    ),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(16) _Alignas(64) uint8_t b[8]; static _Alignas(32) uint32_t s;"
+        " b[0] = (uint8_t)k; s += k; return b[0] + s; }",
+        ("_Alignas(64) uint8_t", "static _Alignas(32) uint32_t"),
+        (),
+    ),
+    ("uint32_t f(uint32_t k) { _Alignas(0) uint32_t x = k; return x; }", (), ()),
+    (
+        "static _Alignas(64) uint8_t g_buf[64] = {1, 2}; _Alignas(16) _Thread_local uint32_t g_t;\n"
+        "uint32_t f(uint32_t k) { return k + g_buf[1] + g_t; }",
+        (),
+        (
+            "static _Alignas(64) uint8_t g_buf[64] = {1, 2};",
+            "_Alignas(16) _Thread_local uint32_t g_t;",
+        ),
+    ),
+    (
+        "extern _Alignas(8) uint32_t g_e;\nuint32_t f(uint32_t k) { return k + g_e; }",
+        (),
+        ("extern _Alignas(8) uint32_t g_e;",),
+    ),
+    (
+        "typedef uint32_t (*fn)(const uint8_t d[4], uint32_t n);\n"
+        "static uint32_t s4(const uint8_t d[4], uint32_t n) { return d[0] + d[3] + n; }\n"
+        "uint32_t f(uint32_t k) { uint8_t d[4] = {1, 2, 3, 4}; fn g = s4; return g(d, k); }",
+        (),
+        (),
+    ),
+)
+# ... and the forms both refuse, each for one reason; `clang` -- whether C forbids it, so Clang refuses it too
+_CSUB2_ALIGN_REFUSED = (
+    ("uint32_t f(uint32_t k) { _Alignas(3) uint32_t x = k; return x; }", "lower.ALIGN_POW2", True),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(8192) uint32_t x = k; return x; }",
+        "lower.ALIGN_LARGE",
+        False,
+    ),
+    ("uint32_t f(uint32_t k) { _Alignas(2) uint32_t x = k; return x; }", "lower.ALIGN_WEAK", True),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(4) char c = 1, *p = &c; return k + (uint32_t)*p; }",
+        "lower.ALIGN_WEAK",
+        True,
+    ),
+    (
+        "struct s { uint64_t a; };\nuint32_t f(uint32_t k) { _Alignas(4) struct s v; v.a = k; return (uint32_t)v.a; }",
+        "lower.ALIGN_WEAK",
+        True,
+    ),
+    ("_Alignas(2) uint32_t g;\nuint32_t f(uint32_t k) { return k + g; }", "lower.ALIGN_WEAK", True),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(double) uint32_t x = k; return x; }",
+        "lower.ALIGN_TYPE",
+        False,
+    ),
+    (
+        "typedef _Alignas(8) uint32_t al_t;\nuint32_t f(uint32_t k) { return k; }",
+        "lower.ALIGN_PLACE",
+        True,
+    ),
+    ("uint32_t f(_Alignas(8) uint32_t k) { return k; }", "lower.ALIGN_PLACE", True),
+    ("_Alignas(8) uint32_t f(uint32_t k) { return k; }", "lower.ALIGN_PLACE", True),
+    ("uint32_t f(uint32_t k) { return (_Alignas(8) uint32_t)k; }", "lower.ALIGN_PLACE", True),
+    (
+        "uint32_t f(uint32_t k) { return k + (uint32_t)sizeof(_Alignas(8) uint32_t); }",
+        "lower.ALIGN_PLACE",
+        True,
+    ),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(64) uint32_t v[k]; v[0] = 1u; return v[0]; }",
+        "lower.ALIGN_VLA",
+        False,
+    ),
+    (
+        "_Alignas(16) struct s { uint32_t a; } g_s;\nuint32_t f(uint32_t k) { return k + g_s.a; }",
+        "lower.ALIGN_AGG",
+        False,
+    ),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(16) struct s { uint32_t a; } v; v.a = k; return v.a; }",
+        "lower.ALIGN_AGG",
+        False,
+    ),
+    (
+        "typedef uint32_t (*fn)(size_t n, const uint8_t a[n]);\nuint32_t f(uint32_t k) { return k; }",
+        "lower.FP_PARAM_VLA",
+        False,
+    ),
+    (
+        "typedef uint32_t (*fn)(const uint8_t m[2][3]);\nuint32_t f(uint32_t k) { return k; }",
+        "lower.FP_PARAM_ROWS",
+        False,
+    ),
+    (
+        "typedef uint8_t row_t[3];\ntypedef uint32_t (*fn)(row_t m[2]);\nuint32_t f(uint32_t k) { return k; }",
+        "lower.FP_PARAM_ROWS",
+        False,
+    ),
+)
+
+
+def test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails():
+    """CSUB-2a. `_Alignas(N)` / `alignas(N)` (C11 6.7.5) on an object -- a local, several declarators off one specifier,
+    the strictest of two specifiers, a block static, a file-scope object of any storage class -- lowers on both rails to
+    one digest, and each emit spells it where the object is declared: the function-level emit a block object's, the
+    linkable emit a global's (the oracle had read a file-scope one and dropped it; the twin refused it as `unknown
+    type`). A function-pointer type's parameter declared as an array is a pointer (6.7.6.3p7) on both. Every other
+    form is refused alike, for one reason: an alignment that is no power of two, past 4096, weaker than the type's or
+    of a type name; one on a typedef, a parameter, a function, a type name, a variable-length array or a declaration
+    that defines a struct; and an array-of-arrays or variable-length parameter of a function-pointer type. Where C
+    forbids the form, Clang refuses it too."""
+    from bcir.frontends.cfront import lower as low
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n#include <stdalign.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, local, linked) in enumerate(_CSUB2_ALIGN_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            text = "\n".join(r.emitted.values())
+            assert all(a in text for a in local), (body, text[-600:])
+            link = emit_linkable(r.lowered, r.emitted)
+            assert all(a in link for a in linked), (body, link[-600:])
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            assert all(a in emit for a in local), (body, emit[-600:])
+            twin_link = _twin_linkable(path)
+            assert all(a in twin_link for a in linked), (body, twin_link[-600:])
+        clang = shutil.which("clang") if _CC else None
+        for n, (body, name, forbidden) in enumerate(_CSUB2_ALIGN_REFUSED):
+            why = getattr(low, name.split(".", 1)[1])
+            src = head + body + "\n"
+            assert _oracle_refusal(src) == why, (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+            if forbidden and clang:
+                cr = subprocess.run(
+                    [clang, "-std=c23", "-fsyntax-only", path], capture_output=True, text=True
+                )
+                assert cr.returncode != 0, (body, "Clang accepts what C forbids")
 
 
 def test_offsetof_and_the_header_typedefs_lower_and_refuse_alike_on_both_rails():

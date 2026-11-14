@@ -135,6 +135,8 @@ typedef struct bcir_resource {
   uint8_t  typedef_named;    /* a named local whose name is one of the unit's typedef names, which the emitted function
                               * may spell: its hoisted declaration may not take the name (CF-TYPEDEFSCOPE; the oracle's
                               * `_uniq`). Emit-only. */
+  uint16_t align;            /* a local's or a static's `_Alignas(N)` (CSUB-2), spelled on its declaration; 0 -- none.
+                              * Emit-only, as a declared type is: the claim graph and its digest do not read it. */
 } bcir_resource;
 
 /* a C type descriptor (for signatures + faithful emission). */

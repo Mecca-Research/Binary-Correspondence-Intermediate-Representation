@@ -1,0 +1,95 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A1 oracle emit: a local's _Alignas dropped",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "        return f\"_Alignas({n}) \" if n else \"\"\n",
+   "new": "        return \"\"\n"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A2 twin emit: a local's _Alignas dropped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      char spb[48]; if(r->align){",
+   "new": "      char spb[48]; if(0 && r->align){"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A3 oracle linkable: a global's _Alignas dropped",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "        al = f\"_Alignas({aligns[gname]}) \" if gname in aligns else \"\"",
+   "new": "        al = \"\""
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A4 twin linkable: a global's _Alignas dropped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    char alb[24]=\"\"; if(g->lk_align) snprintf",
+   "new": "    char alb[24]=\"\"; if(0) snprintf"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A5 oracle: an alignment no power of two accepted",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        if n < 0 or n & (n - 1):\n",
+   "new": "        if n < 0:\n"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A6 twin: an alignment no power of two accepted",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(n<0 || (n & (n-1))){ fail(c,CC_ALIGN_POW2); return 1; }",
+   "new": "  if(n<0){ fail(c,CC_ALIGN_POW2); return 1; }"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A7 oracle: an alignment weaker than the type accepted",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "    if align < (elem.align or 1):\n",
+   "new": "    if align < 0:\n"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A8 twin: a local's alignment weaker than the type accepted",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(align<al){ fail(c,CC_ALIGN_WEAK); return 1; }",
+   "new": "    if(align<0){ fail(c,CC_ALIGN_WEAK); return 1; }"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A9 twin: a global's alignment weaker than the type accepted",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(c->decl_align<al){ fail(c,CC_ALIGN_WEAK); return; } }",
+   "new": "    if(c->decl_align<0){ fail(c,CC_ALIGN_WEAK); return; } }"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A10 oracle: an alignment specifier taken where no object is declared",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        if not align_ok:\n            raise CParseError(ALIGN_PLACE, pos=pos)\n",
+   "new": "        if False:\n            raise CParseError(ALIGN_PLACE, pos=pos)\n"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A11 twin: a file-scope object's alignment not asked for",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  c->align_ok=1;                                     /* a global's specifiers may ask an alignment (CSUB-2) */",
+   "new": "  c->align_ok=0;                                     /* a global's specifiers may ask an alignment (CSUB-2) */"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A12 twin: a function-pointer parameter's array of arrays taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(is(c,\"[\") || tdn){ fail(c,CC_FP_PARAM_ROWS); return 1; }",
+   "new": "  if(0){ fail(c,CC_FP_PARAM_ROWS); return 1; }"
+  }
+ ]
+}

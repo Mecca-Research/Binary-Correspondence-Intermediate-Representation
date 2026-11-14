@@ -205,8 +205,8 @@
       "label": "Twin index: a `T *rows[]` parameter decays one level short, to `T *`",
       "expects": "volatile.refused",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "      else if(ty.kind==2) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);",
-      "new": "      else if(0) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);"
+      "old": "  else if(ty->kind==2) ty->ptr_depth=(uint8_t)((ty->ptr_depth?ty->ptr_depth:1)+1);\n",
+      "new": "  else if(0) ty->ptr_depth=(uint8_t)((ty->ptr_depth?ty->ptr_depth:1)+1);\n"
     },
     {
       "label": "Twin index: a one-element array is declared as a scalar",

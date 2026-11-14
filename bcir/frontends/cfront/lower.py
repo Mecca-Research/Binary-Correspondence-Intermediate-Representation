@@ -927,6 +927,28 @@ OFFSETOF_INCOMPLETE = "offsetof of an incomplete struct or union"
 # `T (*f(P))(Q)`: a function declared to return a function pointer by a nested declarator, which neither rail parses --
 # the same function with a typedef for its return type lowers (CF-FPRET; the twin's `CC_FN_RET_FP`)
 FN_RET_FP = "a function returning a function pointer is not supported without a typedef"
+# A function-pointer type's parameter declared as an array of arrays, `void (*f)(T m[2][3])`, or as an array of a
+# typedef'd array: a pointer to an array (C11 6.7.6.3p7), which no function type spells here; `T a[N]` and `T a[]`
+# are a pointer to `T` and lower (CSUB-2; the twin's `CC_FP_PARAM_ROWS`)
+FP_PARAM_ROWS = "a function-pointer parameter that is an array of arrays is not supported"
+# ... and one whose dimension is no integer constant expression, `void (*f)(size_t n, T a[n])` (the twin's `CC_FP_PARAM_VLA`)
+FP_PARAM_VLA = "a variable-length array parameter in a function-pointer type is not supported"
+# `_Alignas(N)` / `alignas(N)` (C11 6.7.5) on an object a declaration declares, in a block or at file scope (CSUB-2; the
+# twin's `CC_ALIGN_*`): only there -- a typedef, a parameter, a function, a type name refuse it (`ALIGN_PLACE`); N is 0 (no effect,
+# 6.7.5p6) or a power of two (`ALIGN_POW2`, Clang's words) no weaker than its type's own (`ALIGN_WEAK`, 6.7.5p4) and
+# at most 4096 (`ALIGN_LARGE`); the type-name form `_Alignas(T)` is refused (`ALIGN_TYPE`)
+ALIGN_PLACE = "an alignment specifier is supported only on the declaration of an object"
+ALIGN_POW2 = "requested alignment is not a power of 2"
+ALIGN_WEAK = "requested alignment is less than the minimum alignment of its type"
+ALIGN_LARGE = "an alignment past 4096 bytes is not supported"
+ALIGN_TYPE = "an alignment specifier of a type name is not supported"
+# ... and on a variable-length array, which the emit declares where its size is known (the twin's `CC_ALIGN_VLA`)
+ALIGN_VLA = "an alignment specifier on a variable-length array is not supported"
+# ... and on a declaration that defines the struct or union it aligns, `_Alignas(16) struct s { ... } v;` (the twin's
+# `CC_ALIGN_AGG`): checked first, wherever it stands
+ALIGN_AGG = (
+    "an alignment specifier on a declaration that defines a struct or union is not supported"
+)
 # `T *volatile p`, `volatile ptr_t p`: a pointer object that is itself volatile, every access of which C performs as
 # written (C11 6.7.3p7) -- which neither rail's accesses do, so it is refused rather than dropped (CF-QUALS; the
 # twin's `CC_VOLATILE_PTR`)
@@ -1499,6 +1521,9 @@ class LoweredFunc:
     #   (`_object_quals`), which the emit's own objects carry none of: the emit names such a global through an
     #   lvalue of its unqualified type (`emit._unqualified_global`; CF-LINKEMIT)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {}`
+    local_align: dict = field(
+        default_factory=dict
+    )  # a local's or a static's rid -> its `_Alignas(N)` (CSUB-2)
     tu_protos: dict = field(
         default_factory=dict
     )  # cross-TU callee -> (ret CType, (param CType, ...), its qualifiers `_fn_quals`, variadic)
@@ -1546,6 +1571,9 @@ class LoweredUnit:
     #   extern -> a declaration; static -> kept file-local.
     #   None == not renderable in this slice.
     thread_globals: frozenset = frozenset()  # the globals of thread storage duration: the
+    global_align: dict = field(
+        default_factory=dict
+    )  # a global's name -> its `_Alignas(N)` (CSUB-2)
     #   linkable emit declares them `_Thread_local` (CF-TLS)
     init_refs: frozenset = frozenset()  # every identifier a file-scope initializer names: a
     #   function among them has its address taken (an ops table
@@ -1665,6 +1693,7 @@ class _FuncLowerer:
         self.vla_strides: dict = {}  # multi-dim VLA array rid -> per-dim snapshot rids (the
         #   runtime Horner multipliers: m[i][j] -> i*dim1 + j)
         self.zero_init: set = set()  # aggregate-local rids that emit the `= {}` zero baseline
+        self.local_align: dict = {}  # a local's or a static's rid -> the alignment `_Alignas` asks (CSUB-2)
         self.statics: list = []  # (rid, name, CType, init) static-storage locals
         self.thread_statics: set = set()  # the statics of thread storage duration (CF-TLS)
         self.calls: list = []
@@ -1891,6 +1920,11 @@ class _FuncLowerer:
             if ct is not None:
                 self._null_pointer(v, ct)
                 self._scalar_value(ct, v)  # a struct for a scalar parameter (CF-STRUCTARITH)
+
+    def _align_object(self, rid: int, align: int, ct: CType) -> None:
+        """Record a declared object's `_Alignas(N)` (`_object_align`), for the emit to spell (CSUB-2)."""
+        if a := _object_align(align, ct):
+            self.local_align[rid] = a
 
     def _storage(self, ct: CType, name: str) -> int:
         """A mutable named local — assignments write it, reads read it (so control-flow merges and
@@ -5278,6 +5312,8 @@ class _FuncLowerer:
                 )  # declared in-body; masked `a[i]` vs the snapshot
                 self.env[st.name] = (rid, ct)
                 self.ptr_extent[rid] = ext
+                if st.align:  # the emit declares it in the body, where its size is known (CSUB-2)
+                    raise CLowerError(ALIGN_VLA)
                 return None
             if st.type.vla_dims:
                 # a MULTI-dim stack VLA `T a[d0][d1]...`: snapshot each dim ONCE (canonical order: dims 0..k-1,
@@ -5318,6 +5354,8 @@ class _FuncLowerer:
                 self.env[st.name] = (rid, ct)
                 self.ptr_extent[rid] = ext_total
                 self.vla_strides[rid] = tuple(dim_exts)  # the per-dim Horner multipliers
+                if st.align:
+                    raise CLowerError(ALIGN_VLA)
                 return None
             inferred = False  # `T a[] = {...}` / `T m[][B] = {...}`: the initializer sizes it
             if len(st.type.array) == 1 and st.type.array[0] in (0, None) and st.init is None:
@@ -5342,6 +5380,7 @@ class _FuncLowerer:
                 self._resource(rid, ct, st.name)  # an inferred `[]` takes the walk's count
                 self.statics[-1] = (rid, st.name, ct, init)
                 self.env[st.name] = (rid, ct)
+                self._align_object(rid, st.align, ct)
                 return None
             rid = self._storage(ct, st.name)  # a mutable named local
             self.env[st.name] = (rid, ct)
@@ -5375,6 +5414,9 @@ class _FuncLowerer:
                 self._bind_extent(
                     rid, ct, st.name, init
                 )  # §5.12: `T *p = malloc(N*sizeof(T))` -> extent N
+            self._align_object(
+                rid, st.align, ct
+            )  # checked where the declarator ends, as the twin checks it
         elif isinstance(st, cast.ExprStmt):
             if isinstance(st.expr, cast.Assign):  # a statement assignment: any lvalue form is fine
                 self._assign(
@@ -5572,6 +5614,7 @@ class _FuncLowerer:
             thread_statics=frozenset(self.thread_statics),
             globals_used=gnames,
             zero_init_locals=set(self.zero_init),
+            local_align=dict(self.local_align),
             variadic=self.func.variadic,
             tu_protos=dict(self.tu_used),
             reproducible=getattr(self.func, "reproducible", False),
@@ -5730,6 +5773,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     genv: dict[str, tuple] = {}  # file-scope globals: name -> (rid, CType)
     gres: dict[int, Resource] = {}
     gdecls: list = []  # the linkable emit's global surface
+    galign: dict = {}  # ... and each global's `_Alignas(N)` (CSUB-2)
     # The file-scope initializers' lowerer: a function with no body, in whose scope a global's initializer
     # is lowered only to be folded -- by the fold a static local's initializer takes (`_const_value`), each
     # operation in C's own types -- and never kept. The globals declared so far are in its scope, a global
@@ -5772,6 +5816,8 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         genv[g.name] = (rid, ct)
         ginit.env[g.name] = (rid, ct)
         ginit.rtypes[rid] = ct
+        if a := _object_align(getattr(g, "align", 0), ct):  # its `_Alignas(N)` (CSUB-2)
+            galign[g.name] = a
         gdecls.append(
             (
                 g.name,
@@ -5821,6 +5867,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         resources=resources,
         globals_decl=tuple(gdecls),
         thread_globals=frozenset(g.name for g in unit.globals if g.thread_storage),
+        global_align=galign,
         init_refs=frozenset(n for g in unit.globals for n in _names_in(g.init)),
         anon_spelling=dict(unit.anon_spelling),
         type_defs=tuple(unit.type_defs),
@@ -5949,6 +5996,21 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
     for dim in reversed(tref.array):
         t = array(t, dim)
     return t
+
+
+def _object_align(align: int, ct: CType) -> int:
+    """The alignment an object's `_Alignas(N)` gives it (C11 6.7.5; CSUB-2), as the twin's `align_declarator` checks it:
+    0 for none -- an `_Alignas(0)` too, which has no effect (6.7.5p6) -- else N, which the parser has held to a power of
+    two at most 4096 (`cparse._alignas`), and which may be no weaker than the alignment its type requires (`ALIGN_WEAK`,
+    6.7.5p4): an array's is its element's. One that only restates the type's own is kept, as the source spelled it."""
+    if not align:
+        return 0
+    elem = ct
+    while elem.kind == "array":
+        elem = elem.of
+    if align < (elem.align or 1):
+        raise CLowerError(ALIGN_WEAK)
+    return align
 
 
 def _param_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:

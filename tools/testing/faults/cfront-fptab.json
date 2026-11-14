@@ -161,8 +161,8 @@
   {
    "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
    "label": "FT7 the twin declares a table parameter as one function pointer",
-   "new": "      else if(0) fp_star(c,&ty);               /* `op_t t[N]` -> `op_t *t`: a pointer to function pointers,\n",
-   "old": "      else if(ty.kind==3) fp_star(c,&ty);               /* `op_t t[N]` -> `op_t *t`: a pointer to function pointers,\n",
+   "new": "  else if(0) fp_star(c,ty);\n",
+   "old": "  else if(ty->kind==3) fp_star(c,ty);\n",
    "path": "runtime/c/bcir_cfront.c"
   },
   {

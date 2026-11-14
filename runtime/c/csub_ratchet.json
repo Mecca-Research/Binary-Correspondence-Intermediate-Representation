@@ -124,8 +124,8 @@
     },
     "bcir_handoff.c": {
       "verdict": "blocked",
-      "blocker": "parse error: )",
-      "construct": "an array parameter in a function-pointer type, `const uint8_t digest[32]` (bcir_shard_manifest.h)",
+      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
+      "construct": "an address-of an element of an array member reached through a loaded pointer, `&t->slots[i]`",
       "rung": "CSUB-2"
     },
     "bcir_hydrate.c": {
@@ -240,10 +240,7 @@
       "verdict": "clean"
     },
     "bcir_shard_manifest.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: )",
-      "construct": "an array parameter in a function-pointer type, `const uint8_t digest[32]` (bcir_shard_manifest.h)",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_sp_listing.c": {
       "verdict": "blocked",
@@ -265,8 +262,8 @@
     },
     "bcir_tensor.c": {
       "verdict": "blocked",
-      "blocker": "parse error: ;",
-      "construct": "`_Alignas(64)` on a block-scope array object",
+      "blocker": "parse error: partial indexing of a multi-dimensional array (a row used as a value) is not yet supported",
+      "construct": "a row of a multi-dimensional array used as a value (`ys[v]` of `float ys[N][M]`); then threads and SIMD",
       "rung": "CSUB-2"
     },
     "bcir_tokenize_cli.c": {

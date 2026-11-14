@@ -145,6 +145,7 @@ typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int count;
                  int init_a, init_b;  /* the initializer's token range [init_a, init_b) (empty: none) --
                                        * the escape analysis marks every function it names address-taken */
                  uint8_t lk_static, lk_extern, lk_thread;   /* the linkable emit's: its storage classes */
+                 uint16_t lk_align;   /* ... and its `_Alignas(N)`, 0 none (CSUB-2) */
                  uint8_t lk_init;     /* ... and its initializer: 0 none, 1 re-spelled (`lk_off`, `lk_len` in the
                                        * context's `lktext`), 2 an entry no linkable rendering spells (CF-LINKTWIN) */
                  size_t lk_off, lk_len;
@@ -260,6 +261,9 @@ typedef struct {
                                                       * LINKER resolves the cross-TU callee. Both preludes
                                                       * grow (CF-BUF): a signature of any length is emitted,
                                                       * where a fixed line buffer had made its emit impossible */
+  int align_ok;                                      /* p_type_base may read an alignment specifier: a block declaration's
+                                                      * specifiers are being read (CSUB-2) */
+  long long decl_align;                              /* ... the strictest `_Alignas(N)` they asked (C11 6.7.5p6) */
   int saw_static;                                    /* p_type_base scanned a `static` since p_func last
                                                       * reset it -- captured as fn->static_fn right after
                                                       * the return-type parse (source-static honoring) */
@@ -985,6 +989,7 @@ static int type_name_tok(CC *c, const tok *t){
       || tok_is(t,"_Complex")||tok_is(t,"complex")||tok_is(t,"_BitInt")
       || tok_is(t,"const")||tok_is(t,"volatile")||tok_is(t,"_Atomic")
       || tok_is(t,"typeof")||tok_is(t,"__typeof__")||tok_is(t,"typeof_unqual")
+      || tok_is(t,"_Alignas")||tok_is(t,"alignas")   /* read as a type name, whose specifiers refuse it (CSUB-2) */
       || visible_typedef(c,t->s,t->n)>=0;
 }
 static int starts_type_name(CC *c){ return type_name_tok(c,pk(c)); }
@@ -1001,6 +1006,7 @@ static int decl_start_tok(CC *c, const tok *t){
       ||tok_is(t,"_Complex")||tok_is(t,"complex")            /* `double _Complex z;` -- a complex local */
       ||tok_is(t,"_BitInt")                                  /* `_BitInt(N) z;` -- a bit-precise local */
       ||tok_is(t,"_Atomic")                                  /* `_Atomic int a;` -- an atomic local */
+      ||tok_is(t,"_Alignas")||tok_is(t,"alignas")             /* `_Alignas(64) float b[N];` (CSUB-2) */
       ||tok_is(t,"va_list")||tok_is(t,"__builtin_va_list")   /* `va_list ap;` -- a variadic cursor local */
       ||tok_is(t,"typeof")||tok_is(t,"__typeof__")||tok_is(t,"typeof_unqual")
       ||visible_typedef(c,t->s,t->n)>=0);
@@ -1015,8 +1021,37 @@ static int td_ptr_qual(CC *c, bcir_ctype *ty, int cst, int vol){
   if(ty->kind==3){ ty->is_const=1; return 0; }
   return star_level(c,ty,ptr_levels(ty),1,0);
 }
+#define CC_ALIGN_PLACE "an alignment specifier is supported only on the declaration of an object"
+#define CC_ALIGN_POW2 "requested alignment is not a power of 2"
+#define CC_ALIGN_WEAK "requested alignment is less than the minimum alignment of its type"
+#define CC_ALIGN_LARGE "an alignment past 4096 bytes is not supported"
+#define CC_ALIGN_TYPE "an alignment specifier of a type name is not supported"
+#define CC_ALIGN_VLA "an alignment specifier on a variable-length array is not supported"
+#define CC_ALIGN_AGG "an alignment specifier on a declaration that defines a struct or union is not supported"
+static int starts_decl_type(CC *c);
+/* `_Alignas ( N )` / `alignas ( N )` at the cursor, among a declaration's specifiers (C11 6.7.5; CSUB-2): kept in
+ * `c->decl_align` where a block declaration asks for one (`aok`), the strictest of several (6.7.5p6), refused anywhere
+ * else (CC_ALIGN_PLACE), in its type-name form (CC_ALIGN_TYPE), and before a struct or union it defines (CC_ALIGN_AGG,
+ * checked first, wherever it stands). N is 0 (no effect) or a power of two
+ * (CC_ALIGN_POW2) at most 4096 (CC_ALIGN_LARGE) -- the oracle's `cparse._alignas`. 1 after a failure. */
+static int alignas_spec(CC *c, int aok){
+  { int k=c->i+1, d=0;                               /* a declaration that defines the struct it aligns (CC_ALIGN_AGG) */
+    do{ if(tok_is(tat(c,k),"(")) d++; else if(tok_is(tat(c,k),")")) d--; k++; }while(d>0 && tat(c,k)->k!=T_END);
+    if(tok_is(tat(c,k),"struct")||tok_is(tat(c,k),"union")){ k++; if(tat(c,k)->k==T_ID) k++;
+      if(tok_is(tat(c,k),"{")){ fail(c,CC_ALIGN_AGG); return 1; } } }
+  if(!aok){ fail(c,CC_ALIGN_PLACE); return 1; }
+  c->i++; if(!eat(c,"(")) return 1;
+  if(starts_decl_type(c)){ fail(c,CC_ALIGN_TYPE); return 1; }
+  long long n; if(!ce_int(c,&n)) return 1;
+  if(n<0 || (n & (n-1))){ fail(c,CC_ALIGN_POW2); return 1; }
+  if(n>4096){ fail(c,CC_ALIGN_LARGE); return 1; }
+  if(n>c->decl_align) c->decl_align=n;
+  return !eat(c,")");
+}
 static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1; c->td_nd=0;
+  int aok=c->align_ok; c->align_ok=0;               /* an alignment specifier is this run's alone: a nested type name
+                                                      * (`typeof(T)`, `_Atomic(T)`) takes none (CSUB-2) */
   int td_ptr=0;                                       /* a pointer or function-pointer typedef was named (CF-QUALS) */
   int seen=0, longs=0, ptrtrk=0, sign_explicit=0, floatkw=0, cplxkw=0;   /* longs: `long` (data-model) vs `long
                                                                * long` (8); floatkw / cplxkw: a float/double or a
@@ -1034,6 +1069,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
                                                             * honoring in --linkable); block-scope
                                                             * statics peek the token BEFORE p_type. */
     if(is(c,"extern")){c->saw_extern=1;c->i++;continue;}
+    if(is(c,"_Alignas")||is(c,"alignas")){ if(alignas_spec(c,aok)) return 1; continue; }   /* CSUB-2 */
     if(is(c,"_Thread_local")||is(c,"thread_local")){c->saw_thread=1;c->i++;continue;}   /* thread storage (CF-TLS) */
     if(is(c,"const")){ty->is_const=1;c->i++;continue;}   /* spelled by a prototype's pointer parameter */
     if(is(c,"inline")){c->i++;continue;}  /* storage class / qualifier */
@@ -1191,6 +1227,31 @@ static int sig_addv(CC *c, const bcir_ctype *ret, const bcir_ctype *params, int 
  * CF-FPRET) -- into the scratch arena (`*out`, `*n`). With `spell`, each type is also appended to the prelude line a
  * synthesized `__bcir_fpN` typedef is being written on, and the line closed. 1 on a parse failure: the caller takes
  * its partial line back out. */
+/* An array parameter's type, as C adjusts it (C11 6.7.6.3p7): a pointer to its element -- `T a[..]` a `T *`, `struct T a[..]`
+ * a `struct T *` (CF-STRUCTVAL), `T *a[..]` a `T **` (`argv`), `op_t t[N]` a pointer to function pointers (CF-FPTAB). The one
+ * predicate a definition's parameter (`p_func`) and a function-pointer type's (`fp_array_param`) decay by. */
+static void fp_star(CC *c, bcir_ctype *ty);
+static void array_param_decay(CC *c, bcir_ctype *ty){
+  if(ty->kind==0) ty->kind=2;                       /* T[..] -> T* (element size kept in ty->size) */
+  else if(ty->kind==1){ ty->kind=2; ty->ptr_to_struct=1; ty->ptr_depth=1; }
+  else if(ty->kind==2) ty->ptr_depth=(uint8_t)((ty->ptr_depth?ty->ptr_depth:1)+1);
+  else if(ty->kind==3) fp_star(c,ty);
+}
+static long long ce_dim(CC *c,int probe);   /* fwd: an array dimension (CF-ENUMFOLD) */
+#define CC_FP_PARAM_ROWS "a function-pointer parameter that is an array of arrays is not supported"
+#define CC_FP_PARAM_VLA "a variable-length array parameter in a function-pointer type is not supported"
+/* A parameter of a function-pointer type declared as an array, `T name[N]` or `T name[]` (CSUB-2): a pointer to `T`, as a
+ * definition's decays and as the oracle's `_fp_array_param` reads it -- `bcir_shard_manifest.h`'s `const uint8_t digest[32]`.
+ * The dimension must be a constant (CC_FP_PARAM_VLA). A second one, or an element that is an array already (`tdn`, a
+ * typedef'd one), would make a pointer to an array, which no function type spells here (CC_FP_PARAM_ROWS). */
+static int fp_array_param(CC *c, bcir_ctype *pt, int tdn){
+  c->i++;                                            /* `[` */
+  if(!is(c,"]")){ long long d=ce_dim(c,1); if(c->failed) return 1; if(d<0){ fail(c,CC_FP_PARAM_VLA); return 1; } }
+  if(!eat(c,"]")) return 1;
+  if(is(c,"[") || tdn){ fail(c,CC_FP_PARAM_ROWS); return 1; }
+  array_param_decay(c,pt);
+  return 0;
+}
 static int fp_param_list(CC *c, int spell, const bcir_ctype **out, int *n, int *variadic){
   bcir_ctype *v=NULL; int np=0, cap=0;
   *out=NULL; *n=0; *variadic=0;
@@ -1200,7 +1261,9 @@ static int fp_param_list(CC *c, int spell, const bcir_ctype **out, int *n, int *
       if(spell) ctext_putf(c,&c->fpdefs,", ...");
       break; }
     if(p_type(c,&pt,&psi)) return 1;
+    int tdd[3], tdn=td_dims_of(c,tdd);                                    /* a typedef'd array element */
     if(isk(c,T_ID)) c->i++;                                                /* an optional parameter name (ignored) */
+    if(is(c,"[") && fp_array_param(c,&pt,tdn)) return 1;                  /* `T name[N]`: a `T *` (CSUB-2) */
     if(spell){ char ps[BCIR_EMIT_TYPE]; ctype_qstr(&pt,ps,sizeof ps); ctext_putf(c,&c->fpdefs,"%s%s",np?", ":"",ps); }
     if(np==cap){ int nc=cap?cap*2:4; size_t bytes; bcir_ctype *nv;
       if(!bcir_size_mul((size_t)nc,sizeof *nv,&bytes) ||
@@ -1213,7 +1276,6 @@ static int fp_param_list(CC *c, int spell, const bcir_ctype **out, int *n, int *
   *out=v; *n=np; return 0;
 }
 
-static long long ce_dim(CC *c,int probe);   /* fwd: an array dimension (CF-ENUMFOLD) */
 /* Whether the cursor is at an inline function-pointer declarator (CF-FPTAB): `( * NAME ) (`, a pointer to one
  * `( * * NAME ) (`, an array of them `( * NAME [N] ) (` -- one or more `*`, the name (it may be left out where
  * `abstract`), any dimensions, then the parameter list's `(`. 0 if not; else the index of the declarator's `)`.
@@ -6369,6 +6431,20 @@ static void env_add(CC *c,const tok *nm,uint32_t rid,const bcir_ctype *ty,int si
     if(m) for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].typedef_named=(uint8_t)m; break; }
   }
 }
+/* The objects one declarator of a block declaration bound (`c->env[envd..]`) take its `_Alignas(N)` (CSUB-2), as
+ * the oracle's `lower._object_align` checks it where the declarator ends: N no weaker than what the type requires
+ * (CC_ALIGN_WEAK, C11 6.7.5p4) -- an array's element's, the type its venv keeps -- and never a variable-length array,
+ * which the emit declares in the body (CC_ALIGN_VLA). Kept on the resource for the emit to spell. 1 after a failure. */
+static int align_declarator(CC *c, int envd, long long align){
+  for(int k=envd;k<c->nenv;k++){ const venv *v=&c->env[k];
+    bcir_resource *r=NULL; for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==v->rid){ r=&c->fn->res[i]; break; }
+    if(!r) continue;
+    if(r->is_vla){ fail(c,CC_ALIGN_VLA); return 1; }
+    int sz, al; type_layout(c,&v->type,v->sidx,&sz,&al);
+    if(align<al){ fail(c,CC_ALIGN_WEAK); return 1; }
+    r->align=(uint16_t)align; }
+  return 0;
+}
 /* On first use of a file-scope global within a function, materialize a read-only data resource for
  * it (so an access `LUT[i]` lowers to a load) and bind it in the local env.  The resource is marked
  * read-only -- the emitter references the global by name (it is defined in the original source) and
@@ -8373,7 +8449,10 @@ static void p_stmt_inner(CC *c) {
   if(decl_start_tok(c,pk(c))){
     c->saw_static=0; c->saw_extern=0; c->saw_thread=0;   /* THIS declaration's own storage classes, wherever spelled */
     int spec_at=c->i;
-    bcir_ctype base;int si;if(p_type_base(c,&base,&si))return;   /* the shared specifier (eats `static`, NOT `*`) */
+    c->align_ok=1; c->decl_align=0;                      /* ... and its `_Alignas(N)` (CSUB-2) */
+    bcir_ctype base;int si;int bf=p_type_base(c,&base,&si);   /* the shared specifier (eats `static`, NOT `*`) */
+    c->align_ok=0; if(bf) return;
+    long long dalign=c->decl_align;
     if(is(c,";") && enum_only_spec(c,spec_at)){ c->i++; return; }   /* `enum [tag] { ... };`: its constants alone */
     if(c->saw_extern){ fail(c,"a block-scope extern declaration is not supported"); return; }   /* names an object
       * defined elsewhere, never a new local: binding it as one read an uninitialized object (CF-STORAGE) */
@@ -8387,6 +8466,7 @@ static void p_stmt_inner(CC *c) {
      * and q as int (per-declarator, matching the oracle), `int *p, *q;` types both as pointers, and a
      * per-declarator array (`int a[2], b;`) no longer leaks its dims onto the next declarator. */
     for(;;){
+      int envd=c->nenv;                         /* the names this declarator binds start here (CSUB-2) */
       if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return; }
       bcir_ctype ty=base; apply_stars(c,&ty);   /* this declarator's own leading `*`s (none -> base type) */
       int fpre=0, fpre_nd=0, fpre_dims[3]={0,0,0}; tok fpre_nm; memset(&fpre_nm,0,sizeof fpre_nm);
@@ -8444,6 +8524,7 @@ static void p_stmt_inner(CC *c) {
           else v=p_expr(c);
           v=null_pointer(c,v,&fty);                     /* `= 0`: a null function pointer, not an `int` (CF-NULLPTR; CF-RTFP) */
           bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=frid;} }
+        if(dalign && align_declarator(c,envd,dalign)) return;   /* its `_Alignas(N)`, checked here (CSUB-2) */
         if(is(c,",")){ c->i++; continue; }              /* another declarator off the same specifier */
         break;
       }
@@ -8507,6 +8588,7 @@ static void p_stmt_inner(CC *c) {
             if(vmm){ vd->domain=BCIR_DOM_MMIO; vd->lane=BCIR_LANE_H; vd->hazard=BCIR_HZ_BARRIERED; } } }   /* a device claim */
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
         ptrext_set(c,c->fn,arid,ext);   /* §5.12 mask `a[i]` against the recovered runtime extent */
+        if(dalign && align_declarator(c,envd,dalign)) return;   /* its `_Alignas(N)`, checked here (CSUB-2) */
         if(is(c,",")){ c->i++; continue; }
         break;
       }
@@ -8550,6 +8632,7 @@ static void p_stmt_inner(CC *c) {
             if(vmm){ vd->domain=BCIR_DOM_MMIO; vd->lane=BCIR_LANE_H; vd->hazard=BCIR_HZ_BARRIERED; } } }   /* a device claim */
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i][j]` indexes via emit_index */
         ptrext_set(c,c->fn,arid,ext_total);   /* §5.12 mask `a[i][j]` against the recovered total runtime extent */
+        if(dalign && align_declarator(c,envd,dalign)) return;   /* its `_Alignas(N)`, checked here (CSUB-2) */
         if(is(c,",")){ c->i++; continue; }
         break;
       }
@@ -8649,9 +8732,11 @@ static void p_stmt_inner(CC *c) {
           bind_extent(c,rid,res_of(c->fn,rid),&nm,ist,ien); } }   /* §5.12: `T *p = malloc(N*sizeof(T))` -> extent N */
       if(inferred && !sized_inf && c->n_unsized<(int)(sizeof c->unsized/sizeof c->unsized[0]))
         c->unsized[c->n_unsized++]=rid;   /* its placeholder count of 1 is no extent: `sizeof` refuses it */
+      if(dalign && align_declarator(c,envd,dalign)) return;   /* its `_Alignas(N)`, checked here (CSUB-2) */
       if(is(c,",")){ c->i++; continue; }   /* another declarator off the same specifier */
       break;
     }
+    c->decl_align=0;
     eat(c,";");return;
   }
   /* L3: store through a pointer  *p = expr  /  *p OP= expr  /  *(p + i) = expr  (write a pointee /
@@ -9135,14 +9220,9 @@ static int p_func(CC *c, bcir_func *fn) {
         if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }   /* a non-int/non-id dim -> 0 today (fallback, no bind) */
       for(int d=0; d<btd; d++){ if(nd<3)ty.adims[nd]=btdd[d]; nd++; }   /* a typedef'd array's dims follow */
       if(nd>3){ fail(c,"an array parameter of more than 3 dimensions"); return 1; }
-      ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2;     /* T[..] -> T* (element size kept in ty.size) */
-      else if(ty.kind==1){ ty.kind=2; ty.ptr_to_struct=1; ty.ptr_depth=1; }   /* `struct T a[..]` -> `struct T *`
-                                                          * (CF-STRUCTVAL): it had stayed a struct by VALUE */
-      else if(ty.kind==2) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);   /* T *a[..] -> T ** (`argv`):
-                                                          * the decay is one more level, as for a scalar element */
-      else if(ty.kind==3) fp_star(c,&ty);               /* `op_t t[N]` -> `op_t *t`: a pointer to function pointers,
-                                                          * as the inline `RET (*t[N])(P)` is (CF-FPTAB) -- it had
-                                                          * stayed ONE function pointer, an emit no compiler takes */
+      ty.nadims=nd<3?nd:3;
+      array_param_decay(c,&ty);   /* a struct by value had stayed one (CF-STRUCTVAL), a table of function pointers ONE
+                                   * function pointer, an emit no compiler takes (CF-FPTAB) */
     }
     }
     char pb[BCIR_CIR_NAME]; idcpy(c,pb,&pn);
@@ -9899,6 +9979,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                                 : (r->kind==BCIR_RK_AGGREGATE || (r->kind==BCIR_RK_SCALAR && decl_array(r))) ? "{0}" : "0u")
                              : r->zinit ? "{}" : "";
       const char *sp=sx>=0?(f->statics[sx].thread_storage?"static _Thread_local ":"static "):"", *eq=iv[0]?" = ":"";
+      char spb[48]; if(r->align){ snprintf(spb,sizeof spb,"%s_Alignas(%u) ",sp,(unsigned)r->align); sp=spb; }   /* its
+                                                       * `_Alignas(N)`, after its storage class (CSUB-2) */
       if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s %s%s%s;\n",sp,r->agg,nm,eq,iv);   /* a funcptr local: `__bcir_fpN f;` */
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s%s %s%s%s;\n",sp,vq,r->agg,nm,eq,iv);
       else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  %svoid *%s[%u]%s%s;\n",sp,nm,r->count,eq,iv);  /* an array of `void *` */
@@ -10335,7 +10417,9 @@ static int try_top_decl(CC *c){
  * NOT followed by `(`) rather than a function?  Restores the cursor so the caller re-parses. */
 static int looks_global(CC *c){
   int save=c->i, sf=c->failed; bcir_ctype ty; int si; int global=0;
-  if(!p_type(c,&ty,&si)){
+  c->align_ok=1;                                     /* a global's specifiers may ask an alignment (CSUB-2) */
+  int pf=p_type(c,&ty,&si); c->align_ok=0; c->decl_align=0;
+  if(!pf){
     if(isk(c,T_ID)){ c->i++; if(!is(c,"(")) global=1; }
     else if(fp_decl_at(c,0)) global=1; }   /* `RET (*g)(P) ...;`: a function-pointer global (CF-FPTAB) */
   c->i=save; c->failed=sf; c->err[0]=0;
@@ -10597,8 +10681,12 @@ static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, 
   if(is_arr && dims[0]==0 && init_n>=0){ dims[0]=init_n; if(nd==1) count=(int)init_n; }   /* `T g[] = ...` / `T g[][B]
                                                       * = ...`: its initializer's extent -- the count a one-dimensional
                                                       * array's accesses are bounded by too, the rows of a nested one */
+  /* its `_Alignas(N)`, no weaker than its type asks (CSUB-2) */
+  if(c->decl_align){ int sz, al; type_layout(c,&ty,ty.kind==1?si:-1,&sz,&al);
+    if(c->decl_align<al){ fail(c,CC_ALIGN_WEAK); return; } }
   CC_ENSURE(c, c->gv, c->ngv, c->cap_gv);
   if(c->ngv<c->cap_gv){ gvar *g=&c->gv[c->ngv++]; idcpy(c,g->name,&nm); g->ty=ty; g->count=count;
+    g->lk_align=(uint16_t)c->decl_align;
     g->is_arr=is_arr; g->init_a=init_a; g->init_b=init_b;
     g->nd=nd; for(int d=0;d<4;d++) g->dims[d]=dims[d];
     g->lk_static=(uint8_t)((st&LK_STATIC)!=0); g->lk_extern=(uint8_t)((st&LK_EXTERN)!=0);
@@ -10615,7 +10703,8 @@ static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, 
  * (C11 6.7p1), a declarator's `*`s its own (the oracle's `_globals`). */
 static void p_global(CC *c){
   c->saw_static=0; c->saw_extern=0; c->saw_thread=0;   /* THIS declaration's storage classes, wherever spelled */
-  bcir_ctype base; int si; if(p_type_base(c,&base,&si)) return;
+  c->align_ok=1; c->decl_align=0;                     /* ... and its `_Alignas(N)` (CSUB-2) */
+  bcir_ctype base; int si; int bf=p_type_base(c,&base,&si); c->align_ok=0; if(bf) return;
   int st=(c->saw_static?LK_STATIC:0)|(c->saw_extern?LK_EXTERN:0)|(c->saw_thread?LK_THREAD:0);
   int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array type */
   for(;;){
@@ -10623,6 +10712,7 @@ static void p_global(CC *c){
     if(c->failed || !is(c,",")) break;
     c->i++;
   }
+  c->decl_align=0;
   eat(c,";");
 }
 
@@ -11032,7 +11122,8 @@ static const char *lk_decls(CC *c, bcir_cfront_result *out){
       lk_trunc(c,w0);
       snprintf(c->err,sizeof c->err,"linkable emit: global '%s' has more than 4 dimensions",g->name);
       return c->err; }
-    e=emit_putf(out,"%s%s%s",g->lk_extern?"extern ":g->lk_static?"static ":"",g->lk_thread?"_Thread_local ":"",
+    char alb[24]=""; if(g->lk_align) snprintf(alb,sizeof alb,"_Alignas(%u) ",(unsigned)g->lk_align);   /* CSUB-2 */
+    e=emit_putf(out,"%s%s%s%s",g->lk_extern?"extern ":g->lk_static?"static ":"",alb,g->lk_thread?"_Thread_local ":"",
                 c->lktext.s+w0);
     lk_trunc(c,w0);
     if(e) return e;

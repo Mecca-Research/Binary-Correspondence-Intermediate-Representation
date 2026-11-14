@@ -211,6 +211,7 @@ class Decl:
     init: object = None
     static_storage: bool = False  # `static T name = init;` — static storage duration (persists)
     thread_storage: bool = False  # `_Thread_local`: each thread's own object (CF-TLS)
+    align: int = 0  # `_Alignas(N)`: the strictest alignment its specifiers ask (C11 6.7.5p6); 0 -- none (CSUB-2)
 
 
 @dataclass(frozen=True)
@@ -386,6 +387,9 @@ class Global:
     static_storage: bool = False  # source `static` (internal linkage) -- the linkable emit keeps
     #   the definition file-local instead of exporting it
     thread_storage: bool = False  # `_Thread_local` -- the linkable emit keeps it (CF-TLS)
+    align: int = (
+        0  # `_Alignas(N)` (C11 6.7.5): the strictest its specifiers ask; 0 -- none (CSUB-2)
+    )
 
 
 @dataclass

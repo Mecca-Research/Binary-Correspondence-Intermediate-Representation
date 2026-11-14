@@ -480,15 +480,17 @@ def emit_linkable(lowered, emitted: dict) -> str:
         body.append(respell_anon(f"{kw}{ret} {name}({ps});", spelling))
     threads = getattr(lowered, "thread_globals", frozenset())
     quals = getattr(lowered, "global_quals", {})
+    aligns = getattr(lowered, "global_align", {})
     for gname, ct, vals, is_extern, is_static in lowered.globals_decl:
         tls = "_Thread_local " if gname in threads else ""  # each thread's own object (CF-TLS)
+        al = f"_Alignas({aligns[gname]}) " if gname in aligns else ""  # its `_Alignas(N)` (CSUB-2)
         decl = respell_anon(_object_declarator(ct, gname, quals.get(gname, ())), spelling)
         if _ANON_REF.search(decl):  # an untagged aggregate no typedef names: C names no type of it
             raise ValueError(
                 f"linkable emit: global {gname!r} has a type C cannot name (an untagged aggregate)"
             )
         if is_extern:
-            body.append(f"extern {tls}{decl};")
+            body.append(f"extern {al}{tls}{decl};")
             continue
         if vals is None:
             raise ValueError(
@@ -499,7 +501,7 @@ def emit_linkable(lowered, emitted: dict) -> str:
         # the initializer as the source spells it, re-spelled (`lower._file_scope_rendering`); none: a
         # tentative definition (zero-init)
         init = f" = {vals[0]}" if vals else ""
-        body.append(f"{kw}{tls}{decl}{init};")
+        body.append(f"{kw}{al}{tls}{decl}{init};")
     # every in-unit call unprefixed, where `bcir_X(` begins an identifier (the twin's `lk_functions`) -- but a
     # wrapped function's: its callers call the emitted function, of the emit's own types, by its `bcir_` name
     plain = [n for n in names if n not in wrapped]
@@ -803,24 +805,33 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
             nm[rid] = _unqualified_global(nm[rid], ct)
     ref = _Names(nm, used, labels=dict(lf.globals_used))
 
+    def _aligned(
+        rid,
+    ):  # a local's or a static's `_Alignas(N)`, spelled as the source asked it (CSUB-2)
+        n = lf.local_align.get(rid)
+        return f"_Alignas({n}) " if n else ""
+
     def _local_decl(rid, name, ct):
         # the zero baseline as the empty initializer: `= {0}` re-lowers as the baseline AND a store of 0 to the
         # first scalar, which the next emit spells as a store -- one more each round (CF-RTWIDE)
         zi = " = {}" if rid in lf.zero_init_locals else ""
+        al = _aligned(rid)
         if _has_fp(
             ct
         ):  # `RET (*name)(PARAMS)` (no typedef alias), a table `RET (*name[N])(PARAMS)`
-            return f"    {_funcptr_decl(ct, name)}{zi};"
+            return f"    {al}{_funcptr_decl(ct, name)}{zi};"
         if ct.kind == "array":  # `T name[N]` (the dims follow the name)
-            return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
-        return f"    {_cname(ct)} {name}{zi};"
+            return f"    {al}{_cname(ct.of)} {name}[{ct.count}]{zi};"
+        return f"    {al}{_cname(ct)} {name}{zi};"
 
-    def _static_decl(name, ct, init, thread):
+    def _static_decl(rid, name, ct, init, thread):
         # static storage: a once-only constant initializer in the declaration -- the image the lowering
         # folded and rendered (CF-STATICTAB), or zero: `{0}` for an array or aggregate, `0u` for the rest.
         # An array keeps its shape (a multi-dimensional one flat, as its image is rendered); thread storage
         # its `_Thread_local` (CF-TLS)
-        sc = "static _Thread_local" if thread else "static"
+        sc = ("static _Thread_local" if thread else "static") + (
+            " " + _aligned(rid).rstrip() if rid in lf.local_align else ""
+        )
         if ct.kind == "array":
             return f"    {sc} {_cname(ct.of)} {name}[{ct.count}] = {init or '{0}'};"
         if ct.kind in ("struct", "union"):
@@ -832,7 +843,7 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
 
     decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
     decls += [
-        _static_decl(nm[rid], ct, init, rid in lf.thread_statics)
+        _static_decl(rid, nm[rid], ct, init, rid in lf.thread_statics)
         for rid, _name, ct, init in lf.statics
     ]
     body = _walk(lf, lf.body, ref, 1, cont=_cont_labels(lf))
