@@ -44,6 +44,10 @@ def _is_libm(callee: str) -> bool:
     name, an f/l-suffixed real variant, or a fixed-integer one (ilogb / lround...). Resolves to -lm.
     The full name is tested before stripping a trailing f/l so a base that ends in f/l (`erf`, `modf`,
     the `*l` long-double forms) is classified by the table, never as a phantom suffix of a shorter base."""
+    if callee.startswith(
+        "__builtin_"
+    ):  # a compiler builtin (<math.h>'s classification macros): no library
+        return False
     if callee in _LIBM or callee in _LIBM_INT:
         return True
     base = callee[:-1]

@@ -25,6 +25,11 @@ from .lower import (
     GENERIC_QUALIFIED,
     QUAL_DEEP,
     QUAL_LEVELS,
+    OFFSETOF_BITFIELD,
+    OFFSETOF_DESIGNATOR,
+    OFFSETOF_INCOMPLETE,
+    OFFSETOF_NOT_AGG,
+    STATIC_ASSERT_FAILED,
     TYPE_NAME_NAMED,
     CAST_ARRAY,
     ATOMIC_LITERAL,
@@ -44,6 +49,23 @@ class CParseError(Exception):
         self.pos = pos
         self.fixit = fixit
 
+
+#: `_Static_assert` (C11 6.7.10) and `static_assert` (C23's keyword; C11's <assert.h> macro for it).
+_STATIC_ASSERT = ("_Static_assert", "static_assert")
+#: The floating constants <math.h> spells with a builtin (`stdheaders`): each a constant of the type its name ends in,
+#: spelled as written for the backend, which reads it as the C library's header does (CSUB-1; the twin's
+#: `float_builtin`). `__builtin_nan*` takes the empty string literal, the rest nothing.
+_FLOAT_BUILTINS = frozenset(
+    {
+        "__builtin_nanf",
+        "__builtin_nan",
+        "__builtin_nanl",
+        "__builtin_inff",
+        "__builtin_inf",
+        "__builtin_infl",
+    }
+    | {"__builtin_huge_valf", "__builtin_huge_val", "__builtin_huge_vall"}
+)
 
 # punctuation whose absence is a high-confidence fix-it: suggest inserting it after the prior token.
 _FIXABLE_PUNCT = frozenset({";", ")", "}", "]"})
@@ -421,6 +443,16 @@ class _Parser:
         # A C23 `[[unsequenced]]`/`[[reproducible]]` (or any leading attribute) may precede a function /
         # global. `_attributes()` returns {} when the next token is not an attribute, so this is a no-op
         # before a typedef / enum / struct / plain type -- NON-DISTURBANCE for every existing item.
+        if self.peek().kind == "IDENT" and self.peek().text in _STATIC_ASSERT:
+            self._static_assert()  # a static assertion declares nothing: checked, then gone
+            return
+        if self.at("IDENT", "__bcir_builtin") and self.peek(1).text == "typedef":
+            # a typedef of a standard header the frontend supplies (`stdheaders`): defined here, and not written out
+            # again by the linkable emit, which includes the real header (CSUB-1; the twin's `try_top_decl`)
+            self.nxt()
+            self.storage = set()
+            self._typedef(unit)
+            return
         lead = self._attributes()
         self.storage = set()  # per-item storage-class record (see _type_spec)
         if self.at("IDENT", "typedef"):  # a type alias (resolved at parse time)
@@ -800,6 +832,28 @@ class _Parser:
         here and laid out with a width of 0 by the twin -- a member as wide as its type."""
         return self._const_eval(self._ternary())
 
+    def _static_assert(self) -> None:
+        """`_Static_assert ( constant-expression , string-literal ) ;` (C11 6.7.10), or `static_assert` and C23's form
+        with no message, the cursor on the keyword -- at file scope, in a block, or among an aggregate's members. The
+        expression is an integer constant expression folded on the target (`_const_int`: a `sizeof`, `_Alignof` or
+        `offsetof` of the unit's types laid out so far), and one that is zero is refused for `STATIC_ASSERT_FAILED`
+        at the assertion's keyword; any other declares nothing. Both rails had read one as a call of a function of
+        that name (the twin: `R18: call to undefined function _Static_assert`) or refused it at file scope (`expected
+        a type`, CSUB-1). The twin's `p_static_assert`."""
+        at = self.nxt().pos
+        self.eat("PUNCT", "(")
+        value = self._const_int()
+        if self.at("PUNCT", ","):
+            self.nxt()
+            if not self.at("STRING"):
+                raise CParseError("expected a string literal", pos=self.peek().pos)
+            while self.at("STRING"):  # adjacent literals are one (translation phase 6)
+                self.nxt()
+        self.eat("PUNCT", ")")
+        self.eat("PUNCT", ";")
+        if value == 0:
+            raise CParseError(STATIC_ASSERT_FAILED, pos=at)
+
     def _const_dim(self) -> int:
         """... and a dimension where C takes only a constant one -- a compound literal's `(T[N]){...}` (6.5.2.5p1)
         and a row pointer's `(*p)[N]` -- refused outside 0..INT_MAX (`DIM_RANGE`), as `_dim` refuses one (the twin's
@@ -849,6 +903,9 @@ class _Parser:
         self.eat("PUNCT", "{")
         members = []
         while not self.at("PUNCT", "}"):
+            if self.peek().kind == "IDENT" and self.peek().text in _STATIC_ASSERT:
+                self._static_assert()  # a member declaration list takes one (C11 6.7.2.1p1)
+                continue
             matt = self._attributes()  # member-leading `_Alignas(N)`/`alignas(N)`/
             malign = matt.get(
                 "aligned", 0
@@ -1438,6 +1495,9 @@ class _Parser:
             name = self.nxt().text  # `label:` — the labeled stmt follows
             self.eat("PUNCT", ":")
             return cast.Label(name)
+        if self.peek().kind == "IDENT" and self.peek().text in _STATIC_ASSERT:
+            self._static_assert()  # a block item that declares nothing: no statement
+            return cast.Seq(())
         if self.at("IDENT", "static") or self._is_decl_start():
             return self._decl_stmt()
         expr = self._incdec() or self._expr()  # i++ / ++i / i-- / --i, else an expression
@@ -2003,6 +2063,79 @@ class _Parser:
             self.i = save  # not a type -> `sizeof ( expr )`
         return cast.SizeOf(expr=self._unary())  # sizeof expr / sizeof (expr)
 
+    def _offsetof(self):
+        """`__builtin_offsetof ( type-name , member-designator )`, the cursor on the keyword -- <stddef.h>'s `offsetof`
+        (C11 7.19p3): the byte offset of the designated member, a `size_t` integer constant laid out on the target from
+        the unit's aggregates laid out so far (`_layouts`). The designator is a member name, then any run of `.name`
+        and `[constant]`; one of a type no struct or union (`OFFSETOF_NOT_AGG`), naming a member the aggregate lacks
+        or stepping into one no aggregate or array (`OFFSETOF_DESIGNATOR`), of a bit-field (`OFFSETOF_BITFIELD`, 7.19p3)
+        at a negative subscript, or into an incomplete aggregate (`OFFSETOF_INCOMPLETE`) is refused. The twin's
+        `offsetof_value` (CSUB-1)."""
+        self.nxt()
+        self.eat("PUNCT", "(")
+        tref = self._abstract_type_name()
+        self.eat("PUNCT", ",")
+        if tref.ptr or tref.array or tref.aggregate not in ("struct", "union"):
+            raise CParseError(OFFSETOF_NOT_AGG, pos=self.peek().pos)
+        layouts = self._layouts()
+        agg = layouts.get(tref.base)
+        if agg is None or agg.incomplete:
+            raise CParseError(OFFSETOF_INCOMPLETE, pos=self.peek().pos)
+        cur, off, member = agg, 0, True  # `member`: the next designator is a name
+        while True:
+            if member:
+                tk = self.eat("IDENT")
+                if not cur.is_aggregate:
+                    raise CParseError(OFFSETOF_DESIGNATOR, pos=tk.pos)
+                done = cur
+                if cur.incomplete and cur.name in layouts:
+                    done = layouts[cur.name]
+                try:
+                    ftype, foff, _bo, bw = done.field(tk.text)
+                except KeyError:
+                    raise CParseError(OFFSETOF_DESIGNATOR, pos=tk.pos) from None
+                if bw:
+                    raise CParseError(OFFSETOF_BITFIELD, pos=tk.pos)
+                cur, off = (
+                    (layouts.get(ftype.name, ftype) if ftype.is_aggregate else ftype),
+                    off + foff,
+                )
+            if self.at("PUNCT", "."):
+                self.nxt()
+                member = True
+                continue
+            if self.at("PUNCT", "["):
+                self.nxt()
+                at = self.peek().pos
+                k = self._const_int()
+                self.eat("PUNCT", "]")
+                if cur.kind != "array" or k < 0:
+                    raise CParseError(OFFSETOF_DESIGNATOR, pos=at)
+                elem = cur.of
+                if elem.is_aggregate:
+                    elem = layouts.get(elem.name, elem)
+                cur, off, member = elem, off + k * elem.size, False
+                continue
+            break
+        self.eat("PUNCT", ")")
+        return cast.IntLit(off, "size_t")
+
+    def _float_builtin(self):
+        """`__builtin_nanf("")`, `__builtin_inff()`, `__builtin_huge_valf()` and their `double` and `long double` forms,
+        the cursor on the name: the floating constant <math.h>'s `NAN`, `INFINITY` and `HUGE_VAL*` spell (`stdheaders`),
+        kept as its spelling (`cast.FloatLit`), as a floating literal is, for the backend to read (CSUB-1)."""
+        name = self.nxt().text
+        self.eat("PUNCT", "(")
+        arg = ""
+        if name.startswith("__builtin_nan"):
+            tk = self.peek()
+            if tk.kind != "STRING" or tk.text != '""':
+                raise CParseError(f"{name} takes the empty string literal", pos=tk.pos)
+            self.nxt()
+            arg = '""'
+        self.eat("PUNCT", ")")
+        return cast.FloatLit(f"{name}({arg})")
+
     def _literal_follows(self) -> bool:
         """Whether the parenthesized type name starting at the cursor (past its `(`) is a compound literal's: a `{`
         follows its `)` (CF-RTFP; the twin's `literal_close`). Nothing is consumed."""
@@ -2125,6 +2258,13 @@ class _Parser:
                 return self._alignof()
             if w == "_Generic":
                 return self._generic()
+            if w in ("true", "false"):  # C23's predefined constants: a `bool` (6.4.4.6)
+                self.nxt()
+                return cast.IntLit(int(w == "true"), "bool")
+            if w == "__builtin_offsetof" and self.peek(1).text == "(":
+                return self._offsetof()
+            if w in _FLOAT_BUILTINS and self.peek(1).text == "(":
+                return self._float_builtin()
             if w in KEYWORDS and w != "sizeof":
                 raise CParseError(f"unexpected keyword {w!r} in expression", pos=self.peek().pos)
             tk = self.nxt()

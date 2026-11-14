@@ -16,7 +16,13 @@ hidden. The file digest ties the tokenizer to `ModelManifest.tokenizer_ref` (run
 Protobuf scope honesty: `_read_pieces` walks the ModelProto wire format for field 1
 (the repeated `SentencePiece {piece=1: string, score=2: float, type=3: enum}` messages)
 and SKIPS every other field by wire type -- enough to load any real `tokenizer.model`,
-not a general protobuf library. Dep-free stdlib; cost-side (imports no verifier)."""
+not a general protobuf library. Dep-free stdlib; cost-side (imports no verifier).
+
+A byte piece is spelled exactly `<0xHH>`, two uppercase ASCII hex digits, as SentencePiece
+writes and reads it; decode renders an id by its piece TYPE (a byte piece as its byte, a
+control or unknown piece as nothing, any other piece as its text) and refuses an id that
+names no piece. The C twin is runtime/c/bcir_spm.c behind `bcir-tokenize --format spm`
+(PORT-2b); bcir/tests/test_c_spm_tokenizer.py holds the two rails together."""
 
 from __future__ import annotations
 
@@ -26,7 +32,7 @@ import os
 import struct
 from dataclasses import dataclass, field
 
-_SPACE = "▁"  # the SentencePiece whitespace piece
+_SPACE = "\u2581"  # the SentencePiece whitespace piece, LOWER ONE EIGHTH BLOCK
 _TYPE_NORMAL, _TYPE_UNKNOWN, _TYPE_CONTROL, _TYPE_BYTE = 1, 2, 3, 6
 _MAX_MODEL_BYTES = 256 * 1024 * 1024
 
@@ -46,6 +52,19 @@ def _read_varint(buf: bytes, i: int, end: int | None = None) -> tuple[int, int]:
         if not b & 0x80:
             return value, i
     raise ValueError("tokenizer.model: overlong protobuf varint")
+
+
+_HEX_UPPER = "0123456789ABCDEF"
+
+
+def _byte_of(piece: str) -> int | None:
+    """The byte a `<0xHH>` piece names (two uppercase ASCII hex digits, the one spelling
+    SentencePiece writes), or None. Not `int(x, 16)`, which also takes signs, white space,
+    lowercase and non-ASCII digits."""
+    if len(piece) != 6 or not piece.startswith("<0x") or not piece.endswith(">"):
+        return None
+    hi, lo = _HEX_UPPER.find(piece[3]), _HEX_UPPER.find(piece[4])
+    return hi * 16 + lo if hi >= 0 and lo >= 0 else None
 
 
 def _checked_end(buf: bytes, i: int, n: int, end: int) -> int:
@@ -138,6 +157,7 @@ class SpTokenizer:
     specials: dict  # control-piece text -> id (e.g. <s>, </s>)
     digest: str = ""
     ids_to_pieces: dict = field(default_factory=dict)
+    id_to_byte: dict = field(default_factory=dict)  # byte-piece id -> its byte
 
     @property
     def n_pieces(self) -> int:
@@ -172,16 +192,19 @@ class SpTokenizer:
         return out
 
     def decode(self, ids: list) -> str:
-        """Pieces concatenated; `▁` -> space; `<0xXX>` byte pieces -> raw UTF-8 bytes
-        (errors='replace' -- a torn byte sequence never crashes the decode); the dummy
-        prefix space is stripped."""
+        """Pieces concatenated by type: a byte piece as its byte, a control or unknown
+        piece as nothing, any other piece as its text with `▁` -> space. The octets decode
+        as UTF-8 with errors='replace' (a torn byte sequence never crashes the decode), and
+        the dummy prefix space is stripped. An id that names no piece is refused."""
         buf: list[bytes] = []
         for t in ids:
-            piece = self.ids_to_pieces.get(int(t), "")
+            if isinstance(t, bool) or not isinstance(t, int) or t not in self.ids_to_pieces:
+                raise ValueError(f"unknown tokenizer id {t!r}")
+            piece = self.ids_to_pieces[t]
             if piece in self.specials:
                 continue  # control pieces render as nothing
-            if len(piece) == 6 and piece.startswith("<0x") and piece.endswith(">"):
-                buf.append(bytes([int(piece[3:5], 16)]))
+            if t in self.id_to_byte:
+                buf.append(bytes([self.id_to_byte[t]]))
             else:
                 buf.append(piece.replace(_SPACE, " ").encode("utf-8"))
         text = b"".join(buf).decode("utf-8", errors="replace")
@@ -205,6 +228,7 @@ def load_sentencepiece(path: str, *, max_bytes: int = _MAX_MODEL_BYTES) -> SpTok
         raise ValueError(f"{path}: no SentencePiece pieces (not a tokenizer.model?)")
     pieces: dict = {}
     byte_ids: dict = {}
+    id_to_byte: dict = {}
     specials: dict = {}
     ids_to_pieces: dict = {}
     unk_id: int | None = None
@@ -215,15 +239,13 @@ def load_sentencepiece(path: str, *, max_bytes: int = _MAX_MODEL_BYTES) -> SpTok
         seen_text.add(piece)
         ids_to_pieces[pid] = piece
         if ptype == _TYPE_BYTE:
-            if not (len(piece) == 6 and piece.startswith("<0x") and piece.endswith(">")):
+            byte = _byte_of(piece)
+            if byte is None:
                 raise ValueError(f"{path}: malformed byte piece {piece!r}")
-            try:
-                byte = int(piece[3:5], 16)
-            except ValueError as exc:
-                raise ValueError(f"{path}: malformed byte piece {piece!r}") from exc
             if byte in byte_ids:
                 raise ValueError(f"{path}: duplicate byte fallback piece 0x{byte:02X}")
             byte_ids[byte] = pid
+            id_to_byte[pid] = byte
         elif ptype == _TYPE_UNKNOWN:
             if unk_id is not None:
                 raise ValueError(f"{path}: multiple unknown pieces")
@@ -244,4 +266,5 @@ def load_sentencepiece(path: str, *, max_bytes: int = _MAX_MODEL_BYTES) -> SpTok
         specials=specials,
         digest=hashlib.sha256(raw).hexdigest(),
         ids_to_pieces=ids_to_pieces,
+        id_to_byte=id_to_byte,
     )

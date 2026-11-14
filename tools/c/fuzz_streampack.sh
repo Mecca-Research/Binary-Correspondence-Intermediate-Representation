@@ -270,6 +270,24 @@ add_target artifact "BCAB artifact bundle" "-max_len=16384" \
 add_target listing "StreamPack listing (MC1)" "-max_len=16384" \
   "${C}/fuzz_sp_listing.c" "${C}/bcir_sp_listing.c" "${C}/bcir_runtime.c"
 
+# The byte-level BPE tokenizer (PORT-2): a tokenizer.json is a file anyone hands a model runner.
+# Every input is loaded as one (a refusal keeps nothing; a load is held to encode/decode's count,
+# measure and round-trip contracts) and is also encoded and decoded by a fixed tokenizer.
+add_target bpe "BPE tokenizer" "-max_len=32768" \
+  "${C}/fuzz_bpe.c" "${C}/bcir_bpe.c" "${C}/bcir_jer.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
+
+# The SentencePiece tokenizer (PORT-2b): a tokenizer.model is protobuf from anyone. Every input is
+# loaded as one (a refusal keeps nothing; a load is held to encode's bound and count and to decode's
+# measure, whose output is always UTF-8) and is also encoded and decoded by a fixed model.
+add_target spm "SentencePiece tokenizer" "-max_len=65536" \
+  "${C}/fuzz_spm.c" "${C}/bcir_spm.c" "${C}/bcir_jer.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
+
+# The C preprocessor (CSUB-1): a translation unit is text from anyone, and since CSUB-1 the macro engine
+# keeps grown buffers and interned hide sets between expansions. Each input runs twice on one shared
+# context, and the two runs must give one verdict, the same text or the same refusal.
+add_target cpp "C preprocessor" "-max_len=8192" \
+  "${C}/fuzz_cpp.c" "${C}/bcir_cpp.c"
+
 # bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
 # pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
 add_target exec "executor" "" \
@@ -360,6 +378,32 @@ for name, (_module, _spec, mp) in sorted(mf.planned().items()):
     blob = encode_plan(execution_plan_of(mp.best, h))
     out.joinpath(f"plan_v{blob[4]}_{name}.bplan").write_bytes(blob)
 PY
+
+# The tokenizer corpus is the one bcir/tests/test_c_bpe_tokenizer.py compares against the oracle:
+# its tokenizers and the law documents small enough to mutate.
+python3 - "${tmp}/corpus_bpe" <<'PY' || { echo "  FAIL: tokenizer seed corpus"; exit 1; }
+import sys
+from pathlib import Path
+from bcir.tests.test_c_bpe_tokenizer import law_documents, tokenizers
+out = Path(sys.argv[1])
+for name, blob in tokenizers():
+    out.joinpath(f"{name}.json").write_bytes(blob)
+for name, blob in law_documents():
+    if len(blob) <= 32768:
+        out.joinpath(f"law-{name}.json").write_bytes(blob)
+PY
+python3 - "${tmp}/corpus_spm" <<'PY' || { echo "  FAIL: SentencePiece seed corpus"; exit 1; }
+import sys
+from pathlib import Path
+from bcir.tests.test_c_spm_tokenizer import law_documents, models
+out = Path(sys.argv[1])
+for name, blob in models() + [("law-" + n, b) for n, b in law_documents()]:
+    out.joinpath(f"{name}.model").write_bytes(blob)
+PY
+
+# The preprocessor corpus is the fixtures both rails' preprocessor differentials compare.
+cp "${C}"/cfront_pp_*.c "${C}"/cfront_stdheaders.c "${C}"/cfront_sec_cppmacro.c "${tmp}/corpus_cpp/" ||
+  { echo "  FAIL: preprocessor seed corpus"; exit 1; }
 
 if ! python3 - "${tmp}/corpus_artifact" <<'PY'
 import sys

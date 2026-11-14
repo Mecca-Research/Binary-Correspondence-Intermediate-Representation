@@ -99,7 +99,11 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
   frontend → `bcir_verify.c` → `bcir_plan`/`bcir_hydrate`/`bcir_exec`, driven by the
   cc-like `bcir-cc`), Python↔C parity-gated per stage (structural digest + emitted-C
   Clang equivalence) over the shared `cfront_*.c` fixture corpus, with
-  libFuzzer+ASan/UBSan on every trust boundary. The model data plane includes the
+  libFuzzer+ASan/UBSan on every trust boundary. The subset is held against the runtime's own
+  C: a ratchet (`tools/c/csub_ratchet.py`, record `runtime/c/csub_ratchet.json`) holds
+  `bcir-cc`'s verdict on every production unit -- clean, or blocked with its first refusal and
+  the CSUB rung that lifts it. Since CSUB-1 both rails' preprocessors run one macro engine,
+  held to one answer on generated programs. The model data plane includes the
   fully validating BCIRQ8 loader, standalone GQA decoder, native Q8 projections,
   byte-identical Q8/Q4 conversion, exact Q15 top-k, and the bounded C measurement twin.
   `runtime/cpp/` is the small C↔C++ hand-off seam, realized by G16 (S3-C):
@@ -170,6 +174,11 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     TinyLlama checkpoint/tokenizer pins feed BCIRQ8 v1, Python Q8 and standalone-C greedy
     inference, exact generated-ID parity, and a deterministic report. The checkpoint,
     tokenizer, generated Q8 artifact, logits, and executable remain cache/build products.
+    Both tokenizer families have hosted C twins behind `bcir-tokenize` (PORT-2). The
+    byte-level BPE (`tokenizer.json`, `bcir_bpe.c`) reads its file through the bounded JSON
+    reader the oracle now shares. SentencePiece (`tokenizer.model`, `bcir_spm.c`, TinyLlama's)
+    reads the protobuf wire format. Both give the oracle's ids, so text reaches C inference
+    without Python.
 12. **An owned hosted train-to-C micro gate exists without weakening the oracle**:
     opt-in PyTorch trains a two-layer tied GQA model for 64 one-thread CPU steps, publishes
     pickle-free exact-resume Safetensors, passes strict BCIR ingestion, and preserves the

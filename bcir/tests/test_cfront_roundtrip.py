@@ -412,8 +412,10 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # emit names; a `_BitInt` stored to a bit-field converts to the unit's type -- `cfront_fnptrmember.c`,
     # `cfront_signedfnptr.c`, `cfront_complexalign.c`, `cfront_bitint_bitfield.c`, `cfront_fnptrlocal.c` and
     # `cfront_fpret.c` joined.
-    assert len(included) == 123, (
-        f"included-set size changed from the pinned 123 to {len(included)} -- a "
+    # 124 since CSUB-1: the new `cfront_stdheaders.c` round-trips -- its standard headers' constants, `offsetof`,
+    # `bool` and `<math.h>`'s floating builtins re-parse from the emit as the constants they lowered to.
+    assert len(included) == 124, (
+        f"included-set size changed from the pinned 124 to {len(included)} -- a "
         f"fixture moved across the round-trip boundary; re-classify + re-pin. "
         f"included={sorted(included)}"
     )

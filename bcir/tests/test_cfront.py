@@ -756,7 +756,9 @@ def test_L7_variadic_macros():
     assert preprocess("#define V(...) f(__VA_ARGS__)\nV(1,2,3)").strip() == "f(1,2,3)"
     assert preprocess("#define L(a, ...) g(a, __VA_ARGS__)\nL(x,1,2)").strip() == "g(x,1,2)"
     assert preprocess("#define E(a, ...) k(a, __VA_ARGS__)\nE(z)").strip() == "k(z,)"  # empty
-    assert preprocess("#define S(...) #__VA_ARGS__\nS(1, 2, 3)").strip() == '"1,2,3"'  # stringize
+    # stringize keeps the spacing between the arguments (C11 6.10.3.2p2, as Clang spells it: CSUB-1)
+    assert preprocess("#define S(...) #__VA_ARGS__\nS(1, 2, 3)").strip() == '"1, 2, 3"'
+    assert preprocess("#define S(...) #__VA_ARGS__\nS(1,2,3)").strip() == '"1,2,3"'
     assert preprocess("#define P(...) x ## __VA_ARGS__\nP(1,2)").strip() == "x1,2"  # paste
     # C23 __VA_OPT__: the content appears iff __VA_ARGS__ is non-empty (the trailing-comma idiom).
     log = "#define LOG(fmt, ...) p(fmt __VA_OPT__(,) __VA_ARGS__)\n"

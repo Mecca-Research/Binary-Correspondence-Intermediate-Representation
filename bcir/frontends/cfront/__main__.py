@@ -382,7 +382,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         if syntax_only or emit_json:  # check only: Clang-style or JSON diagnostics
-            rep = diagnose(text, search_paths=search, defines=job_defines, filename=path)
+            rep = diagnose(
+                text, search_paths=search, defines=job_defines, filename=path, target=job_target
+            )
             if emit_json:
                 out.append(rep.to_json())
             elif rep.diagnostics:
@@ -419,7 +421,9 @@ def main(argv: list[str] | None = None) -> int:
                     target=job_target,
                 )
         except Exception as e:  # noqa: BLE001 -- render the front-end error with a Clang-style caret
-            rep = diagnose(text, search_paths=search, defines=job_defines, filename=path)
+            rep = diagnose(
+                text, search_paths=search, defines=job_defines, filename=path, target=job_target
+            )
             sys.stderr.write((rep.render() + "\n") if rep.diagnostics else f"{path}: error: {e}\n")
             outcomes.append("dirty")
             rc = 1

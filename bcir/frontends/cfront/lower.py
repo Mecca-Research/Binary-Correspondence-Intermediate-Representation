@@ -150,11 +150,23 @@ def _elem_float_name(t) -> str:
     return t.name[: -len(" _Complex")] if t.is_complex else t.name
 
 
+#: The bases of the floating builtins <math.h>'s constants spell (`stdheaders`, `cparse._float_builtin`): `f` after one
+#: names the `float` form, `l` the `long double` one.
+_FLOAT_BUILTIN_BASES = ("nan", "inf", "huge_val")
+
+
 def _float_lit_type(spelling: str, abi=None) -> CType:
     """The type of a floating literal from its suffix: `f`/`F` -> float, `l`/`L` -> long double,
     else double (the C default) -- laid out by the target's ABI, whose `long double` is 16 bytes on
-    x86-64 Linux, 12 on i386 and 8 on Windows x64 (the twin reads the same ABI table)."""
+    x86-64 Linux, 12 on i386 and 8 on Windows x64 (the twin reads the same ABI table). A floating
+    builtin (`__builtin_inff()`, CSUB-1) is typed by its name's: `nan`, `inf` and `huge_val` are
+    `double`, an `f` after one `float`, an `l` `long double` (the twin's `float_builtin`)."""
     s = spelling.strip()
+    if s.startswith("__builtin_"):
+        name = s[len("__builtin_") : s.find("(")]
+        if name in _FLOAT_BUILTIN_BASES:
+            return scalar("double", abi)
+        return scalar("float" if name.endswith("f") else "long double", abi)
     if s and s[-1] in "fF":
         return scalar("float", abi)
     if s and s[-1] in "lL":
@@ -233,6 +245,14 @@ _LIBM_INT = {
     "lrint": "long",
     "llround": "long long",
     "llrint": "long long",
+    # <math.h>'s classification macros as the C library spells them (`stdheaders`, CSUB-1): compiler builtins of
+    # any floating argument, each an `int`, emitted verbatim -- `isinf` glibc's sign-returning one -- and no libm
+    # edge (`linkflags._is_libm`)
+    "__builtin_isfinite": "int",
+    "__builtin_isnan": "int",
+    "__builtin_isinf_sign": "int",
+    "__builtin_signbit": "int",
+    "__builtin_isnormal": "int",
 }
 
 # <complex.h> functions, lowered like a libm call (opaque external edge, emitted verbatim against
@@ -894,6 +914,16 @@ DIM_RANGE = "an array dimension outside 0..INT_MAX"
 # one, zero (C11 6.7.2.1p4): both rails had laid each one out, which Clang refuses (CF-CONSTEXPR2; the twin's
 # `CC_BF_WIDTH`)
 BF_WIDTH = "invalid bit-field width"
+# a static assertion whose constant expression is zero (C11 6.7.10p2): refused at its keyword, the message not part of
+# the reason -- the source holds it where the diagnostic points (CSUB-1; the twin's `CC_STATIC_ASSERT`)
+STATIC_ASSERT_FAILED = "static assertion failed"
+# `__builtin_offsetof(type, member-designator)` (C11 7.19p3, `offsetof`): of a type no struct or union, of a member the
+# aggregate lacks, through a member no aggregate or array, of a bit-field, or at a negative subscript (CSUB-1; the
+# twin's `CC_OFFSETOF_*`)
+OFFSETOF_NOT_AGG = "offsetof of a type that is not a struct or union"
+OFFSETOF_BITFIELD = "offsetof of a bit-field member"
+OFFSETOF_DESIGNATOR = "invalid offsetof member designator"
+OFFSETOF_INCOMPLETE = "offsetof of an incomplete struct or union"
 # `T (*f(P))(Q)`: a function declared to return a function pointer by a nested declarator, which neither rail parses --
 # the same function with a typedef for its return type lowers (CF-FPRET; the twin's `CC_FN_RET_FP`)
 FN_RET_FP = "a function returning a function pointer is not supported without a typedef"
@@ -1101,7 +1131,8 @@ def _kfloat_cast(spelling: str, t: _KVal, live: bool) -> _KVal:
     rails."""
     text = spelling.replace("'", "")
     suffix = text[-1:].lower() if text[-1:] in ("f", "F", "l", "L") else ""
-    if suffix == "l" or len(text) > _FLOAT_SPELLING:
+    # ... and so is a float builtin (`__builtin_inff()`, CSUB-1): a NaN or an infinity, which no integer holds
+    if suffix == "l" or len(text) > _FLOAT_SPELLING or text.startswith("__builtin_"):
         raise CLowerError(ICE_NOT)
     v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix])
     if t.kind == "b":
