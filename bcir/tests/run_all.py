@@ -498,6 +498,7 @@ _MODULES = [
     "bcir.tests.test_c_bundle_listing",
     "bcir.tests.test_c_bpe_tokenizer",
     "bcir.tests.test_c_spm_tokenizer",
+    "bcir.tests.test_csub_ratchet",
     "bcir.tests.test_verify_cost",
     "bcir.tests.test_precision_lowering",
     "bcir.tests.test_bundle",

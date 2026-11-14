@@ -224,6 +224,9 @@ echo "[c-runtime] bcir-cc compiler driver: compile a driver (sibling header) + e
 # plan -> hydrate). It must compile a driver with sibling headers via a normal compile command.
 show_section bcir_cc || exit 1
 
+echo "[c-runtime] the C subset's ratchet (CSUB-1): bcir-cc over every production unit == runtime/c/csub_ratchet.json"
+show_section csub_ratchet || exit 1
+
 echo "[c-runtime] bcir-cc --emit-c links the runtime: self-contained masked unit (#emitlink)"
 show_section emitlink || exit 1
 

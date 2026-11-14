@@ -362,6 +362,7 @@
     "cfront_loop": {"script": "tools/c/sections/cfront_loop.sh", "harnesses": ["test_cfront_loop"]},
     "channel": {"script": "tools/c/sections/channel.sh", "harnesses": ["test_channel"]},
     "bcir_cc": {"script": "tools/c/sections/bcir_cc.sh", "harnesses": ["bcir-cc"]},
+    "csub_ratchet": {"script": "tools/c/sections/csub_ratchet.sh", "harnesses": ["bcir-cc"]},
     "emitlink": {"script": "tools/c/sections/emitlink.sh", "harnesses": ["bcir-cc"]},
     "recover": {"script": "tools/c/sections/recover.sh", "harnesses": ["bcir-cc"]},
     "writeguard": {"script": "tools/c/sections/writeguard.sh", "harnesses": ["bcir-cc"]},
