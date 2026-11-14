@@ -9961,6 +9961,16 @@ def _clang_syntax(src: str, abi, hosted: bool) -> str:
     return "" if r.returncode == 0 else r.stderr[-4000:]
 
 
+def _glibc_host_target() -> str | None:
+    """The target of the matrix this host is, where its C library is glibc (`_HOST_TARGETS`): the one whose
+    expansions the host's own headers are held to. None on any other host (Windows, macOS, musl)."""
+    import platform
+
+    if not sys.platform.startswith("linux") or platform.libc_ver()[0] != "glibc":
+        return None
+    return _HOST_TARGETS.get(platform.machine().lower())
+
+
 def _is_int_expansion(toks: list) -> bool:
     """An integer constant expression of the headers' own shape: decimal constants, signs and parentheses."""
     return bool(toks) and all(re.fullmatch(r"[0-9]+[uUlL]*|[()+\-*]", t) for t in toks)
@@ -9974,12 +9984,15 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
     the five targets, every macro those texts define expands to the same tokens on both rails; each integer one
     equals Clang's in value and type, read through the target's own headers (`--target`, freestanding), but where C
     types it otherwise than Clang's freestanding headers do (`UINT8_C`, `UINT16_C`, Windows' `wchar_t` and `wint_t`
-    limits: value only); every other one expands to Clang's tokens; and on the host, the C library's headers (glibc)
-    agree on what the freestanding ones leave to it -- `MB_LEN_MAX`, those types, and `<math.h>`'s constants."""
+    limits: value only); every other one expands to Clang's tokens; and on a glibc host, the C library's headers
+    agree on what the freestanding ones leave to it -- `MB_LEN_MAX`, those types, and `<math.h>`'s constants -- for
+    the target the host is (`_glibc_host_target`): an AArch64 host's glibc spells an unsigned `wchar_t`'s limits,
+    an x86-64 host's a signed one's."""
     from bcir.frontends.cfront import stdheaders
     from bcir.frontends.cfront.abi import TARGETS
 
     exe = _build_frontend(_session_build_dir()) if _CC else None
+    host, hosted_checked = _glibc_host_target(), False
     for name, abi in TARGETS.items():
         probes = _std_probes(abi)
         unit = "struct __probe { int a; short b[4]; };\n" + _std_probe_unit(probes)
@@ -10027,10 +10040,9 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
         includes = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if h != "math.h")
         verdict = _clang_syntax(includes + "\n".join(asserts) + "\n", abi, hosted=False)
         assert not verdict, (name, verdict)
-        if (
-            name == "x86_64-linux"
-        ):  # the host's C library: what the freestanding headers leave to it
-            hosted = _clang_expansions(unit, None, hosted=True)
+        if name == host:  # the host's C library: what the freestanding headers leave to it
+            hosted_checked = True
+            hosted = _clang_expansions(unit, abi, hosted=True)
             math = [
                 (n, ours[k], hosted.get(k)) for k, (h, n, _p) in enumerate(probes) if h == "math.h"
             ]
@@ -10041,8 +10053,12 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
                 for k, (_h, n, p) in enumerate(probes)
                 if _is_int_expansion(ours[k])
             ]
-            verdict = _clang_syntax(includes + "\n".join(checks) + "\n", None, hosted=True)
-            assert not verdict, verdict
+            verdict = _clang_syntax(includes + "\n".join(checks) + "\n", abi, hosted=True)
+            assert not verdict, (name, verdict)
+    if host is not None and shutil.which("clang"):
+        assert hosted_checked, (
+            f"the glibc host is {host}, and no target of the matrix was checked against it"
+        )
 
 
 def test_the_standard_headers_lay_out_their_types_as_clang_on_every_target():
@@ -16540,8 +16556,9 @@ _PPARITH_FORMS = (
 # are of type int and therefore signed"); Clang reads it by `char`'s signedness, as a single one. Both rails read
 # Clang's, so GCC judges these only with a signed `char`.
 _PPARITH_GCC_APART = frozenset({"'\\xff\\xff\\xff\\xff' < 0"})
-# the cfront target each machine host GCC preprocesses for is (`platform.machine()`)
-_PPARITH_HOSTS = {
+# the cfront target each machine (`platform.machine()`) is: the target its host GCC preprocesses for, and on a glibc
+# Linux host the one its C library's headers describe (`_glibc_host_target`)
+_HOST_TARGETS = {
     "x86_64": "x86_64-linux",
     "amd64": "x86_64-linux",
     "aarch64": "aarch64-linux",
@@ -16630,7 +16647,7 @@ def test_if_expressions_take_the_branch_clang_takes_on_each_target():
 
     clang = shutil.which("clang")
     gcc = shutil.which("gcc")
-    host = _PPARITH_HOSTS.get(platform.machine().lower())  # the machine host GCC preprocesses for
+    host = _HOST_TARGETS.get(platform.machine().lower())  # the machine host GCC preprocesses for
     exe = _build_frontend(_session_build_dir())
     judged = 0
     with tempfile.TemporaryDirectory() as d:
