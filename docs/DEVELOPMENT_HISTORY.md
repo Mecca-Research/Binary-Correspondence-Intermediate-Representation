@@ -289,6 +289,25 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-15 — CSUB-2c, second slice: struct members of array elements.**
+  - A struct or union member of an array element is the aggregate value on both rails: read, stored, copied element
+    to element, passed and returned by value, and addressed, on a direct array, a member array and through a loaded
+    pointer (`set->slots[j].name = name`, `d->notes[i].span` passed by value). Both rails had refused it. The twin's
+    element loads now take the aggregate temp a plain struct's member read takes (`tempagg`), and its lvalue walk
+    through a loaded pointer takes a struct leaf as an object an address takes.
+  - An aggregate member assigned as a value is refused for the oracle's reasons on every path, where the twin had
+    lowered `(t[i].sp = v)`. The aggregate as an operand is refused for C's.
+  - **Evidence.** `cfront_csub2_structmembers.c` (in `_ABI`) runs as the original on each rail's emit, and as each
+    rail's linkable artifact built as C11. A cross-rail test holds 8 lowered forms to one digest and to a strict build
+    of both emits, and 7 refused ones to one reason each. CSUB-2c's first test had pinned `&s->a[i].in` as refused
+    and `test_paren_and_nested_member_refusals_on_both_rails` a struct member at depth; both now lower, and the
+    pins move to the new test. The fixture round-trips, so the round-trip set's pin grows to 125.
+  - **Standing faults.** `cfront-csub2.json` gains 8 (CS2C33–CS2C40), each swept RED. CS2C29's premise inverted, a
+    struct member's address taken against the oracle, so it now injects the opposite, the address refused; CS2C2,
+    CS2E7, CS2E14 and CS2E15 are re-anchored. All five were swept RED again.
+  - **The ratchet.** Still 27 of 58: `bcir_bpe.c` moves on to a struct member's address through a loaded pointer
+    (`&s->t->arena`, CSUB-2e), and the hosted `bcir_diag.c` to `strlen` (CSUB-5).
+
 - **2026-11-15 — CSUB-2e, first slice: struct elements through a loaded pointer.**
   - An element of a pointer to structs reached through a loaded pointer is an lvalue on both rails: `&set->slots[j]`,
     `&d->fixits[i]`, `&c->claims[v->claim_id]`, `&t->slots[i]`. Its address is a pointer to the struct; a member of

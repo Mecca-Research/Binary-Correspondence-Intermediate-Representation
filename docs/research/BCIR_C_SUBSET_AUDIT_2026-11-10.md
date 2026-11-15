@@ -303,15 +303,28 @@ The count stays 27 of 58, but seven units move on:
 - The hosted tools `bcir_decoder_gem.c` and `bcir_decoder_pack.c` reach `strlen`, a hosted `<string.h>` call R18
   does not know. CSUB-5's row now names it.
 
-**Next:** the record table's struct members (`t[i].m = v`, the rest of CSUB-2c), pointer-to-array members
-(CSUB-2d), and the remaining lvalue forms (CSUB-2e). Six of the last stand, all on plain structs as on elements, and
+**CSUB-2c, second slice (2026-11-15): struct members of array elements.**
+- **A struct or union member of an array element is the aggregate value** on both rails: read, stored, copied
+  element to element, passed and returned by value, and addressed (a pointer to the struct). This covers a direct
+  array, a member array and a loaded pointer. Examples: `set->slots[j].name = name` (`bcir_bpe.c`) and
+  `d->notes[i].span` passed by value (`bcir_diag.c`). Both rails had refused it as a non-scalar element field.
+- **What stays refused.** An aggregate member assigned as a value, `x = (t[i].sp = v)`, is refused for the oracle's
+  reasons on every path. The twin had lowered it on a direct array. The aggregate as an operand (`t[i].sp++`,
+  `t[i].sp == u`) is refused for C's reason. A bit-field, function-pointer or array member of an element stays
+  refused, as before.
+
+The count stays 27 of 58. `bcir_bpe.c` moves on to a struct member's address through a loaded pointer,
+`&s->t->arena`, a CSUB-2e form. The hosted `bcir_diag.c` moves on to `strlen` (CSUB-5).
+
+**Next:** pointer-to-array members (CSUB-2d), and the remaining lvalue forms (CSUB-2e). Six of the last stand, all on plain structs as on elements, and
 for each the oracle lowers and the twin refuses:
 - `->` through a dereferenced `T **`, `(*q)->v`;
 - `(*c)++` used as a value (the quarantine units);
 - an assignment through a dereferenced pointer used as a value (`*low = *high = &absent`);
 - a pointer member's assignment used as a value;
-- through a loaded pointer: a volatile object's address, a pointer member's address (`&p->q->name`), a member
-  array's element (`&p->q->arr[1]`, `p->q->arr[1]++`), and a pointer element's address (`&p->pp[j]`).
+- through a loaded pointer: a volatile object's address, a pointer or struct member's address (`&p->q->name`,
+  `&s->t->arena`), a member array's element (`&p->q->arr[1]`, `p->q->arr[1]++`), and a pointer element's address
+  (`&p->pp[j]`).
 
 Every first refusal the rung names in §3 and §3.1 is one of these.
 
