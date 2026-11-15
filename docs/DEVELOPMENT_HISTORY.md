@@ -289,6 +289,33 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-15 — CSUB-2c, first slice: pointer members of array elements.**
+  - A pointer member of an array element is a value of its pointer type on both rails: `order[i].name`,
+    `d->notes[i].message`, `set->slots[i].name.s`. It is loaded strided by the element, then compared, passed,
+    subscripted, dereferenced, followed with `->`, stored and stored through. An increment through one is lowered,
+    and its address is a `T **`. Both rails had refused it as a non-scalar element field.
+  - Stepping the member itself, a function-pointer, bit-field or struct member of an element, and what C forbids
+    after one are refused alike, the last for C's reason.
+  - **What the witnesses found.** Five twin defects, three of them invalid C that the digest cannot see, since it
+    carries no declared type. The twin had typed `&s->name` of a `const char *` member `int8_t **` and `&s->pp` of
+    a `T **` member `T **`. It had loaded an element's function-pointer member as an integer, then assigned it to
+    the function pointer, and had typed its address an integer's. It had taken `&s.arr[i].in`, which the oracle
+    refuses, and refused `->` through a pointer to no struct for its own reason. Each lowered form's emits are now
+    also compiled strictly beside their source.
+  - **Evidence.** `cfront_csub2_records.c` (in `_ABI`) runs as the original on each rail's emit, and as each rail's
+    linkable artifact built as C11. A cross-rail test holds 9 lowered forms to one digest and to a strict build of
+    both emits, and 13 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 32 (CS2C1–CS2C32), each swept RED. The first sweep left one
+    uncaught: the twin refused the member itself stepped in a check of its own, while its general refusal of a step
+    it does not take, `incdec_rest`, already refused it. The redundant check is gone; the faults aim at the decision
+    that matters, that such a member is never stepped as a scalar.
+  - **The ratchet.** `bcir_ab_listing.c` and `bcir_provenance.c` compile clean (27 of 58). `bcir_bpe.c`,
+    `bcir_diag.c` and `bcir_emit.c` stop at an element's address through a loaded pointer (`&d->fixits[i]`), a
+    CSUB-2e form; `bcir_decoder_train.c` at a call of 18 arguments, past the claim graph's 16 reads (CSUB-6).
+  - **Found for CSUB-2e.** An object of a struct element reached through a loaded pointer (`s->q[1].y--`,
+    `&h->next[1]`) and `->` through a dereferenced `T **` (`(*q)->v`): the oracle lowers them and the twin refuses
+    them, on plain structs as on elements.
+
 - **2026-11-15 — CSUB-2b, second half: untagged struct tables in a block.**
   - An untagged struct or union a block declaration defines lowers on both rails: `static const struct { ... } t[]`,
     automatic or static, a union, a nested untagged member, several declarators, a `for` declaration's. Both rails

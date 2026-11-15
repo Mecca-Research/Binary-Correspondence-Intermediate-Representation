@@ -138,11 +138,11 @@ itself forbids, and RED before GREEN.
 | Rung | What the subset gains | What it brings under the verified compiler |
 |---|---|---|
 | **CSUB-1** Conformance (**landed 2026-11-11**: `bcir-cc` compiles 21 of the runtime's 58 production units with R1–R18 clean, where it compiled 4; the ratchet below holds all 58. Both rails' preprocessors are now one engine, Prosser's algorithm with the argument prescan, one rescan and `#`'s spacing, which also closed four twin miscompiles §4.1 names) | Function-like macro calls whose arguments span lines (C11 6.10.3p10). `static_assert` and `_Static_assert` at file scope. Complete freestanding headers: `<stdint.h>`'s limits and its `INTn_C`/`UINTn_C` macros; `<stddef.h>`'s `NULL`, `offsetof`, `max_align_t` and `PTRDIFF_MAX` (`bcir_host_alloc.h` needs `max_align_t` and `offsetof`, §3.1); `<stdbool.h>`, `<limits.h>` and `<float.h>`; `<math.h>`'s `NAN` and `INFINITY`. | The serialization core: `bcir_asn1.c`, `bcir_binrec.c`, `bcir_encode.c`, `bcir_runtime.c`, `bcir_exec.c`, `bcir_control_plane.c` and `bcir_ai_kernels.c`'s portable path. It is also every program in these domains that includes a standard header. |
-| **CSUB-2** Table idioms (**in progress**: CSUB-2a landed 2026-11-14 and CSUB-2b 2026-11-15, §4.2; 25 of the 58 units compile clean) | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. Three more the ratchet found first in units the measurement had not reached: a member read through a local's address, `(&v)->m`, as a macro writes it (`bcir_kplan.c`); a row of a multi-dimensional array used as a value, `f(t[1])` of `fe t[4][10]` (`bcir_ed25519.c`); and the address-of, increment and assignment of an lvalue reached through a loaded pointer (`bcir_spm.c`, `bcir_decoder_gem.c`, both quarantine units). | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c` and `bcir_handoff.c`: the table-driven dispatch every codec and catalog reader is written in. |
+| **CSUB-2** Table idioms (**in progress**: CSUB-2a landed 2026-11-14, CSUB-2b and CSUB-2c's first slice 2026-11-15, §4.2; 27 of the 58 units compile clean) | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. Three more the ratchet found first in units the measurement had not reached: a member read through a local's address, `(&v)->m`, as a macro writes it (`bcir_kplan.c`); a row of a multi-dimensional array used as a value, `f(t[1])` of `fe t[4][10]` (`bcir_ed25519.c`); and the address-of, increment and assignment of an lvalue reached through a loaded pointer (`bcir_spm.c`, `bcir_decoder_gem.c`, both quarantine units). | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c` and `bcir_handoff.c`: the table-driven dispatch every codec and catalog reader is written in. |
 | **CSUB-3** C23 bits and checked arithmetic | `<stdbit.h>` (endian queries, bit width, leading and trailing zeros, population count) and `<stdckdint.h>` (`ckd_add`, `ckd_sub`, `ckd_mul`), each with its exact C23 semantics. The master roadmap lists both as near-term gaps (§4.1). One shared `bcir_bytes.h` built on them replaces the nine copies of the endian helpers, byte-identical. | Varints, bitmaps, length fields and every bounds check of the L3 kind ("bounds live where the resource commits") written as checked arithmetic rather than hand-rolled comparisons. |
 | **CSUB-4** The atomics API | `<stdatomic.h>`'s explicit-order calls: `atomic_load_explicit`, `atomic_store_explicit`, `atomic_fetch_add_explicit` and `atomic_compare_exchange_*_explicit`, with `memory_order`. They map onto the memory model the oracle already states (`lower.memory_model`) and the law rail's atomic orderings. | `bcir_ring.c` and the lock-free single-producer, single-consumer structures the AI system's services run on (`BCIR_AI_SYSTEM_ROADMAP.md` §5.2). |
 | **CSUB-5** A hosted profile | A declared hosted class, not part of the freestanding subset: `<stdio.h>` streams and file I/O under the injected-allocator memory class (`../languages/C_MEMORY_DISCIPLINE.md`). Memory mapping goes through a declared host interface. | The loaders `bcir_q8_model.c` and `bcir_llama.c`, and the quarantine's recovery |
-| **CSUB-6** AI numerics, at the source level | A bf16 storage type and `_Float16` with declared conversion semantics. `#pragma STDC FP_CONTRACT OFF`, so a kernel's no-contraction contract (M17) is stated in its source as well as its flags. C23 `unreachable()` and an assume form feeding verifier facts (the master roadmap's "verifier-fed assume"). | The scalar halves of the AI kernels. Threads, vector types and ISA intrinsics stay outside the subset under the fallback contract. The tensor pool and the AVX-512/AMX kernels are measured, parity-held runtime services, not verified-subset code. |
+| **CSUB-6** AI numerics, at the source level | A bf16 storage type and `_Float16` with declared conversion semantics. `#pragma STDC FP_CONTRACT OFF`, so a kernel's no-contraction contract (M17) is stated in its source as well as its flags. C23 `unreachable()` and an assume form feeding verifier facts (the master roadmap's "verifier-fed assume"). A call of more than 16 arguments: the claim graph's bound on a claim's reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS), which an attention kernel's workspace call passes with 18 (`bcir_decoder_train.c`). | The scalar halves of the AI kernels. Threads, vector types and ISA intrinsics stay outside the subset under the fallback contract. The tensor pool and the AVX-512/AMX kernels are measured, parity-held runtime services, not verified-subset code. |
 
 **Two things should not change:**
 - **R18 stays.** `bcir_per.c` should drop its one-level recursion: the length of an
@@ -251,8 +251,39 @@ an element's address through a loaded pointer (`&c->claims[v->claim_id]`).
 `bcir_ab_listing.c` and `bcir_emit.c` now stop at the record table: a pointer member read from an array element,
 `order[i].name` (CSUB-2c).
 
-**Next:** the record table (CSUB-2c), pointer-to-array members (CSUB-2d), and the remaining lvalue forms (CSUB-2e). Every first refusal the rung names in §3 and §3.1 is one of
-these.
+**CSUB-2c, first slice (2026-11-15): pointer members of array elements.**
+- **A pointer member of an array element is a value of its pointer type**: `order[i].name`, `d->notes[i].message`,
+  and `set->slots[i].name.s` at a nested member's depth. Each rail loads it as an element's member is loaded,
+  strided by the element. It is then compared, passed, subscripted, dereferenced and followed with `->`, stored and
+  stored through, as a plain struct's pointer member is. Both rails had refused it as a non-scalar element field.
+- **Stepping, and addresses.** An increment through one (`t[i].next->v++`) is lowered. The member's own address is
+  a `T **`, and the address of an object it reaches a `T *`. Stepping the member itself (`t[i].p++`) is refused
+  alike, as a plain struct's pointer member's step is.
+- **What stays refused.** A function-pointer, bit-field or struct member of an element. What C forbids after an
+  element's member is refused for C's reason on both rails: a subscript or `->` of a member that is no pointer, a
+  `.` of one that is, `->` through a pointer to no struct.
+- **What the witnesses found.** Five twin defects, three of them invalid C, which the digest cannot see because it
+  carries no declared type:
+  - `&s->name` of a `const char *` member was typed `int8_t **`, and `&s->pp` of a `T **` member `T **`;
+  - a function-pointer member of an element was loaded as an integer, then assigned to the function pointer, and
+    its address was typed an integer's;
+  - `&s.arr[i].in` of a struct member was taken, which the oracle refuses;
+  - `->` through a pointer to no struct was refused for the twin's own reason, not C's.
+
+  Each lowered form's emits are now also compiled strictly beside their source. The oracle, for its part, had
+  refused a subscript of a member array element's scalar member, `s.a[i].x[0]`, with its own limit's text before
+  C's reason.
+
+`bcir_ab_listing.c` and `bcir_provenance.c` now compile clean: 27 of the 58 units. `bcir_bpe.c`, `bcir_diag.c` and
+`bcir_emit.c` stop at an element's address through a loaded pointer (`&set->slots[j]`, `&d->fixits[i]`), a CSUB-2e
+form. `bcir_decoder_train.c` stops at a call of 18 arguments, past the claim graph's 16 reads, which CSUB-6's row
+now names.
+
+**Next:** the record table's struct members (`t[i].m = v`, the rest of CSUB-2c), pointer-to-array members
+(CSUB-2d), and the remaining lvalue forms (CSUB-2e). CSUB-2c's probes found two more of the last, on plain structs
+as on elements, which the oracle lowers and the twin refuses: an object of a struct element reached through a
+loaded pointer (`s->q[1].y--`, `&h->next[1]`, `(s->q[1].y = v)` as a value), and `->` through a dereferenced
+`T **`, `(*q)->v`. Every first refusal the rung names in §3 and §3.1 is one of these.
 
 ## 5. Subsystems
 

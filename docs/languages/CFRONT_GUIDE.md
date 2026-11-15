@@ -533,6 +533,9 @@ _mm_sfence();                      //                   store (release) fence ->
 - An untagged struct or union a block declaration defines -- `static const struct { uint16_t bit; uint16_t w; } t[]
   = {...};`, automatic or static, several declarators, a `for` declaration's. Each emit opens the function with a
   typedef of it, `typedef struct { ... } __bcir_anonN;`, and names the type by it (CSUB-2b).
+- A pointer member of an array element -- `order[i].name`, `d->notes[i].message`, `set->slots[i].name.s` -- as a
+  value of its pointer type: compared, passed, subscripted, dereferenced, followed with `->`, stored, and stored and
+  stepped through. Its address is a `T **` (CSUB-2c).
 
 ## Known limits
 
@@ -664,6 +667,10 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - A struct or union defined with a tag in a block (`a struct or union with a tag defined in a block is not
   supported`), and one defined anywhere but a declaration of objects -- a cast, `sizeof`, a parameter, a compound
   literal, `typeof` (`a struct or union defined outside a declaration of objects is not supported`; CSUB-2b).
+- An array element's pointer member stepped itself (`t[i].p++`), as a plain struct's (`s->p++`) is; and a
+  function-pointer, bit-field or struct member of an element (`array-of-structs non-scalar element field`; CSUB-2c).
+- An object of a struct element reached through a loaded pointer -- `s->q[1].y--`, `&h->next[1]` -- and `->`
+  through a dereferenced `T **`, `(*q)->v`: the oracle lowers them, the twin refuses them (CSUB-2e).
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
@@ -671,8 +678,8 @@ When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exac
 ran this compiler over the runtime's units. Its first rung, CSUB-1 (2026-11-11), closed the three gaps that blocked
 most of them: multi-line macro invocations, static assertions and the standard headers above. `bcir-cc` now
 compiled 21 of the runtime's 58 production units with R1-R18 clean, where it had compiled 4; CSUB-2a (2026-11-14)
-brought it to 22, and CSUB-2b's string tables (2026-11-15) to 25. The ratchet gate
-`tools/c/csub_ratchet.py` (the `csub_ratchet` section of `tools/c/check_runtime.sh`) holds each unit
+brought it to 22, CSUB-2b's string tables (2026-11-15) to 25, and CSUB-2c's pointer members of array elements to 27.
+The ratchet gate `tools/c/csub_ratchet.py` (the `csub_ratchet` section of `tools/c/check_runtime.sh`) holds each unit
 `runtime/c/MEMORY_CLASSIFICATION.txt` lists to its record in `runtime/c/csub_ratchet.json`: clean, or blocked with
 its first refusal, the construct it is about and the rung that lifts it. A unit added to the runtime is added to the
 record, or the gate fails. The audit's later rungs close the table idioms (CSUB-2) and the hosted profile (CSUB-5)
