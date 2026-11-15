@@ -3,10 +3,7 @@
   "about": "What bcir-cc (the C rail of the verified C compiler, default target x86_64-linux, -I runtime/c) makes of each production unit runtime/c/MEMORY_CLASSIFICATION.txt lists: clean (R1-R18 clean), or blocked, with its first refusal, the construct it is about and the CSUB rung that lifts it. Held exact by tools/c/csub_ratchet.py (docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md section 4).",
   "units": {
     "bcir_ab_listing.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: array-of-structs non-scalar element field",
-      "construct": "a pointer member read from an array element (`t[i].name`): the record table",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_ai_kernels.c": {
       "verdict": "clean"
@@ -37,8 +34,8 @@
     },
     "bcir_bpe.c": {
       "verdict": "blocked",
-      "blocker": "parse error: array-of-structs non-scalar element field",
-      "construct": "a struct-typed member of an array element, read or copied (`t[i].m.f`): the record table",
+      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
+      "construct": "an address-of an element of an array member reached through a loaded pointer, `&set->slots[j]`",
       "rung": "CSUB-2"
     },
     "bcir_bundle_cli.c": {
@@ -91,14 +88,14 @@
     },
     "bcir_decoder_train.c": {
       "verdict": "blocked",
-      "blocker": "parse error: array-of-structs non-scalar element field",
-      "construct": "a struct-typed member of an array element, read or copied (`t[i].m.f`): the record table",
-      "rung": "CSUB-2"
+      "blocker": "parse error: a call of more than 16 arguments is not supported",
+      "construct": "a call of 18 arguments (`bcir_tensor_attention_backward_contract_variant_ws_pool`), past the claim graph's 16 reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS); then threads, SIMD and bf16",
+      "rung": "CSUB-6"
     },
     "bcir_diag.c": {
       "verdict": "blocked",
-      "blocker": "parse error: array-of-structs non-scalar element field",
-      "construct": "a struct-typed member of an array element, read or copied (`t[i].m.f`): the record table",
+      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
+      "construct": "an address-of an element of an array member reached through a loaded pointer, `&d->fixits[i]`",
       "rung": "CSUB-2"
     },
     "bcir_ed25519.c": {
@@ -109,8 +106,8 @@
     },
     "bcir_emit.c": {
       "verdict": "blocked",
-      "blocker": "parse error: array-of-structs non-scalar element field",
-      "construct": "a pointer member read from an array element (`t[i].name`): the record table",
+      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
+      "construct": "an address-of an element of an array member reached through a loaded pointer, `&b->t.constraints[b->constraint_count]`",
       "rung": "CSUB-2"
     },
     "bcir_encode.c": {
@@ -186,10 +183,7 @@
       "verdict": "clean"
     },
     "bcir_provenance.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: array-of-structs non-scalar element field",
-      "construct": "a struct-typed member of an array element, read or copied (`t[i].m.f`): the record table",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_q4_kernel.c": {
       "verdict": "clean"

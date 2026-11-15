@@ -2077,11 +2077,33 @@ class _FuncLowerer:
         elem = self._complete(el.ct)
         agg, ftype, off, fbo, fbw = elem, elem, 0, 0, 0
         for name in reversed(hops):  # the element's struct, then each nested struct/union reached
+            # `a[i].p.k`: `.` of a pointer member (CSUB-2)
+            if ftype.kind not in ("struct", "union"):
+                raise CLowerError(DOT_NOT)
             agg = self._complete(ftype)
             ftype, foff, fbo, fbw = self._field(agg, name)
             ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
             off += foff
         return el, elem, ftype, off, fbo, fbw, agg
+
+    @staticmethod
+    def _aos_leaf_lv(aos: tuple) -> "_LV":
+        """The member `_aos_member` found as an lvalue: the element's storage at its runtime index, striding by the
+        element, at the member's offset in it -- what `a[i].m.k` reads and writes, and, a pointer member, the slot a
+        subscript of it loads first (`a[i].p[j]`; CSUB-2)."""
+        el, elem, ftype, foff, fbo, fbw, agg = aos
+        return _LV(
+            "mem",
+            el.rid,
+            ftype,
+            idx=el.idx,
+            byte_off=el.byte_off + foff,
+            bit_off=fbo,
+            bit_width=fbw,
+            member=True,
+            stride=elem.size,
+            packed=agg.packed,
+        )
 
     # --- lvalue resolution ---
     def _lvalue(self, node) -> "_LV":
@@ -2122,29 +2144,41 @@ class _FuncLowerer:
                 # element at `&a + offsetof(s.m) + (i*K + lin)*es`, K = the element struct's size in elements
                 # (a struct whose size is no multiple of the element size is refused)
                 aos = self._aos_member(n)
-                if aos is None or aos[0].member:
+                if aos is not None and aos[2].kind not in ("array", "pointer"):
+                    # `a[i].v[j]`, `s.a[i].v[j]` of a scalar, bit-field or struct member: C's reason first, the
+                    # element's own form after (CSUB-2; CF-FPTAB)
+                    raise CLowerError(SUBSCRIPT_NOT)
+                ptr_leaf = aos is not None and aos[2].kind == "pointer" and not aos[5]
+                if not ptr_leaf and (aos is None or aos[0].member):
                     raise CLowerError(
                         "a member array of a subscripted element that is not a plain array-of-structs element"
                     )
-                el, agg, ftype, moff = aos[:4]
-                dims, t = [], ftype
-                while t.kind == "array":
-                    dims.append(t.count)
-                    t = t.of if t.of is not None else scalar("uint32_t")
-                if not dims or t.kind != "scalar" or len(dims) > 3:
-                    raise CLowerError(
-                        f"a subscript of the array-of-structs member '{n.field}' is not supported"
-                    )
-                if len(idx_nodes) != len(dims):
-                    raise CLowerError(
-                        f"partial indexing of a struct member array ('{n.field}') is not yet supported"
-                    )
-                if agg.size % t.size:
-                    raise CLowerError(
-                        "an array-of-structs member array whose element does not divide the struct"
-                    )
-                base_rid, base_ct, byte_off = el.rid, ftype, el.byte_off + moff
-                mem_shape, mem_elem, aos_idx, aos_k = tuple(dims), t, el.idx, agg.size // t.size
+                if ptr_leaf:
+                    # `a[i].p[j]` -- a POINTER member of an array-of-structs element subscripted (CSUB-2): load the
+                    # pointer, strided by the element as `a[i].p` reads it, then index what it holds, as `s->p[j]`
+                    # does -- no member offset left in the access (the twin's `index_field_value`)
+                    base_rid = self._read(self._aos_leaf_lv(aos))
+                    base_ct, byte_off, ptr_member = aos[2], 0, True
+                else:
+                    el, agg, ftype, moff = aos[:4]
+                    dims, t = [], ftype
+                    while t.kind == "array":
+                        dims.append(t.count)
+                        t = t.of if t.of is not None else scalar("uint32_t")
+                    if t.kind != "scalar" or len(dims) > 3:
+                        raise CLowerError(
+                            f"a subscript of the array-of-structs member '{n.field}' is not supported"
+                        )
+                    if len(idx_nodes) != len(dims):
+                        raise CLowerError(
+                            f"partial indexing of a struct member array ('{n.field}') is not yet supported"
+                        )
+                    if agg.size % t.size:
+                        raise CLowerError(
+                            "an array-of-structs member array whose element does not divide the struct"
+                        )
+                    base_rid, base_ct, byte_off = el.rid, ftype, el.byte_off + moff
+                    mem_shape, mem_elem, aos_idx, aos_k = tuple(dims), t, el.idx, agg.size // t.size
             elif isinstance(n, cast.Member):
                 # `s.arr[i]` / `s.m[i][j]` -- indexing a struct *member* array. The base is the enclosing
                 # struct; the member's byte offset rides in the access imm beside the element size, and
@@ -2290,23 +2324,17 @@ class _FuncLowerer:
             # member's flattened offset in the element
             aos = self._aos_member(node)
             if aos is not None:
-                el, elem, ftype, foff, fbo, fbw, agg = aos
-                if fbw or ftype.kind != "scalar":  # a bitfield / struct / array / pointer element
-                    raise CLowerError(  # field is a follow-on -- both rails fall back
+                _el, _elem, ftype, _foff, _fbo, fbw, _agg = aos
+                # a scalar or a pointer (CSUB-2): a bitfield / struct / array element field is a follow-on
+                if fbw or ftype.kind not in ("scalar", "pointer"):
+                    raise CLowerError(  # both rails refuse it
                         f"array-of-structs non-scalar element field ('.{node.field}') is not yet supported"
                     )
-                return _LV(
-                    "mem",
-                    el.rid,
-                    ftype,
-                    idx=el.idx,
-                    byte_off=el.byte_off + foff,
-                    bit_off=fbo,
-                    bit_width=fbw,
-                    member=True,
-                    stride=elem.size,
-                    packed=agg.packed,
-                )
+                return self._aos_leaf_lv(aos)
+            if self._aos_rooted(node.base):
+                # `a[i].m->k`: the operand of `->` an element's member, typed before it is lowered, so a member
+                # that is no pointer to a struct is refused for C's reason (CSUB-2; CF-FPTAB)
+                self._member_agg(self._static_type(node.base), node.arrow)
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = self._complete(self._member_agg(base_ct, node.arrow))
             ftype, byte_off, bit_off, bit_w = self._field(agg, node.field)
@@ -2647,6 +2675,14 @@ class _FuncLowerer:
         if isinstance(node, cast.StringLit):  # "abc"[i] -> index the anonymous global
             rid = self._string_ptr(node.value)
             return rid, self.rtypes[rid], 0
+        if isinstance(node, cast.Member) and self._aos_rooted(node):
+            # `a[i].p` used as a base (`a[i].p->m`, `*a[i].p`): a POINTER member of an array-of-structs element,
+            # loaded, strided by the element, as `a[i].p` reads it -- the loaded pointer is the base (CSUB-2; the
+            # twin's `index_field_value`). Any other member of an element is no base here, as before.
+            aos = self._aos_member(node)
+            if aos is None or aos[2].kind != "pointer" or aos[5]:
+                raise CLowerError("unsupported base expression Index")
+            return self._read(self._aos_leaf_lv(aos)), aos[2], 0
         if isinstance(node, cast.Member):
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = self._complete(self._member_agg(base_ct, node.arrow))

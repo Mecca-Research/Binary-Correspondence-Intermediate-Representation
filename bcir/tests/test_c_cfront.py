@@ -316,6 +316,8 @@ _PTRVALUE = [
     "cfront_csub2_untagged.c",  # untagged structs and unions a block declaration defines: static and automatic
     #   tables, a nested untagged member, several declarators, `typeof` and assignment copies, a `for` declaration's
     #   (CSUB-2b)
+    "cfront_csub2_records.c",  # pointer members of array elements, at a nested member's depth, read, subscripted,
+    #   dereferenced, followed with `->`, stored and stored through (CSUB-2c)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -9215,7 +9217,7 @@ def test_postfix_after_parentheses_runs_as_the_original_on_both_rails():
 
 
 # CF-NESTMEM, CF-PAREN: what both rails still refuse, each for the reason the form witnesses -- a member of an
-# array element that is no scalar (a bitfield, a struct, a pointer, an array used as a value) and a member
+# array element that is no scalar (a bitfield, a struct, a function pointer, an array used as a value) and a member
 # array of a member-array element, whatever the nesting; and a parenthesized DECLARATOR, which neither rail
 # spells: the twin's CF-PAREN rewrite must leave a declaration's parentheses -- after its type, a `*`, a
 # declarator comma, in a for-init or a statement expression, `T (*p)[N]` -- as they are.
@@ -9233,10 +9235,10 @@ _PAREN_NEST_REFUSED = (
         "array-of-structs non-scalar element field ('.b')",
         "array-of-structs non-scalar element field",
     ),
-    (
-        "struct pt { uint16_t x, y; }; struct hold { uint32_t k; struct pt *p; }; struct seg { struct hold h; };\n"
-        "uint32_t f(uint32_t s) { struct pt q = {1, 2}; struct seg g[2] = {0}; g[1].h.p = &q; return s; }",
-        "array-of-structs non-scalar element field ('.p')",
+    (  # a function-pointer member (a pointer member lowers since CSUB-2c, `g[1].h.p = &q`)
+        "struct hold { uint32_t k; uint32_t (*fn)(uint32_t); }; struct seg { struct hold h; };\n"
+        "uint32_t f(uint32_t s) { struct seg g[2] = {0}; g[1].h.fn = 0; return s; }",
+        "array-of-structs non-scalar element field ('.fn')",
         "array-of-structs non-scalar element field",
     ),
     (
@@ -9288,10 +9290,10 @@ _PAREN_NEST_REFUSED = (
 
 def test_paren_and_nested_member_refusals_on_both_rails():
     """CF-NESTMEM, CF-PAREN: every form of `_PAREN_NEST_REFUSED` is refused by both rails for the reason it
-    witnesses -- a non-scalar member of an array element at any nesting (a bitfield, a struct, a pointer, an
-    array used as a value), a member array of a member-array element, a parenthesized declarator (after the
-    type, a `*`, a declarator comma, in a for-init, in a statement expression, `T (*p)[N]` for a local) -- and
-    the twin exits with its refusal, never a crash or a rewritten declaration."""
+    witnesses -- a non-scalar member of an array element at any nesting (a bitfield, a struct, a function
+    pointer, an array used as a value), a member array of a member-array element, a parenthesized declarator
+    (after the type, a `*`, a declarator comma, in a for-init, in a statement expression, `T (*p)[N]` for a
+    local) -- and the twin exits with its refusal, never a crash or a rewritten declaration."""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
 
@@ -10566,6 +10568,176 @@ def test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_bo
             )
         if exe is not None:
             _linkable_c11_runs_as_the_original(d, "cfront_csub2_untagged.c", "csub2_untagged")
+
+
+# CSUB-2c: a pointer member of an array element -- read as a value of its pointer type, subscripted, dereferenced,
+# followed with `->`, stored and stored through, at any depth of the element's nested members
+_CSUB2_PTRLEAF_LOWERED = (
+    "struct kw { const char *text; uint32_t id; };\n"
+    'static const struct kw g_kw[] = {{"if", 1u}, {"else", 2u}};\n'
+    "uint32_t f(uint32_t k) { const char *t = g_kw[k & 1u].text; return (uint32_t)(uint8_t)t[0] + g_kw[k & 1u].id; }",
+    "struct note { uint32_t code; const char *message; }; struct diag { struct note notes[4]; uint32_t n; };\n"
+    "uint32_t f(const struct diag *d, uint32_t i) {"
+    " return d->notes[i & 3u].message ? (uint32_t)(uint8_t)d->notes[i & 3u].message[0] : 0u; }",
+    "struct str { const char *s; size_t n; }; struct slot { struct str name; uint32_t id; };\n"
+    "uint32_t f(const struct slot *t, uint32_t i) { return t[i].name.s ? (uint32_t)(uint8_t)t[i].name.s[0] : 0u; }",
+    "struct n { struct n *next; uint32_t v; };\n"
+    "uint32_t f(struct n *t, uint32_t i, uint32_t v) { t[i].next->v = v; return t[i].next ? t[i].next->v : 0u; }",
+    "struct e { uint32_t *p; };\n"
+    "uint32_t f(struct e *t, uint32_t i, uint32_t v) { t[i].p[1] = v; *t[i].p += v; return *t[i].p + t[i].p[1]; }",
+    "struct pnl { const uint32_t *a; };\n"
+    "uint32_t f(const uint32_t *panel) { static struct pnl pre[2]; pre[0].a = panel; pre[1].a = pre[0].a + 1;"
+    " return pre[1].a[0]; }",
+    # stepped through; the member's address a `T **`, an object's through it a `T *`
+    "struct n { struct n *next; uint32_t v; }; struct e { uint32_t *p; struct n *l; const char *name; };\n"
+    "uint32_t f(struct e *t, uint32_t i) { t[i].p[0]++; ++t[i].l->v; uint32_t **q = &t[i].p;"
+    " const char **nm = &t[i].name; uint32_t *r = &t[i].p[1]; uint32_t *w = &t[i].l->v;"
+    " return **q + *r + *w + (uint32_t)(uint8_t)(*nm)[0]; }",
+    # ... of a member array's element: stored, stepped through, addressed
+    "struct n { struct n *next; uint32_t v; }; struct b { uint32_t *cell; struct n *head; };"
+    " struct t { struct b b[2]; };\n"
+    "uint32_t f(struct t *s, uint32_t i, uint32_t v) { s->b[i & 1u].cell[1] = v; s->b[i & 1u].head->v += v;"
+    " s->b[i & 1u].cell[0]++; uint32_t *q = &s->b[i & 1u].cell[1]; uint32_t **pc = &s->b[0].cell;"
+    " return *q + **pc + --s->b[1].head->v; }",
+    # a plain struct's pointer members' addresses, which the twin had typed `int8_t **` and `uint32_t **`
+    "struct e { const char *name; uint32_t **pp; };\n"
+    "uint32_t f(struct e *t) { const char **n = &t->name; uint32_t ***q = &t->pp;"
+    " return (uint32_t)(uint8_t)(*n)[0] + ***q; }",
+)
+# ... and the forms refused: (unit, the reason's name in `lower`, or the text both rails' reasons begin with)
+_CSUB2_PTRLEAF_REFUSED = (
+    (
+        "struct e { uint32_t (*fn)(uint32_t); };\n"
+        "uint32_t f(const struct e *t, uint32_t i) { uint32_t (*g)(uint32_t) = t[i].fn; return g(i); }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct e { uint32_t a : 3; };\nuint32_t f(const struct e *t, uint32_t i) { return t[i].a; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct p { uint32_t x; }; struct e { struct p *q; };\n"
+        "uint32_t f(const struct e *t, uint32_t i) { return t[i].q.x; }",
+        "DOT_NOT",
+    ),
+    (
+        "struct e { uint32_t v; };\nuint32_t f(const struct e *t, uint32_t i) { return t[i].v[0]; }",
+        "SUBSCRIPT_NOT",
+    ),
+    (
+        "struct e { uint32_t v; };\nuint32_t f(const struct e *t, uint32_t i) { return t[i].v->x; }",
+        "ARROW_NOT",
+    ),
+    (
+        "struct e { uint32_t *p; };\nuint32_t f(const struct e *t, uint32_t i) { return t[i].p->x; }",
+        "ARROW_NOT",
+    ),
+    ("struct e { uint32_t *p; };\nuint32_t f(const struct e *s) { return s->p->x; }", "ARROW_NOT"),
+    # the pointer member itself stepped, as a plain struct's (`s->p++`) is refused (the twin had stepped it)
+    (
+        "struct e { uint32_t *p; };\nuint32_t f(struct e *t, uint32_t i) { t[i].p++; return *t[i].p; }",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+    (
+        "struct b { uint32_t *cell; }; struct t { struct b b[2]; };\n"
+        "uint32_t f(struct t *s, uint32_t i) { uint32_t *q = --s->b[i & 1u].cell; return *q; }",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+    # a function-pointer or struct member's address, which the twin had typed an integer's or had taken
+    (
+        "struct o { uint32_t (*fn)(uint32_t); }; struct t { struct o a[2]; };\n"
+        "uint32_t f(struct t *s, uint32_t i) { uint32_t (**q)(uint32_t) = &s->a[i & 1u].fn; return (*q)(i); }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct in { uint32_t x; }; struct o { struct in in; }; struct t { struct o a[2]; };\n"
+        "uint32_t f(struct t *s, uint32_t i) { struct in *q = &s->a[i & 1u].in; return q->x; }",
+        "array-of-structs non-scalar element field",
+    ),
+    # C's reason before the element's own form, after a member array's element too
+    (
+        "struct o { uint32_t x; }; struct t { struct o a[2]; };\n"
+        "uint32_t f(struct t *s, uint32_t i) { uint32_t *q = &s->a[i & 1u].x[0]; return *q; }",
+        "SUBSCRIPT_NOT",
+    ),
+    (
+        "struct p { uint32_t x; }; struct e { struct p *q; };\n"
+        "uint32_t f(struct e *t, uint32_t i) { uint32_t *r = &t[i].q.x; return *r; }",
+        "DOT_NOT",
+    ),
+)
+
+
+def _emits_compile_strictly(d: str, src: str, emits: dict) -> None:
+    """Each rail's emit beside the source it lowered, as C11, an incompatible pointer or an integer made a pointer an
+    error: a declared type is no part of the digest, so a temp typed wrongly passes it (CSUB-2)."""
+    if not _CC:
+        return
+    for rail, emit in emits.items():
+        path = os.path.join(d, f"strict_{rail}.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(
+                '#include <string.h>\n#include "bcir_quarantine.h"\n' + src + "\n" + emit + "\n"
+            )
+        run = subprocess.run(
+            [_CC, "-std=c11", "-fsyntax-only", "-I", _C, "-Werror=incompatible-pointer-types", "-Werror=int-conversion",
+             path],
+            capture_output=True, text=True,
+        )  # fmt: skip
+        assert run.returncode == 0, (rail, src[-300:], run.stderr[-600:])
+
+
+def test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2c. A pointer member of an array element -- `order[i].name`, `d->notes[i].message`, `t[i].name.s` at a
+    nested member's depth -- is a value of its pointer type on both rails, to one digest: loaded as an element's member
+    is, strided by the element, then compared, passed, subscripted, dereferenced, followed with `->`, stored and stored
+    through, as a plain struct's pointer member is. Both had refused it ("non-scalar element field"), which was the
+    first refusal of `bcir_ab_listing.c`, `bcir_emit.c`, `bcir_diag.c`, `bcir_provenance.c` and `bcir_bpe.c`. An
+    inc/dec through one (`t[i].next->v++`) is lowered, its address is a `T **` and an object's it reaches a `T *`. The
+    member itself stepped (`t[i].p++`) is refused alike, as a plain struct's pointer member's step is; so is a
+    function-pointer, bit-field or struct member of an element; and what C forbids after one -- a subscript or `->` of
+    a member that is no pointer, a `.` of one that is, `->` through a pointer to no struct -- is refused for C's reason
+    on both. Each was a twin defect: it had said `member access through a pointer to a non-struct`; had loaded a
+    function-pointer member as an integer it assigned to the function pointer, and had typed its address an integer's;
+    had taken `&s->a[i].in`, which the oracle refuses; had refused `t[i].p[0]++` for a missing `=`; and had typed
+    `&t->name` of a `const char *` member an `int8_t **` and `&t->pp` of a `T **` one a `T **` -- invalid C the digest,
+    which carries no declared type, cannot see, so each lowered form's emits are also compiled, strictly, beside their
+    source (`_emits_compile_strictly`). `cfront_csub2_records.c` runs as
+    the original on each rail's emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the
+    original does."""
+    from bcir.frontends.cfront import lower as low
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2_PTRLEAF_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, name) in enumerate(_CSUB2_PTRLEAF_REFUSED):
+            why = getattr(low, name, name)
+            src = head + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_records.c", "csub2_records")
 
 
 def _linkable_c11_runs_as_the_original(d: str, fx: str, entry: str) -> None:

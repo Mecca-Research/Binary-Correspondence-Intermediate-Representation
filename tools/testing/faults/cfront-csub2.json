@@ -6,7 +6,8 @@
   "bcir.tests.test_c_cfront:_CC",
   "bcir.tests.test_c_cfront:test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
   "bcir.tests.test_c_cfront:test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
-  "bcir.tests.test_c_cfront:test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails"
+  "bcir.tests.test_c_cfront:test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails"
  ],
  "faults": [
   {
@@ -267,6 +268,230 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "      else if(is_arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`",
    "new": "      else if(arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C1 oracle: a pointer member of an element subscripted as a member array (`t[i].p[1]` refused)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "ptr_leaf = aos is not None and aos[2].kind == \"pointer\" and not aos[5]",
+   "new": "ptr_leaf = False"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C2 oracle: an element's pointer member refused as a non-scalar field again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "if fbw or ftype.kind not in (\"scalar\", \"pointer\"):",
+   "new": "if fbw or ftype.kind != \"scalar\":"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C3 oracle: an element's pointer member no base of `->` or `*` (`t[i].next->v`)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(node, cast.Member) and self._aos_rooted(node):\n",
+   "new": "        if False:\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C4 oracle: `.` of an element's pointer member walked as a struct's (`t[i].q.x`)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if ftype.kind not in (\"struct\", \"union\"):\n                raise CLowerError(DOT_NOT)\n",
+   "new": "            if False:\n                raise CLowerError(DOT_NOT)\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C5 oracle: a subscript of an element's scalar member refused for the element's form, not C's",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                if aos is not None and aos[2].kind not in (\"array\", \"pointer\"):\n",
+   "new": "                if False:\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C6 oracle: `->` of an element's member that is no pointer, unchecked before lowering (`t[i].v->x`)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                self._member_agg(self._static_type(node.base), node.arrow)\n",
+   "new": "                pass\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C7 oracle: an element's member strided by the member, not the element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            bit_width=fbw,\n            member=True,\n            stride=elem.size,\n",
+   "new": "            bit_width=fbw,\n            member=True,\n            stride=ftype.size,\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C8 twin: an element's pointer member refused as a non-scalar field again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "(s.fp_sig && !s.is_ptr)){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }",
+   "new": "s.is_ptr){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C9 twin: an element's function-pointer member loaded as an integer",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "||(s.fp_sig && !s.is_ptr)){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }",
+   "new": "){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C10 twin: `a[i].p` loaded into an integer temp",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub):",
+   "new": "static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {\n  uint32_t t="
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C11 twin: `s.arr[i].p` loaded into an integer temp",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub):",
+   "new": "static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {\n  uint32_t t="
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C12 twin: a subscript of an element's member that is no pointer, unrefused (`t[i].v[0]`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!sub->is_ptr && is(c,\"[\")){ fail(c,CC_SUBSCRIPT_NOT); return 1; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C13 twin: `->` of an element's member that is no pointer, unrefused (`t[i].v->x`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!sub->is_ptr && is(c,\"->\")){ fail(c,CC_ARROW_NOT); return 1; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C14 twin: `.` of an element's pointer member, unrefused (`t[i].q.x`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(sub->is_ptr && is(c,\".\")){ fail(c,CC_DOT_NOT); return 1; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C15 twin: `a[i].p` not walked on through (`t[i].next->v`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  uint32_t t=emit_index_field(c,base,idx,sub);\n  if(sub->is_ptr && !c->failed && (is(c,\"->\")||is(c,\"[\"))) return postfix_ptr_chain(c,t,sub->ptee_sidx,*sub);\n",
+   "new": "  uint32_t t=emit_index_field(c,base,idx,sub);\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C16 twin: `s.arr[i].p` not walked on through (`d->notes[i].message[0]`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  uint32_t t=emit_member_index_field(c,base,arr,idx,sub);\n  if(sub->is_ptr && !c->failed && (is(c,\"->\")||is(c,\"[\"))) return postfix_ptr_chain(c,t,sub->ptee_sidx,*sub);\n",
+   "new": "  uint32_t t=emit_member_index_field(c,base,arr,idx,sub);\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C17 twin: `->` through a pointer to no struct refused for the twin's own reason (`s->p->x`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "if(psidx<0){ fail(c,is(c,\".\")?CC_DOT_NOT:CC_ARROW_NOT); return ptr; }",
+   "new": "if(psidx<0){ fail(c,\"member access through a pointer to a non-struct\"); return ptr; }"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C18 twin: `a[i].p[j]++;` taken as a store through the member (no `=` asked for)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(member_is_store(c,c->i)){\n            uint32_t ptr=emit_index_field(c,v,idx,&sub);\n",
+   "new": "          if(1){\n            uint32_t ptr=emit_index_field(c,v,idx,&sub);\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C19 twin: `s.arr[i].p[j] = v` not stored through the member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(soa && sub.is_ptr && (is(c,\"->\")||is(c,\"[\"))){",
+   "new": "        if(0 && soa && sub.is_ptr && (is(c,\"->\")||is(c,\"[\"))){"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C20 twin: `t[i].p++` -- the pointer member itself -- stepped as a scalar",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(got && sub.is_ptr){                                 /* `a[i].p->v++`",
+   "new": "    if(got && sub.is_ptr && (is(c,\"->\")||is(c,\"[\"))){                                 /* `a[i].p->v++`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C21 twin: an inc/dec through an element's pointer member not stepped (`t[i].p[0]++`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)) return 0;\n  *out=plv_incdec(c,&lv,prefix,ch); return 1;\n}\n",
+   "new": "  if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)) return 0;\n  return 0;\n}\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C22 twin: an inc/dec through a member array element's pointer member not dispatched (`s->b[i].cell[0]++`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(soa && sub.is_ptr){                              /* `s.arr[i].p->v++`",
+   "new": "      if(0){                              /* `s.arr[i].p->v++`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C23 twin: `&t->name` of a `const char *` member typed `int8_t **` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    tr->is_plain_char=(uint8_t)(mf->ptee_plain_char?1:0);\n    if(mf->ptee_sidx>=0)",
+   "new": "    if(mf->ptee_sidx>=0)"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C24 twin: `&t->pp` of a `T **` member typed `T **` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    tr->ptr_depth=(uint8_t)((mf->ptee_depth>0?mf->ptee_depth:1)+1);\n    tr->is_atomic",
+   "new": "    tr->ptr_depth=2;\n    tr->is_atomic"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C25 twin: `&a[i].p[j]` not taken through the member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(sub.is_ptr && (is(c,\"->\")||is(c,\"[\")))   /* `&a[i].p[j]`",
+   "new": "            if(0)   /* `&a[i].p[j]`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C26 twin: `&s.arr[i].p[j]` not taken through the member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "              if(ef.is_ptr && !ef.fp_sig && (is(c,\"->\")||is(c,\"[\")))",
+   "new": "              if(0 && ef.is_ptr && !ef.fp_sig && (is(c,\"->\")||is(c,\"[\")))"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C27 twin: `&a[i].p` typed an integer's address",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(sub.is_ptr){                        /* `&a[i].p`: a `T **` (CSUB-2) */",
+   "new": "            if(0){                        /* `&a[i].p`: a `T **` (CSUB-2) */"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C28 twin: `&s.arr[i].p` refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "              if(ef.is_ptr){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */",
+   "new": "              if(0){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C29 twin: `&s.arr[i].in` of a struct member taken, which the oracle refuses",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)||ef.sidx>=0){",
+   "new": "              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)){"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C30 twin: `&s.arr[i].x[0]` refused for the twin's own reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "              if(!ef.bit_w && !farr(&ef) && !ef.fp_sig && elem_leaf_refused(c,&ef)) return 0;   /* for C's reason */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C31 twin: `--s.arr[i].p` -- a member array element's pointer member itself -- stepped as a scalar",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(soa && sub.is_ptr){                              /* `s.arr[i].p->v++`",
+   "new": "      if(soa && sub.is_ptr && (is(c,\"->\")||is(c,\"[\"))){                              /* `s.arr[i].p->v++`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C32 twin: `&a[i].q.x` refused for the twin's own reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(elem_leaf_refused(c,&sub)) return 0;     /* `&a[i].v[0]`, `&a[i].p.x`: for C's reason (CF-FPTAB) */\n",
+   "new": ""
   }
  ]
 }
