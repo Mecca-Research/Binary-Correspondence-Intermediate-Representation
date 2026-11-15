@@ -313,6 +313,9 @@ _PTRVALUE = [
     #   each object's address showing its alignment kept by the emit (CSUB-2a)
     "cfront_csub2_strtab.c",  # string literals in block-scope static tables: names, escapes, pieces, records by
     #   braces, elision and designators, scalar, thread-local and union statics (CSUB-2b)
+    "cfront_csub2_untagged.c",  # untagged structs and unions a block declaration defines: static and automatic
+    #   tables, a nested untagged member, several declarators, `typeof` and assignment copies, a `for` declaration's
+    #   (CSUB-2b)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10462,25 +10465,126 @@ def test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails(
                 assert cr.returncode != 0, (body, "Clang accepts what C forbids")
         if exe is None:
             return
-        fx = "cfront_csub2_strtab.c"
-        src = open(os.path.join(_C, fx), encoding="utf-8").read()
-        r = compile_unit(src, check_clang=False)
-        driver = (
-            "#include <stdio.h>\nint main(void) {\n  for (uint32_t x = 0; x < 9u; x++)\n"
-            '    for (uint32_t y = 0; y < 9u; y++) printf("%u\\n", (unsigned)csub2_strtab(x * 977u, y * 31u + x));\n'
-            "  return 0;\n}\n"
-        )
-        quarantine = ("-I", _C, os.path.join(_C, "bcir_quarantine.c"))
-        compilers = [
-            c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c
-        ]
-        for cc in compilers:
-            want = _build_c11_run(d, cc, "original", f"{src}\n{driver}", ())
-            for rail, linkable in _linkable_artifacts(fx, r):
-                got = _build_c11_run(d, cc, f"linkable_{rail}", f"{linkable}\n{driver}", quarantine)
-                assert want and got == want, (
-                    f"{fx}: the {rail}'s linkable artifact under {cc} -std=c11"
-                )
+        _linkable_c11_runs_as_the_original(d, "cfront_csub2_strtab.c", "csub2_strtab")
+
+
+# CSUB-2b: an untagged struct or union a block declaration defines -- (unit, what both rails' emits spell). Each emit
+# opens the function with the type's typedef, its members as the source spells them, and names the type by it
+_CSUB2_AGG_LOWERED = (
+    (
+        "uint32_t f(uint32_t k) { static const struct { uint16_t bit; uint16_t w; } t[] = {{1u, 3u}, {2u, 5u}};"
+        " return t[k & 1u].w; }",
+        ("typedef struct { uint16_t bit ; uint16_t w ; } __bcir_anon", "{{1u, 3u}, {2u, 5u}}"),
+    ),
+    (
+        "uint32_t f(uint32_t k) { union { uint32_t w; uint8_t b[4]; } u; u.w = k; return u.b[0]; }",
+        ("typedef union { uint32_t w ; uint8_t b [ 4 ] ; } __bcir_anon",),
+    ),
+    (
+        "uint32_t f(uint32_t k) { struct { struct { uint32_t a; } in; uint32_t b; } x = {{k}, 2u}, *p = &x;"
+        " __typeof__(x) y = x; return y.in.a + p->b; }",
+        ("typedef struct { struct { uint32_t a ; } in ; uint32_t b ; } __bcir_anon",),
+    ),
+    (
+        "uint32_t f(uint32_t k) { for (struct { uint32_t i, n; } s = {0u, k & 7u}; s.i < s.n; s.i++) k += s.i;"
+        " return k; }",
+        ("typedef struct { uint32_t i , n ; } __bcir_anon",),
+    ),
+)
+# ... and the forms refused: (unit, the reason's name in `lower`)
+_CSUB2_AGG_REFUSED = (
+    (
+        "uint32_t f(uint32_t k) { struct t { uint32_t a; } x = {k}; return x.a; }",
+        "AGG_BLOCK_TAGGED",
+    ),
+    (
+        "uint32_t f(uint32_t k) { static const union u { uint32_t a; } x[] = {{1u}}; return x[0].a + k; }",
+        "AGG_BLOCK_TAGGED",
+    ),
+    ("uint32_t f(void) { return (uint32_t)sizeof(struct { uint32_t a; }); }", "AGG_TYPE_NAME"),
+    ("uint32_t f(void *p) { return ((struct { uint32_t a; } *)p)->a; }", "AGG_TYPE_NAME"),
+    ("uint32_t f(struct { uint32_t a; } *p) { return p->a; }", "AGG_TYPE_NAME"),
+    ("uint32_t f(uint32_t k) { return (struct { uint32_t a; }){k}.a; }", "AGG_TYPE_NAME"),
+    (
+        "uint32_t f(uint32_t k) { __typeof__(struct { uint32_t a; }) x = {k}; return x.a; }",
+        "AGG_TYPE_NAME",
+    ),
+    ("uint32_t f(uint32_t k) { _Atomic(struct { uint32_t a; }) x; return k; }", "AGG_TYPE_NAME"),
+    (
+        "struct s { const struct { uint32_t a; } m; };\nuint32_t f(uint32_t k) { return k; }",
+        "AGG_TYPE_NAME",
+    ),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(16) struct { uint32_t a; } x = {k}; return x.a; }",
+        "ALIGN_AGG",
+    ),
+)
+
+
+def test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2b. An untagged struct or union a block declaration defines, `static const struct { ... } t[] = {...}` --
+    static or automatic, a union, one holding an untagged member, several declarators off one definition, a `for`
+    declaration's -- lowers on both rails to one digest. Nothing else can name its type (C11 6.7.2.3p6), so each emit
+    opens the function with a typedef of it, its members as the source spells them, under a name reserved to the
+    implementation, `__bcir_anonN`, and names every object, temp and copy of the type by it. A tag defined in a block
+    is refused alike (`AGG_BLOCK_TAGGED`), and so is a struct or union defined anywhere else a type is named -- a cast,
+    `sizeof`, a parameter, a compound literal, `typeof`, `_Atomic(...)`, a member's qualified type (`AGG_TYPE_NAME`).
+    `cfront_csub2_untagged.c` runs as the original on each rail's emit (`_ABI`), and each rail's linkable artifact of
+    it, built as C11, returns what the original does."""
+    from bcir.frontends.cfront import lower as low
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, spelled) in enumerate(_CSUB2_AGG_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            text = "\n".join(r.emitted.values())
+            assert all(a in text for a in spelled) and "$anon" not in text, (body, text[-700:])
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            assert all(a in emit for a in spelled) and "$anon" not in emit, (body, emit[-700:])
+        for n, (body, name) in enumerate(_CSUB2_AGG_REFUSED):
+            why = getattr(low, name)
+            src = head + body + "\n"
+            assert _oracle_refusal(src) == why, (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_untagged.c", "csub2_untagged")
+
+
+def _linkable_c11_runs_as_the_original(d: str, fx: str, entry: str) -> None:
+    """Each rail's linkable artifact of the fixture `fx`, built as C11 beside a driver of its two-argument `entry`
+    under every compiler at hand, prints what the original does."""
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    r = compile_unit(src, check_clang=False)
+    driver = (
+        "#include <stdio.h>\nint main(void) {\n  for (uint32_t x = 0; x < 9u; x++)\n"
+        f'    for (uint32_t y = 0; y < 9u; y++) printf("%u\\n", (unsigned){entry}(x * 977u, y * 31u + x));\n'
+        "  return 0;\n}\n"
+    )
+    quarantine = ("-I", _C, os.path.join(_C, "bcir_quarantine.c"))
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    for cc in compilers:
+        want = _build_c11_run(d, cc, "original", f"{src}\n{driver}", ())
+        for rail, linkable in _linkable_artifacts(fx, r):
+            got = _build_c11_run(d, cc, f"linkable_{rail}", f"{linkable}\n{driver}", quarantine)
+            assert want and got == want, f"{fx}: the {rail}'s linkable artifact under {cc} -std=c11"
 
 
 def _build_c11_run(d: str, cc: str, label: str, text: str, extra) -> str:

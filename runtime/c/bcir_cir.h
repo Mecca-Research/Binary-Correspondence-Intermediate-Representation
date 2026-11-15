@@ -295,6 +295,11 @@ typedef struct bcir_func {
   struct bcir_emit_names *emit_names;                     /* the names its objects emit as, built once per emission
                                                            * and read by every reference (CF-NAMECACHE); NULL
                                                            * otherwise. Emit-only; owned by the lowering's allocator. */
+  char *block_types;                                      /* the untagged aggregates its block declarations define,
+                                                           * `struct { ... } t[]`, as the typedef lines the emit opens
+                                                           * the function with, `typedef <their tokens> __bcir_anonN;`
+                                                           * (CSUB-2); NULL when none. Emit-only; owned by the
+                                                           * lowering's allocator. */
 } bcir_func;
 
 /* A translation unit: a growable list of functions sharing struct definitions + a call graph. */

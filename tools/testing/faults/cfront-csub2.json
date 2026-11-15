@@ -5,7 +5,8 @@
   "--require",
   "bcir.tests.test_c_cfront:_CC",
   "bcir.tests.test_c_cfront:test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
-  "bcir.tests.test_c_cfront:test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails"
+  "bcir.tests.test_c_cfront:test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails"
  ],
  "faults": [
   {
@@ -175,6 +176,90 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "    if(r[k].v || r[k].sp) r[m++]=r[k]; }",
    "new": "    if(r[k].v) r[m++]=r[k]; }"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B13 oracle emit: a block aggregate's typedef dropped",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "    types = [\n        f\"    typedef {spelling} __bcir_anon{tag[len('$anon') :]};\"\n        for tag, spelling in lf.block_types\n    ]\n",
+   "new": "    types = []\n"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B14 twin emit: a block aggregate's typedef dropped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(f->block_types) w+=snprintf(o+EO,on-EO,\"%s\",f->block_types);",
+   "new": "  if(0 && f->block_types) w+=snprintf(o+EO,on-EO,\"%s\",f->block_types);"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B15 oracle: a block declaration's untagged aggregate refused",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        self.agg_ok = True\n",
+   "new": "        self.agg_ok = False\n"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B16 twin: a block declaration's untagged aggregate refused",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    c->agg_ok=1;                                         /* ... and the untagged aggregate it defines (CSUB-2) */",
+   "new": "    c->agg_ok=0;                                         /* ... and the untagged aggregate it defines (CSUB-2) */"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B17 oracle: a block aggregate's type left unnamed (`struct $anonN` in the emit)",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        self._anon_typedef[tag] = f\"__bcir_anon{tag[len('$anon') :]}\"\n",
+   "new": ""
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B18 twin: a block aggregate's type left unnamed (`struct $anonN` in the emit)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  snprintf(S->tdname,sizeof S->tdname,\"__bcir_anon%d\",si);",
+   "new": "  S->tdname[0]=0;"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B19 oracle: an untagged aggregate taken where a type is named",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        if not agg_ok:\n            raise CParseError(AGG_TYPE_NAME, pos=pos)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B20 twin: an untagged aggregate taken where a type is named",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!agg_ok){ fail(c,CC_AGG_TYPE_NAME); return -1; }",
+   "new": "  if(0){ fail(c,CC_AGG_TYPE_NAME); return -1; }"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B21 oracle: a nested type name inherits the block declaration's leave to define one",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        agg_ok, self.agg_ok = self.agg_ok, False\n",
+   "new": "        agg_ok = self.agg_ok\n"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B22 twin: a nested type name inherits the block declaration's leave to define one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  int gok=c->agg_ok; c->agg_ok=0;",
+   "new": "  int gok=c->agg_ok;"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B23 oracle: a block-scope tag refused as a type name",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "                        AGG_BLOCK_TAGGED if agg_ok else AGG_TYPE_NAME, pos=self.peek().pos\n",
+   "new": "                        AGG_TYPE_NAME, pos=self.peek().pos\n"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B24 twin: a block-scope tag refused as a type name",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      fail(c,gok?CC_AGG_BLOCK_TAGGED:CC_AGG_TYPE_NAME); return 1; }",
+   "new": "      fail(c,CC_AGG_TYPE_NAME); return 1; }"
   },
   {
    "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",

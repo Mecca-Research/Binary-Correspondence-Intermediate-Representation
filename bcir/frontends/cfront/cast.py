@@ -363,6 +363,9 @@ class Func:
     )
     #   before the body, the function itself included: what its body may call or name (C11
     #   6.5.1p2). None when no parser recorded it (nothing is checked)
+    # the untagged aggregates the body's block declarations define, `struct { ... } t[]` (CSUB-2): (synthesized tag,
+    # source spelling), which the emit defines as a typedef on the function's first line
+    block_types: tuple = ()
 
 
 @dataclass(frozen=True)

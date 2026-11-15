@@ -266,6 +266,8 @@ typedef struct {
                                                       * where a fixed line buffer had made its emit impossible */
   int align_ok;                                      /* p_type_base may read an alignment specifier: a block declaration's
                                                       * specifiers are being read (CSUB-2) */
+  int agg_ok;                                        /* ... and the definition of the untagged aggregate it declares
+                                                      * objects of, `struct { ... } t[]` (`block_aggregate`) */
   long long decl_align;                              /* ... the strictest `_Alignas(N)` they asked (C11 6.7.5p6) */
   int saw_static;                                    /* p_type_base scanned a `static` since p_func last
                                                       * reset it -- captured as fn->static_fn right after
@@ -1031,6 +1033,13 @@ static int td_ptr_qual(CC *c, bcir_ctype *ty, int cst, int vol){
 #define CC_ALIGN_TYPE "an alignment specifier of a type name is not supported"
 #define CC_ALIGN_VLA "an alignment specifier on a variable-length array is not supported"
 #define CC_ALIGN_AGG "an alignment specifier on a declaration that defines a struct or union is not supported"
+/* `struct { ... } v;` in a block declaration: an untagged aggregate the declaration defines and declares its objects of
+ * (C11 6.7.2.1, 6.7.2.3p6), as the runtime's tables are written; each emit spells it as a typedef the function's first
+ * line defines (`block_aggregate`; the oracle's `AGG_*`). A tag defined in a block, whose scope would end with it, is
+ * refused, and so is a struct or union defined anywhere else a type is named (CSUB-2). */
+#define CC_AGG_BLOCK_TAGGED "a struct or union with a tag defined in a block is not supported"
+#define CC_AGG_TYPE_NAME "a struct or union defined outside a declaration of objects is not supported"
+static int block_aggregate(CC *c, int agg_ok);   /* fwd: `struct { ... }` among a block declaration's specifiers */
 static int starts_decl_type(CC *c);
 /* `_Alignas ( N )` / `alignas ( N )` at the cursor, among a declaration's specifiers (C11 6.7.5; CSUB-2): kept in
  * `c->decl_align` where a block declaration asks for one (`aok`), the strictest of several (6.7.5p6), refused anywhere
@@ -1055,6 +1064,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1; c->td_nd=0;
   int aok=c->align_ok; c->align_ok=0;               /* an alignment specifier is this run's alone: a nested type name
                                                       * (`typeof(T)`, `_Atomic(T)`) takes none (CSUB-2) */
+  int gok=c->agg_ok; c->agg_ok=0;                    /* ... and so is an untagged aggregate's definition */
   int td_ptr=0;                                       /* a pointer or function-pointer typedef was named (CF-QUALS) */
   int seen=0, longs=0, ptrtrk=0, sign_explicit=0, floatkw=0, cplxkw=0;   /* longs: `long` (data-model) vs `long
                                                                * long` (8); floatkw / cplxkw: a float/double or a
@@ -1105,6 +1115,13 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       if(!sign_explicit) ty->signd=1;                   /* `_BitInt(N)` defaults signed (no signed/unsigned kw) */
       seen=1; continue;
     }
+    if((is(c,"struct")||is(c,"union")) && tok_is(tat(c,c->i+1),"{")){   /* an untagged definition: a block
+                                                                         * declaration's (CSUB-2) */
+      int si=block_aggregate(c,gok); if(si<0) return 1;
+      ty->kind=1;ty->size=c->s[si].size;*sidx=si;ty->is_union=(uint8_t)c->s[si].is_union;
+      snprintf(ty->tag,sizeof ty->tag,"%s",c->s[si].tag); seen=1; break; }
+    if((is(c,"struct")||is(c,"union")) && tat(c,c->i+1)->k==T_ID && tok_is(tat(c,c->i+2),"{")){
+      fail(c,gok?CC_AGG_BLOCK_TAGGED:CC_AGG_TYPE_NAME); return 1; }
     if(is(c,"struct")||is(c,"union")){int isu=is(c,"union");c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
       int ptr=ptr_follows(c);                        /* a pointer to it needs no layout (C11 6.2.5p22) */
       if(si<0 && ptr && tag.k==T_ID) si=declare_struct(c,&tag,isu);   /* defined later, or never (opaque) */
@@ -1607,6 +1624,29 @@ static int p_struct_body(CC *c) {
   if(total%salign)total+=salign-(total%salign); S->size=total;
   S->incomplete=0; complete_struct_refs(c,my);
   return my;
+}
+/* `struct { ... }` / `union { ... }` at the cursor among a block declaration's specifiers (`agg_ok`; the oracle's
+ * `_block_aggregate`): the untagged aggregate it defines (p_struct_body's `$anonN`), its tokens kept as the typedef line
+ * the function's emit opens with -- `typedef struct { ... } __bcir_anonN;`, an identifier reserved to the implementation
+ * (C11 7.1.3) -- and C's name for it that typedef's (`anon_spelling`). Anywhere else, refused (CC_AGG_TYPE_NAME). Its
+ * sdef, or -1 (failed). */
+static int block_aggregate(CC *c, int agg_ok){
+  if(!agg_ok){ fail(c,CC_AGG_TYPE_NAME); return -1; }
+  int a=c->i, si=p_struct_body(c);
+  if(si<0 || c->failed) return -1;
+  sdef *S=&c->s[si];
+  snprintf(S->tdname,sizeof S->tdname,"__bcir_anon%d",si);
+  size_t old=c->fn->block_types?strlen(c->fn->block_types):0, add=strlen("  typedef ")+strlen(S->tdname)+3;
+  for(int k=a;k<c->i;k++) add+=(size_t)c->t[k].n+1;
+  char *nb=(char *)bcir_host_allocate(&c->allocator,old+add+1);
+  if(!nb){ cc_raise_oom(c); return -1; }
+  size_t w=0;
+  if(old) memcpy(nb,c->fn->block_types,old);
+  w=old; memcpy(nb+w,"  typedef ",10); w+=10;
+  for(int k=a;k<c->i;k++){ if(k>a) nb[w++]=' '; memcpy(nb+w,c->t[k].s,(size_t)c->t[k].n); w+=(size_t)c->t[k].n; }
+  nb[w++]=' '; memcpy(nb+w,S->tdname,strlen(S->tdname)); w+=strlen(S->tdname); nb[w++]=';'; nb[w++]='\n'; nb[w]=0;
+  bcir_host_deallocate(&c->allocator,c->fn->block_types); c->fn->block_types=nb;
+  return si;
 }
 
 /* --- enum + typedef (resolved at parse time so the claim graph carries the folded result) --- */
@@ -8521,8 +8561,9 @@ static void p_stmt_inner(CC *c) {
     c->saw_static=0; c->saw_extern=0; c->saw_thread=0;   /* THIS declaration's own storage classes, wherever spelled */
     int spec_at=c->i;
     c->align_ok=1; c->decl_align=0;                      /* ... and its `_Alignas(N)` (CSUB-2) */
+    c->agg_ok=1;                                         /* ... and the untagged aggregate it defines (CSUB-2) */
     bcir_ctype base;int si;int bf=p_type_base(c,&base,&si);   /* the shared specifier (eats `static`, NOT `*`) */
-    c->align_ok=0; if(bf) return;
+    c->align_ok=0; c->agg_ok=0; if(bf) return;
     long long dalign=c->decl_align;
     if(is(c,";") && enum_only_spec(c,spec_at)){ c->i++; return; }   /* `enum [tag] { ... };`: its constants alone */
     if(c->saw_extern){ fail(c,"a block-scope extern declaration is not supported"); return; }   /* names an object
@@ -10029,6 +10070,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
   ctype_str(&f->ret,ty,sizeof ty);
   w+=emit_sig(f,o+EO,on-EO);
   w+=snprintf(o+EO,on-EO,"\n{\n");
+  if(f->block_types) w+=snprintf(o+EO,on-EO,"%s",f->block_types);   /* its untagged aggregates' typedefs (CSUB-2) */
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
     if(r->is_vla) continue;   /* a stack VLA: declared IN-BODY by c.vladecl (size unknown until then), not up front */
@@ -10805,6 +10847,7 @@ static void cfront_free_func(const bcir_host_allocator *allocator, bcir_func *fn
   bcir_host_deallocate(allocator,fn->ptr_extents);
   bcir_host_deallocate(allocator,fn->qcasts);
   bcir_host_deallocate(allocator,fn->qglobals);
+  bcir_host_deallocate(allocator,fn->block_types);
   names_free(allocator,fn->emit_names);
   memset(fn,0,sizeof *fn);
 }

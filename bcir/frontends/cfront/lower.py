@@ -979,6 +979,15 @@ ALIGN_VLA = "an alignment specifier on a variable-length array is not supported"
 ALIGN_AGG = (
     "an alignment specifier on a declaration that defines a struct or union is not supported"
 )
+# `struct { ... } v;` / `union { ... } v;` in a block declaration: an untagged aggregate the declaration defines and
+# declares its objects of (C11 6.7.2.1, 6.7.2.3p6), as the runtime's tables are written (`static const struct { ... }
+# t[] = {...}`). Its type is the declaration's alone; each emit spells it once, as a typedef the function's first
+# line defines, by its members' source tokens (CSUB-2; the twin's `CC_AGG_*`). A tag defined in a block -- whose scope
+# would end with the block, where the unit's one tag table has none -- is refused (`AGG_BLOCK_TAGGED`), and so is a
+# struct or union defined anywhere else a type is named: a cast, `sizeof`, a parameter, a return type, a member's
+# qualified type (`AGG_TYPE_NAME`)
+AGG_BLOCK_TAGGED = "a struct or union with a tag defined in a block is not supported"
+AGG_TYPE_NAME = "a struct or union defined outside a declaration of objects is not supported"
 # `T *volatile p`, `volatile ptr_t p`: a pointer object that is itself volatile, every access of which C performs as
 # written (C11 6.7.3p7) -- which neither rail's accesses do, so it is refused rather than dropped (CF-QUALS; the
 # twin's `CC_VOLATILE_PTR`)
@@ -1554,6 +1563,9 @@ class LoweredFunc:
     local_align: dict = field(
         default_factory=dict
     )  # a local's or a static's rid -> its `_Alignas(N)` (CSUB-2)
+    # the untagged aggregates its block declarations define -- (synthesized tag, source spelling) -- which the emit
+    # defines as typedefs on its first line, C's names for them (`Func.block_types`; CSUB-2)
+    block_types: tuple = ()
     tu_protos: dict = field(
         default_factory=dict
     )  # cross-TU callee -> (ret CType, (param CType, ...), its qualifiers `_fn_quals`, variadic)
@@ -5658,6 +5670,7 @@ class _FuncLowerer:
             globals_used=gnames,
             zero_init_locals=set(self.zero_init),
             local_align=dict(self.local_align),
+            block_types=getattr(self.func, "block_types", ()),
             variadic=self.func.variadic,
             tu_protos=dict(self.tu_used),
             reproducible=getattr(self.func, "reproducible", False),

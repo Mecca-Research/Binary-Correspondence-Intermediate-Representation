@@ -21,6 +21,8 @@ from .lower import (
     DIM_RANGE,
     ENUM_INCOMPLETE,
     ENUM_NOT_INT,
+    AGG_BLOCK_TAGGED,
+    AGG_TYPE_NAME,
     ALIGN_AGG,
     ALIGN_LARGE,
     ALIGN_PLACE,
@@ -247,6 +249,11 @@ class _Parser:
         # (`_decl_stmt`), `align` the strictest N they ask (C11 6.7.5p6; CSUB-2)
         self.align_ok = False
         self.align = 0
+        # an untagged `struct { ... }` defined by the specifiers being read: `agg_ok` while a block declaration's are
+        # (`_decl_stmt`); each one the function defines, by its synthesized tag, with its source spelling, which the
+        # emit's typedef spells it by (`Func.block_types`; CSUB-2)
+        self.agg_ok = False
+        self._block_types: dict = {}
         # how C names each anonymous aggregate (`$anonN`, `Unit.anon_spelling`): the file-scope typedef that
         # names it (`typedef struct {...} P;`), else the named member it is the type of -- the aggregate that
         # holds the member, the member's name, and its declarator's `*`s and array dimensions
@@ -1040,12 +1047,13 @@ class _Parser:
 
     def _type_spec_inner(self) -> cast.TypeRef:
         # an alignment specifier belongs to this run of specifiers alone: a nested type name (`typeof(T)`,
-        # `_Atomic(T)`) is read with none allowed
+        # `_Atomic(T)`) is read with none allowed -- and so does the definition of an untagged aggregate
         align_ok, self.align_ok = self.align_ok, False
+        agg_ok, self.agg_ok = self.agg_ok, False
         try:
-            return self._type_spec_run(align_ok)
+            return self._type_spec_run(align_ok, agg_ok)
         finally:
-            self.align_ok = align_ok
+            self.align_ok, self.agg_ok = align_ok, agg_ok
 
     def _alignas(self, align_ok: bool) -> None:
         """`_Alignas ( N )` / `alignas ( N )` at the cursor, among a declaration's specifiers (C11 6.7.5): kept in
@@ -1083,7 +1091,26 @@ class _Parser:
         self.align = max(self.align, n)
         self.eat("PUNCT", ")")
 
-    def _type_spec_run(self, align_ok: bool) -> cast.TypeRef:
+    def _block_aggregate(self, kind: str, agg_ok: bool) -> str:
+        """`struct { ... }` / `union { ... }` at the cursor (past the keyword) among a block declaration's specifiers
+        (`agg_ok`): the untagged aggregate it defines, under a synthesized tag, its source spelling kept for the emit's
+        typedef (`Func.block_types`) and C's name for it that typedef's, `__bcir_anonN` -- an identifier reserved to
+        the implementation (C11 7.1.3), which no source declares. Anywhere else, refused (`AGG_TYPE_NAME`). The
+        twin's `block_aggregate`."""
+        pos = self.peek().pos
+        if not agg_ok:
+            raise CParseError(AGG_TYPE_NAME, pos=pos)
+        head = self.i - 1
+        tag = f"$anon{self._anon_ctr}"
+        self._anon_ctr += 1
+        agg = self._aggregate_body(kind, tag, {})
+        self.unit.aggregates[tag] = agg
+        self.tags.add(tag)
+        self._block_types[tag] = self._spelled(head, self.i)
+        self._anon_typedef[tag] = f"__bcir_anon{tag[len('$anon') :]}"
+        return tag
+
+    def _type_spec_run(self, align_ok: bool, agg_ok: bool = False) -> cast.TypeRef:
         quals: list[str] = []
         words: list[str] = []
         aggregate = ""
@@ -1132,6 +1159,17 @@ class _Parser:
             elif w in ("struct", "union"):
                 aggregate = w
                 self.nxt()
+                if self.at("PUNCT", "{"):  # an untagged definition: a block declaration's (CSUB-2)
+                    base = self._block_aggregate(w, agg_ok)
+                    break
+                if (
+                    self.peek().kind == "IDENT"
+                    and self.peek(1).kind == "PUNCT"
+                    and self.peek(1).text == "{"
+                ):
+                    raise CParseError(
+                        AGG_BLOCK_TAGGED if agg_ok else AGG_TYPE_NAME, pos=self.peek().pos
+                    )
                 base = self.eat("IDENT").text  # the tag
                 break
             elif w == "enum":  # `enum [tag] [{...}]` -> its compatible integer type (CF-ENUMOBJ)
@@ -1458,10 +1496,12 @@ class _Parser:
         declared = frozenset(self._declared)
         # the parameters' scope encloses the body's block
         self.scopes.append(dict.fromkeys(p.name for p in params))
+        self._block_types = {}  # the untagged aggregates its block declarations define (CSUB-2)
         try:
             body = self._block()
         finally:
             self.scopes.pop()
+        block_types, self._block_types = tuple(self._block_types.items()), {}
         return cast.Func(
             ret=ret,
             name=name,
@@ -1471,6 +1511,7 @@ class _Parser:
             reproducible=reproducible,
             static_fn=static,
             declared=declared,
+            block_types=block_types,
         )
 
     # --- statements ---
@@ -1858,10 +1899,12 @@ class _Parser:
             True,
             0,
         )  # an object declaration: `_Alignas(N)` may be among its specifiers
+        # ... and the definition of the untagged aggregate it declares objects of (CSUB-2)
+        self.agg_ok = True
         try:
             base = self._type_spec()
         finally:
-            self.align_ok = False
+            self.align_ok = self.agg_ok = False
         align = self.align
         # `enum [tag] { ... };`: a declaration of the enumeration's constants (and tag) alone, in scope to the end of
         # the block (C11 6.7p2; CF-CONSTEXPR2)

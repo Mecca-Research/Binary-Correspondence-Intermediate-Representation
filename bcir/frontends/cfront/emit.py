@@ -841,7 +841,13 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
             return f"    {sc} {_funcptr_decl(ct, name)} = {init or zero};"
         return f"    {sc} {_cname(ct)} {name} = {init or '0u'};"
 
-    decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
+    # an untagged aggregate a block declaration defines: its own typedef, first, as its source spells it -- the
+    # name the unit's `anon_spelling` gives it, which respells every `struct $anonN` of the function (CSUB-2)
+    types = [
+        f"    typedef {spelling} __bcir_anon{tag[len('$anon') :]};"
+        for tag, spelling in lf.block_types
+    ]
+    decls = types + [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
     decls += [
         _static_decl(rid, nm[rid], ct, init, rid in lf.thread_statics)
         for rid, _name, ct, init in lf.statics

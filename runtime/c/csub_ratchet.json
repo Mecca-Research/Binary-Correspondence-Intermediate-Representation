@@ -4,8 +4,8 @@
   "units": {
     "bcir_ab_listing.c": {
       "verdict": "blocked",
-      "blocker": "parse error: unknown struct",
-      "construct": "an untagged `static const struct { ... } t[]` table",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "a pointer member read from an array element (`t[i].name`): the record table",
       "rung": "CSUB-2"
     },
     "bcir_ai_kernels.c": {
@@ -109,8 +109,8 @@
     },
     "bcir_emit.c": {
       "verdict": "blocked",
-      "blocker": "parse error: unknown struct",
-      "construct": "an untagged `static const struct { ... } t[]` table",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "a pointer member read from an array element (`t[i].name`): the record table",
       "rung": "CSUB-2"
     },
     "bcir_encode.c": {
