@@ -544,6 +544,8 @@ _mm_sfence();                      //                   store (release) fence ->
 - A pointer-to-array member `T (*m)[N]` -- `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]` -- a pointer to a row of N
   scalars: `p->m[k][j]` read, stored, stepped and addressed, `sizeof *p->m` the row, and the pointer tested, copied,
   taken from a two-dimensional array and passed to a row-pointer parameter (CSUB-2d).
+- A struct or union a prototyped callee returns -- `c = admit(buf, n)`, `mk(x).b`, `sum(mk(x))` -- the aggregate
+  value, as a defined callee's is; and `->` or `[]` after a pointer one returns, `mkp(x)->a` (CSUB-2).
 
 ## Known limits
 
@@ -690,6 +692,8 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   `_BitInt` scalar, of two dimensions, or longer than 65535 (`a pointer to an array is supported only as a pointer to
   one row of at most 65535 scalars`); and one at file scope, in a typedef (`a pointer to an array is supported only as
   a parameter or a member`) or as a block object (CSUB-2d).
+- A prototype whose return type is qualified at its top level (`const uint32_t g(void);`): both emits declare it
+  without the qualifier, which Clang refuses beside the source (CSUB-2).
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 

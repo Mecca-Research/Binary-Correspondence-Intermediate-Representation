@@ -289,6 +289,19 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-15 — CSUB-2: a struct returned through a prototype.**
+  - A struct or union a call returns through a prototype -- a callee another unit defines, `bcir_handoff.c`'s
+    `c = bcir_ctl_admit_pack(...)` -- is the aggregate value on the twin, as a defined callee's is: initialized from,
+    assigned, read a member of in place, passed and returned on by value, stored and chosen by `?:`. The oracle had
+    lowered it; the twin had refused it.
+  - A gap at the base: the twin read no `->` or `[]` after a pointer a prototyped callee returns, which the oracle
+    lowered. A call's postfix now reads a prototype's return as a definition's (`declared_ret`).
+  - **Evidence.** `cfront_csub2_protoret.c` lowers to one claim graph on the four targets, and each emit runs as the
+    original, linked with a driver that defines the callees. A cross-rail test holds 12 lowered forms to one digest
+    and to a strict build of both emits, and 5 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 4 (CS2P1–CS2P4), each swept RED.
+  - **The ratchet.** 30 of 58 (29 before): `bcir_handoff.c` compiles clean.
+
 - **2026-11-15 — CSUB-2d, first slice: pointer-to-array members.**
   - A member `T (*m)[N]` is a pointer to a row of N scalars on both rails, laid out as a pointer and typed as a
     `T m[][N]` parameter is: `p->m[k][j]` is element `k*N + j`, read, stored, stepped and addressed, `sizeof *p->m`
