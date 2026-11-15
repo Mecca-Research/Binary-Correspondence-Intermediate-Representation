@@ -138,7 +138,7 @@ itself forbids, and RED before GREEN.
 | Rung | What the subset gains | What it brings under the verified compiler |
 |---|---|---|
 | **CSUB-1** Conformance (**landed 2026-11-11**: `bcir-cc` compiles 21 of the runtime's 58 production units with R1–R18 clean, where it compiled 4; the ratchet below holds all 58. Both rails' preprocessors are now one engine, Prosser's algorithm with the argument prescan, one rescan and `#`'s spacing, which also closed four twin miscompiles §4.1 names) | Function-like macro calls whose arguments span lines (C11 6.10.3p10). `static_assert` and `_Static_assert` at file scope. Complete freestanding headers: `<stdint.h>`'s limits and its `INTn_C`/`UINTn_C` macros; `<stddef.h>`'s `NULL`, `offsetof`, `max_align_t` and `PTRDIFF_MAX` (`bcir_host_alloc.h` needs `max_align_t` and `offsetof`, §3.1); `<stdbool.h>`, `<limits.h>` and `<float.h>`; `<math.h>`'s `NAN` and `INFINITY`. | The serialization core: `bcir_asn1.c`, `bcir_binrec.c`, `bcir_encode.c`, `bcir_runtime.c`, `bcir_exec.c`, `bcir_control_plane.c` and `bcir_ai_kernels.c`'s portable path. It is also every program in these domains that includes a standard header. |
-| **CSUB-2** Table idioms (**in progress**: CSUB-2a landed 2026-11-14, CSUB-2b and CSUB-2c's first slice 2026-11-15, §4.2; 27 of the 58 units compile clean) | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. Four more the ratchet found first in units the measurement had not reached: a member read through a local's address, `(&v)->m`, as a macro writes it (`bcir_kplan.c`); a row of a multi-dimensional array used as a value, `f(t[1])` of `fe t[4][10]` (`bcir_ed25519.c`); the address-of, increment and assignment of an lvalue reached through a loaded pointer (`bcir_spm.c`, `bcir_emit.c`, both quarantine units); and a struct returned by a call through a prototype (`bcir_handoff.c`). | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c` and `bcir_handoff.c`: the table-driven dispatch every codec and catalog reader is written in. |
+| **CSUB-2** Table idioms (**in progress**: CSUB-2a landed 2026-11-14; CSUB-2b, CSUB-2c, and the first slices of CSUB-2d and CSUB-2e 2026-11-15, §4.2; 29 of the 58 units compile clean) | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. Four more the ratchet found first in units the measurement had not reached: a member read through a local's address, `(&v)->m`, as a macro writes it (`bcir_kplan.c`); a row of a multi-dimensional array used as a value, `f(t[1])` of `fe t[4][10]` (`bcir_ed25519.c`); the address-of, increment and assignment of an lvalue reached through a loaded pointer (`bcir_spm.c`, `bcir_emit.c`, both quarantine units); and a struct returned by a call through a prototype (`bcir_handoff.c`). | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c` and `bcir_handoff.c`: the table-driven dispatch every codec and catalog reader is written in. |
 | **CSUB-3** C23 bits and checked arithmetic | `<stdbit.h>` (endian queries, bit width, leading and trailing zeros, population count) and `<stdckdint.h>` (`ckd_add`, `ckd_sub`, `ckd_mul`), each with its exact C23 semantics. The master roadmap lists both as near-term gaps (§4.1). One shared `bcir_bytes.h` built on them replaces the nine copies of the endian helpers, byte-identical. | Varints, bitmaps, length fields and every bounds check of the L3 kind ("bounds live where the resource commits") written as checked arithmetic rather than hand-rolled comparisons. |
 | **CSUB-4** The atomics API | `<stdatomic.h>`'s explicit-order calls: `atomic_load_explicit`, `atomic_store_explicit`, `atomic_fetch_add_explicit` and `atomic_compare_exchange_*_explicit`, with `memory_order`. They map onto the memory model the oracle already states (`lower.memory_model`) and the law rail's atomic orderings. | `bcir_ring.c` and the lock-free single-producer, single-consumer structures the AI system's services run on (`BCIR_AI_SYSTEM_ROADMAP.md` §5.2). |
 | **CSUB-5** A hosted profile | A declared hosted class, not part of the freestanding subset: `<stdio.h>` streams and file I/O under the injected-allocator memory class (`../languages/C_MEMORY_DISCIPLINE.md`). Memory mapping goes through a declared host interface. The hosted `<string.h>` calls R18 does not know yet, such as `strlen` (`bcir_decoder_gem.c`, `bcir_decoder_pack.c`). | The loaders `bcir_q8_model.c` and `bcir_llama.c`, and the quarantine's recovery |
@@ -316,8 +316,34 @@ The count stays 27 of 58, but seven units move on:
 The count stays 27 of 58. `bcir_bpe.c` moves on to a struct member's address through a loaded pointer,
 `&s->t->arena`, a CSUB-2e form. The hosted `bcir_diag.c` moves on to `strlen` (CSUB-5).
 
-**Next:** pointer-to-array members (CSUB-2d), and the remaining lvalue forms (CSUB-2e). Six of the last stand, all on plain structs as on elements, and
-for each the oracle lowers and the twin refuses:
+**CSUB-2d, first slice (2026-11-15): pointer-to-array members.**
+- **A member `T (*m)[N]` is a pointer to a row of N scalars** on both rails. `bcir_cir.h` declares one,
+  `char (*calls)[BCIR_CIR_NAME]`, and it was the first refusal of the five units that include it. The member is laid
+  out as a pointer and typed as a `T m[][N]` parameter is, so `p->m[k][j]` is element `k*N + j` of the flat pointer
+  it is loaded as. The element is read, stored, stepped, compound-assigned and addressed, and `sizeof *p->m` is the
+  row. The pointer is tested for null, copied, taken from a two-dimensional array and passed to a row-pointer
+  parameter, and `typeof(p->m)` declares one. This covers a struct value, an element of a member array, a loaded
+  pointer and a union. Both rails had refused the declaration.
+- **A defect on both rails at the base.** `*rows` of a row-pointer parameter and `*m` of a two-dimensional array,
+  used as a value, are the row they designate, but both rails read its first element: `char *r = *rows` became an
+  assignment of a `char` to a `char *`, which Clang 23 refuses and older compilers only warn of. Both now refuse
+  each as a row used as a value; `(*m)[i]` stays the element it is.
+- **What stays refused, for one reason each:**
+  - a row used as a value (`p->m[k]`, `*p->m`);
+  - arithmetic on the pointer, and a step of it;
+  - a row of no scalar (a struct, a pointer, a function pointer, a typedef'd array), of a volatile, `_Atomic` or
+    `_BitInt` scalar, of two dimensions, of no size, or longer than 65535;
+  - one at file scope or in a typedef, which the oracle had read as an array of rows.
+
+The count is now **29 of 58**: `bcir_hydrate.c` and `bcir_plan.c` compile clean. `bcir_verify.c` and
+`bcir_channel.c` stop at a row used as a value, `f->calls[k]` and `seen_keys[i]`. `bcir_cc.c` stops at `FILE`
+(CSUB-5).
+
+**Next:** a row used as a value, CSUB-2d's second slice. A row decays to a pointer to its first element in
+`f->calls[k]` (`bcir_verify.c`), `seen_keys[i]` (`bcir_channel.c`), `f(t[1])` (`bcir_ed25519.c`) and `ys[v]`
+(`bcir_tensor.c`): the first refusal of four units. Then a pointer to an array as a block object, and the remaining
+lvalue forms (CSUB-2e). Six of the last stand, all on plain structs as on elements, and for each the oracle lowers
+and the twin refuses:
 - `->` through a dereferenced `T **`, `(*q)->v`;
 - `(*c)++` used as a value (the quarantine units);
 - an assignment through a dereferenced pointer used as a value (`*low = *high = &absent`);

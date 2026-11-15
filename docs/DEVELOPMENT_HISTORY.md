@@ -289,6 +289,27 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-15 — CSUB-2d, first slice: pointer-to-array members.**
+  - A member `T (*m)[N]` is a pointer to a row of N scalars on both rails, laid out as a pointer and typed as a
+    `T m[][N]` parameter is: `p->m[k][j]` is element `k*N + j`, read, stored, stepped and addressed, `sizeof *p->m`
+    is the row, and the pointer is tested, copied and passed to a row-pointer parameter. `bcir_cir.h`'s
+    `char (*calls)[BCIR_CIR_NAME]` had been a parse error on both rails. The oracle's type carries the declarator
+    (`TypeRef.row_ptr`) and resolves the member to the parameter's shaped pointer. The twin records the row on the
+    member (`field.row_n`) and on a pointer loaded from it (`bcir_resource.row_n`, in padding), and subscripts it
+    through one helper, `ptr_member_sub`, in each walker that subscripts a pointer member.
+  - A defect on both rails at the base: `*rows` of a row-pointer parameter and `*m` of a two-dimensional array, used
+    as a value, had read the row's first element, an emit Clang 23 refuses. Both now refuse each as a row used as a
+    value, by one predicate per rail (the oracle's `_row_valued`, the twin's `rid_multidim`). A file-scope
+    `T (*g)[N]`, which the oracle had read as an array of rows, is refused on both, as is a typedef of one.
+  - **Evidence.** `cfront_csub2_rowptr.c` (in `_ABI`) runs as the original on each rail's emit, and as each rail's
+    linkable artifact built as C11. A cross-rail test holds 13 lowered forms to one digest and to a strict build of
+    both emits, and 21 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 28 (CS2D1–CS2D28), each swept RED. The first sweep left one
+    uncaught: the twin refused `*rows` of a parameter in a check of its own, which the general dereference's already
+    made. That check is gone; the one that replaced it, at the top of `emit_deref`, decides `*m` of an array.
+  - **The ratchet.** 29 of 58 (27 before): `bcir_hydrate.c` and `bcir_plan.c` compile clean. `bcir_verify.c` and
+    `bcir_channel.c` reach a row used as a value, the next slice, and `bcir_cc.c` reaches `FILE` (CSUB-5).
+
 - **2026-11-15 — CSUB-2c, second slice: struct members of array elements.**
   - A struct or union member of an array element is the aggregate value on both rails: read, stored, copied element
     to element, passed and returned by value, and addressed, on a direct array, a member array and through a loaded

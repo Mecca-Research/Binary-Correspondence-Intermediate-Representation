@@ -541,6 +541,9 @@ _mm_sfence();                      //                   store (release) fence ->
   (CSUB-2e).
 - A struct or union member of an array element -- `set->slots[j].name = name`, `width(d->notes[i].span)`, `return
   t[i].sp;`, `&t[i].sp` -- the aggregate value, read, stored, copied, passed, returned and addressed (CSUB-2c).
+- A pointer-to-array member `T (*m)[N]` -- `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]` -- a pointer to a row of N
+  scalars: `p->m[k][j]` read, stored, stepped and addressed, `sizeof *p->m` the row, and the pointer tested, copied,
+  taken from a two-dimensional array and passed to a row-pointer parameter (CSUB-2d).
 
 ## Known limits
 
@@ -681,6 +684,12 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - Through a loaded pointer: `->` of a dereferenced `T **` (`(*q)->v`), a volatile object's address, a pointer or
   struct member's address (`&p->q->name`, `&s->t->arena`), a member array's element (`&p->q->arr[1]`) and a pointer
   element's address (`&p->pp[j]`). The oracle lowers them, and the twin refuses them (CSUB-2e).
+- A row used as a value -- `p->m[k]` and `*p->m` of a pointer-to-array member, `*rows` of a row-pointer parameter,
+  `t[1]` and `*t` of a two-dimensional array (`partial indexing of a multi-dimensional array (a row used as a value) is not yet
+  supported`) -- and arithmetic on a pointer to an array. A pointer to an array of no scalar, of a qualified or
+  `_BitInt` scalar, of two dimensions, or longer than 65535 (`a pointer to an array is supported only as a pointer to
+  one row of at most 65535 scalars`); and one at file scope, in a typedef (`a pointer to an array is supported only as
+  a parameter or a member`) or as a block object (CSUB-2d).
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
