@@ -289,6 +289,26 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-15 — CSUB-2d, second slice: a row used as a value.**
+  - A row of scalars used as a value is the pointer to its first element on both rails, `&m[k][0]`, lowered as that
+    form lowers (the oracle's `_scalar_row`, the twin's `row_value` and `member_row_value`): `f->calls[k]`,
+    `seen_keys[i]`, `fsub(a, p[1], p[0])` of a `gf p[4]` and `ys[v]`, the first refusal of `bcir_verify.c`,
+    `bcir_channel.c`, `bcir_ed25519.c` and `bcir_tensor.c`. Passed, assigned, chosen, stepped, compared, sized and
+    dereferenced (`*m[k]`, `*(m[k] + i)`), of every array form and of a pointer-to-array member's row.
+  - A row's address, `&m[k]`, is refused on both rails for one reason, `ROW_ADDR`; so are `typeof` of a row and a
+    row of rows, structs or pointers.
+  - Defects at the base: the twin read `&g[k]` of a two-dimensional global and `&s->m[k]` of a member array as
+    `&g[0][k]` and `&s->m[0][k]`, and the oracle stepped `&g[k] + 1` by one element; the oracle typed `typeof(m[k])` as its element;
+    the twin typed the address of a volatile array's element or member a `T *`. Each is closed. `typeof` of an array
+    object still differs between the rails (the twin declares one element) and is tracked.
+  - **Evidence.** `cfront_csub2_rows.c` (in `_ABI`) runs as the original under Clang and GCC on each rail's emit. A
+    cross-rail test holds 22 lowered forms to one digest and to a strict build of both emits, and 13 refused ones to
+    one reason each; each rail's linkable artifact, built as C11, returns what the original does.
+  - **Standing faults.** `cfront-csub2.json` gains 31 (CS2W1–CS2W31), each swept RED; four faults the slice's edits
+    moved (`cfront-quals.json`'s IT7 and IT8, `cfront-fptab.json`'s FT8, a `volatile.json` oracle fault) are
+    re-anchored and swept RED again.
+  - **The ratchet.** 31 of 58 (30 before): `bcir_ed25519.c` compiles clean.
+
 - **2026-11-15 — CSUB-2: a struct returned through a prototype.**
   - A struct or union a call returns through a prototype -- a callee another unit defines, `bcir_handoff.c`'s
     `c = bcir_ctl_admit_pack(...)` -- is the aggregate value on the twin, as a defined callee's is: initialized from,

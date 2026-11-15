@@ -546,6 +546,10 @@ _mm_sfence();                      //                   store (release) fence ->
   taken from a two-dimensional array and passed to a row-pointer parameter (CSUB-2d).
 - A struct or union a prototyped callee returns -- `c = admit(buf, n)`, `mk(x).b`, `sum(mk(x))` -- the aggregate
   value, as a defined callee's is; and `->` or `[]` after a pointer one returns, `mkp(x)->a` (CSUB-2).
+- A row of scalars used as a value -- `strcmp(keys[i], k)`, `f(p->calls[k])`, `fsub(a, p[1], p[0])` of a `gf p[4]`,
+  `s.m[k]`, `a[i].m[j]` -- the pointer to its first element, `&m[k][0]`: passed, assigned, chosen, stepped, compared,
+  sized and dereferenced (`*m[k]`, `*(m[k] + i)`); of locals, statics, globals, VLAs, parameters, members and the row a
+  pointer-to-array member points at (CSUB-2d).
 
 ## Known limits
 
@@ -686,14 +690,17 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - Through a loaded pointer: `->` of a dereferenced `T **` (`(*q)->v`), a volatile object's address, a pointer or
   struct member's address (`&p->q->name`, `&s->t->arena`), a member array's element (`&p->q->arr[1]`) and a pointer
   element's address (`&p->pp[j]`). The oracle lowers them, and the twin refuses them (CSUB-2e).
-- A row used as a value -- `p->m[k]` and `*p->m` of a pointer-to-array member, `*rows` of a row-pointer parameter,
-  `t[1]` and `*t` of a two-dimensional array (`partial indexing of a multi-dimensional array (a row used as a value) is not yet
-  supported`) -- and arithmetic on a pointer to an array. A pointer to an array of no scalar, of a qualified or
+- The row `*` designates -- `*p->m` of a pointer-to-array member, `*rows` of a row-pointer parameter, `*t` of a
+  two-dimensional array -- `typeof` of a row, and a row of rows, structs or pointers (`partial indexing of a
+  multi-dimensional array (a row used as a value) is not yet supported`); a row's address, `&t[1]` (`the address of a
+  row of a multi-dimensional array is not supported`); and arithmetic on a pointer to an array. A pointer to an array of no scalar, of a qualified or
   `_BitInt` scalar, of two dimensions, or longer than 65535 (`a pointer to an array is supported only as a pointer to
   one row of at most 65535 scalars`); and one at file scope, in a typedef (`a pointer to an array is supported only as
   a parameter or a member`) or as a block object (CSUB-2d).
 - A prototype whose return type is qualified at its top level (`const uint32_t g(void);`): both emits declare it
   without the qualifier, which Clang refuses beside the source (CSUB-2).
+- `typeof` of an array object (`__typeof__(a) b`): the twin declares one element of it, the oracle the array, so
+  `sizeof b` differs between the rails. Spell the array type instead.
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
