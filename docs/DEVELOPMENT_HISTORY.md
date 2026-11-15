@@ -289,6 +289,26 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-15 — CSUB-2e, first slice: struct elements through a loaded pointer.**
+  - An element of a pointer to structs reached through a loaded pointer is an lvalue on both rails: `&set->slots[j]`,
+    `&d->fixits[i]`, `&c->claims[v->claim_id]`, `&t->slots[i]`. Its address is a pointer to the struct; a member of
+    it can be stepped, assigned as a value, compound-assigned or addressed; a store or a step reaches through a
+    pointer member it holds. The oracle had lowered each. The twin's lvalue walk through a loaded pointer
+    (`plv_chain`) gains two kinds, a struct element's member and the element itself. Its store through an element's
+    pointer member had asked for an `=`, a gap CSUB-2c had opened.
+  - **A both-rails defect.** `a[i]->m` of a struct element was read as `a[i].m` on both rails, an emit no C
+    compiler takes, in every position. Both now refuse it for C's reason.
+  - **Evidence.** `cfront_csub2_lvalues.c` (in `_ABI`) runs as the original on each rail's emit, and as each
+    rail's linkable artifact built as C11. A cross-rail test holds 6 lowered forms to one digest and to a strict
+    build of both emits, and 14 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 17 (CS2E1–CS2E17), each swept RED. The first sweep left one
+    uncaught: the twin had kept the struct element itself out of its inc/dec paths, while the arithmetic's own refusal
+    of a struct operand already refused it, for C's reason. That check is gone; the one that decides, a struct
+    element assigned as a value, now gives the oracle's reason for a compound assignment too.
+  - **The ratchet.** Still 27 of 58, but seven units move on: `bcir_bpe.c` and `bcir_diag.c` to the record table's
+    struct members, `bcir_emit.c` and `bcir_spm.c` to later CSUB-2e forms, `bcir_handoff.c` to a struct returned
+    through a prototype, and the hosted `bcir_decoder_gem.c` and `bcir_decoder_pack.c` to `strlen` (CSUB-5).
+
 - **2026-11-15 — CSUB-2c, first slice: pointer members of array elements.**
   - A pointer member of an array element is a value of its pointer type on both rails: `order[i].name`,
     `d->notes[i].message`, `set->slots[i].name.s`. It is loaded strided by the element, then compared, passed,

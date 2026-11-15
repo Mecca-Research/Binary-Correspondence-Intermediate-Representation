@@ -536,6 +536,9 @@ _mm_sfence();                      //                   store (release) fence ->
 - A pointer member of an array element -- `order[i].name`, `d->notes[i].message`, `set->slots[i].name.s` -- as a
   value of its pointer type: compared, passed, subscripted, dereferenced, followed with `->`, stored, and stored and
   stepped through. Its address is a `T **` (CSUB-2c).
+- An element of a pointer to structs reached through a loaded pointer -- `&set->slots[j]`, `s->slots[j].id++`,
+  `x = (s->slots[j].id += v)`, `&s->slots[j].id`, `s->rows[j].buf[1] = v` -- its address a pointer to the struct
+  (CSUB-2e).
 
 ## Known limits
 
@@ -669,8 +672,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   literal, `typeof` (`a struct or union defined outside a declaration of objects is not supported`; CSUB-2b).
 - An array element's pointer member stepped itself (`t[i].p++`), as a plain struct's (`s->p++`) is; and a
   function-pointer, bit-field or struct member of an element (`array-of-structs non-scalar element field`; CSUB-2c).
-- An object of a struct element reached through a loaded pointer -- `s->q[1].y--`, `&h->next[1]` -- and `->`
-  through a dereferenced `T **`, `(*q)->v`: the oracle lowers them, the twin refuses them (CSUB-2e).
+- `->` of a struct element, `a[i]->m` where `a[i]` is the struct itself (``member access `->` through a value that
+  is not a pointer to a struct or union``, C11 6.5.2.3p2; CSUB-2e).
+- Through a loaded pointer: `->` of a dereferenced `T **` (`(*q)->v`), a volatile object's address, a pointer
+  member's address (`&p->q->name`), a member array's element (`&p->q->arr[1]`) and a pointer element's address
+  (`&p->pp[j]`). The oracle lowers them, and the twin refuses them (CSUB-2e).
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
