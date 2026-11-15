@@ -311,6 +311,8 @@ _PTRVALUE = [
     #   V, `int` otherwise and on MSVC (CF-ENUMOBJ)
     "cfront_csub2_decl.c",  # array parameters of function-pointer types, `_Alignas` on locals, statics and globals,
     #   each object's address showing its alignment kept by the emit (CSUB-2a)
+    "cfront_csub2_strtab.c",  # string literals in block-scope static tables: names, escapes, pieces, records by
+    #   braces, elision and designators, scalar, thread-local and union statics (CSUB-2b)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10309,6 +10311,190 @@ def test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rai
                 assert cr.returncode != 0, (body, "Clang accepts what C forbids")
 
 
+# CSUB-2b: a string literal in a static's image -- (unit, what both rails' emits spell for its statics). Each entry is
+# the literal's canonical spelling (`lower._kstr`): printable ASCII but `"`, `\\` and `?` as itself, every other unit
+# a three-digit octal escape, whatever escapes and pieces the source spells it with
+_CSUB2_STR_LOWERED = (
+    (
+        'const char *f(uint32_t k) { static const char *const t[] = {"zero", "one", 0}; return t[k % 3u]; }',
+        ('{"zero", "one"}',),
+    ),
+    (
+        'uint32_t f(uint32_t k) { static const char *const t[] = {"a\\tb\\x41\\101\\"\\\\", "?" "?=", "\\x4" "1", ((""))};'
+        " return (uint32_t)t[k & 3u][0]; }",
+        ('{"a\\011bAA\\042\\134", "\\077\\077=", "\\0041", ""}',),
+    ),
+    (
+        "struct kw { const char *text; uint32_t id; };\n"
+        'uint32_t f(uint32_t k) { static const struct kw t[] = {{"if", 1u}, "else", 2u, [3] = {.id = 4u, .text = "do"}};'
+        " return t[k & 3u].id; }",
+        ('{{"if", 1u}, {"else", 2u}, [3] = {"do", 4u}}',),
+    ),
+    (
+        'uint32_t f(uint32_t k) { static char *p = "mut"; static const char *q[2] = {[0] = "x", [0] = 0, [1] = "y"};'
+        " return k + (uint32_t)p[0] + (q[0] == 0); }",
+        ('= "mut";', '{[1] = "y"}'),
+    ),
+)
+# ... and the forms refused: (unit, the reason's name in `lower`, whether C forbids it -- Clang refuses it too)
+_CSUB2_STR_REFUSED = (
+    (
+        'uint32_t f(void) { static const uint8_t *t[] = {"ab"}; return t[0][0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const signed char *t[] = {"ab"}; return (uint32_t)t[0][0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        "struct e { const unsigned char *n; };\n"
+        'uint32_t f(void) { static const struct e t[] = {{"a"}}; return t[0].n[0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const void *t[] = {"ab"}; return t[0] != 0; }',
+        "STATIC_STR",
+        False,
+    ),
+    ('uint32_t f(void) { static const char **t = "ab"; return t != 0; }', "STATIC_STR", False),
+    ('uint32_t f(void) { static _Bool b = "ab"; return b; }', "STATIC_STR", False),
+    ('uint32_t f(void) { static char c = "ab"; return (uint32_t)c; }', "STATIC_STR", True),
+    (
+        'uint32_t f(void) { static const uintptr_t u = "ab"; return (uint32_t)u; }',
+        "STATIC_STR",
+        True,
+    ),
+    (
+        'uint32_t f(void) { static const wchar_t *const t[] = {L"ab"}; return (uint32_t)t[0][0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {u8"ab"}; return (uint32_t)t[0][0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {"ab" + 1}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {(const char *)"ab"}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {1 ? "a" : "b"}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {(0, "a")}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    # an entry that evaluates to a literal is not the literal: Clang takes `("a", "b")` as "b"
+    (
+        'uint32_t f(void) { static const char *const t[] = {("a", "b")}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {_Generic(0, int: "a")}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+)
+
+
+def test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2b. A string literal -- in any redundant parentheses, of any pieces -- is the address of its array, an
+    address constant (C11 6.6p9), and so an entry of a static's image: a block-scope `static const char *const t[]`,
+    a pointer member of a static table's record, by braces, brace elision or designators, a scalar static, a later
+    store over an earlier one. Both rails spell each entry by one canonical spelling (`lower._kstr`), so the image
+    and the digest over it agree; `?` is an octal escape, so a trigraph `-std=c11` reads is never spelled. It is one
+    only where C converts that address without a diagnostic -- a pointer to plain `char`, from a literal of no prefix:
+    every other slot or prefix is refused alike, for one reason (`STATIC_STR`), and an address computed from the
+    literal is no constant here (`_NOT_CONSTANT`). `cfront_csub2_strtab.c` runs as the original on each rail's emit
+    (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
+    from bcir.frontends.cfront import lower as low
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, spelled) in enumerate(_CSUB2_STR_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            text = "\n".join(r.emitted.values())
+            assert all(a in text for a in spelled), (body, text[-700:])
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            assert all(a in emit for a in spelled), (body, emit[-700:])
+        clang = shutil.which("clang") if _CC else None
+        for n, (body, name, forbidden) in enumerate(_CSUB2_STR_REFUSED):
+            why = getattr(low, name)
+            src = head + body + "\n"
+            assert _oracle_refusal(src) == why, (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+            if forbidden and clang:
+                cr = subprocess.run(
+                    [clang, "-std=c23", "-fsyntax-only", path], capture_output=True, text=True
+                )
+                assert cr.returncode != 0, (body, "Clang accepts what C forbids")
+        if exe is None:
+            return
+        fx = "cfront_csub2_strtab.c"
+        src = open(os.path.join(_C, fx), encoding="utf-8").read()
+        r = compile_unit(src, check_clang=False)
+        driver = (
+            "#include <stdio.h>\nint main(void) {\n  for (uint32_t x = 0; x < 9u; x++)\n"
+            '    for (uint32_t y = 0; y < 9u; y++) printf("%u\\n", (unsigned)csub2_strtab(x * 977u, y * 31u + x));\n'
+            "  return 0;\n}\n"
+        )
+        quarantine = ("-I", _C, os.path.join(_C, "bcir_quarantine.c"))
+        compilers = [
+            c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c
+        ]
+        for cc in compilers:
+            want = _build_c11_run(d, cc, "original", f"{src}\n{driver}", ())
+            for rail, linkable in _linkable_artifacts(fx, r):
+                got = _build_c11_run(d, cc, f"linkable_{rail}", f"{linkable}\n{driver}", quarantine)
+                assert want and got == want, (
+                    f"{fx}: the {rail}'s linkable artifact under {cc} -std=c11"
+                )
+
+
+def _build_c11_run(d: str, cc: str, label: str, text: str, extra) -> str:
+    """Build `text` with `cc` under `-std=c11` -- the standard that reads trigraphs -- and run it; its stdout."""
+    cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+    with open(cpath, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    b = subprocess.run(
+        [cc, "-std=c11", "-O2", cpath, "-o", epath, *extra], capture_output=True, text=True
+    )
+    assert b.returncode == 0, f"{label}: build failed under {cc} -std=c11:\n{b.stderr[-1500:]}"
+    return subprocess.run([epath], capture_output=True, text=True, timeout=300).stdout.strip()
+
+
 def test_offsetof_and_the_header_typedefs_lower_and_refuse_alike_on_both_rails():
     """CSUB-1. `offsetof` is `__builtin_offsetof(type, member-designator)` on both rails (C11 7.19p3): a member, then
     any run of `.member` and `[constant]`, laid out on the target -- a `size_t` constant, folded where an integer
@@ -10565,7 +10751,8 @@ _STATICTAB_REFUSED = (
     ),
     ("uint32_t g = 5u;\nuint32_t f(uint32_t i) { static uint32_t *p = &g; return *p + i; }", "not"),
     (
-        'uint32_t f(uint32_t i) { static const char *n[2] = {"a", "b"}; return (uint32_t)n[i % 2u][0]; }',
+        # a string literal itself is an address constant (CSUB-2b: `cfront_csub2_strtab.c`); one computed from it is not
+        'uint32_t f(uint32_t i) { static const char *n[2] = {"a" + 1, "b"}; return (uint32_t)n[i % 2u][0]; }',
         "not",
     ),
     (
@@ -10607,7 +10794,7 @@ _STATICTAB_REASONS = {
 def test_static_initializer_refusals_on_both_rails():
     """CF-STATICTAB: every form of `_STATICTAB_REFUSED` is refused by both rails for the one reason it
     witnesses -- an entry the constant fold cannot evaluate, as C cannot (a parameter, another static, a local
-    `const`, an address, a string, a floating constant, a struct value, a division by zero, an oversized or
+    `const`, an address, one computed from a string literal, a floating constant, a struct value, a division by zero, an oversized or
     negative shift, a signed overflow), a union initialized through an anonymous member other than its first,
     and the walk's own refusals, which a static's initializer shares -- never lowered with a guessed value."""
     from bcir.frontends.cfront.cparse import CParseError

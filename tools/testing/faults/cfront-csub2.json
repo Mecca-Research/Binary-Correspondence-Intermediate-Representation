@@ -4,7 +4,8 @@
   "tools/testing/check_tests.py",
   "--require",
   "bcir.tests.test_c_cfront:_CC",
-  "bcir.tests.test_c_cfront:test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails"
+  "bcir.tests.test_c_cfront:test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+  "bcir.tests.test_c_cfront:test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails"
  ],
  "faults": [
   {
@@ -90,6 +91,90 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "  if(is(c,\"[\") || tdn){ fail(c,CC_FP_PARAM_ROWS); return 1; }",
    "new": "  if(0){ fail(c,CC_FP_PARAM_ROWS); return 1; }"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B1 oracle image: `?` spelled as itself (a trigraph under -std=c11)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            chr(u) if 0x20 <= u < 0x7F and chr(u) not in '\"\\\\?' else f\"\\\\{u:03o}\" for u in units",
+   "new": "            chr(u) if 0x20 <= u < 0x7F and chr(u) not in '\"\\\\' else f\"\\\\{u:03o}\" for u in units"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B2 twin image: `?` spelled as itself (a trigraph under -std=c11)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(ch>=0x20 && ch<0x7f && ch!='\"' && ch!='\\\\' && ch!='?') s[l++]=(char)ch;",
+   "new": "    if(ch>=0x20 && ch<0x7f && ch!='\"' && ch!='\\\\') s[l++]=(char)ch;"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B3 oracle image: an octal escape spelled short, merging with the next digit",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "f\"\\\\{u:03o}\" for u in units",
+   "new": "f\"\\\\{u:o}\" for u in units"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B4 twin image: an octal escape spelled short, merging with the next digit",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    else { s[l++]='\\\\'; s[l++]=(char)('0'+((ch>>6)&7u)); s[l++]=(char)('0'+((ch>>3)&7u));",
+   "new": "    else { s[l++]='\\\\'; if(ch>>6) s[l++]=(char)('0'+((ch>>6)&7u)); if(ch>>3) s[l++]=(char)('0'+((ch>>3)&7u));"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B5 oracle: a string literal taken into any pointer slot",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if pt is None or pt.kind != \"scalar\" or pt.name != \"char\" or bw:",
+   "new": "        if pt is None or bw:"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B6 twin: a string literal taken into any pointer slot",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(u->k!=IK_SCAL || s->kind!=2 || !u->ptee_char || u->bit_w){ fail(c,KV_STRSLOT); return 0; }",
+   "new": "    if(u->k!=IK_SCAL || s->kind!=2 || u->bit_w){ fail(c,KV_STRSLOT); return 0; }"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B7 twin: a member pointer's pointee taken as plain char whatever its sign",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      f->ptee_plain_char=(isptr||elptr) && ty.kind==2 && ty.is_plain_char && !ty.ptr_to_struct && !ty.ptr_to_fp;",
+   "new": "      f->ptee_plain_char=(isptr||elptr) && ty.kind==2 && !ty.ptr_to_struct && !ty.ptr_to_fp;"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B8 oracle: a wide or UTF literal taken as a plain one",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if prefix:\n                raise CLowerError(STATIC_STR)\n            return _KVal(0, 0, False, \"s\", _kstr(units))",
+   "new": "            return _KVal(0, 0, False, \"s\", _kstr(units))"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B9 twin: a wide or UTF literal taken as a plain one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(str_tok_prefix_len(tat(c,k))){ fail(c,KV_STRSLOT); return 1; }",
+   "new": "  if(0 && str_tok_prefix_len(tat(c,k))){ fail(c,KV_STRSLOT); return 1; }"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B10 oracle: an entry that evaluates to a literal taken as the literal",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if strings and isinstance(expr, cast.StringLit) and v in self.str_globals:",
+   "new": "        if strings and v in self.str_globals:"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B11 twin: an entry whose tokens run past its literal taken as the literal",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(np || j!=c->i) return 0;                          /* more than the literal: what it evaluates to is no constant */",
+   "new": "  if(0 && (np || j!=c->i)) return 0;                          /* more than the literal: what it evaluates to is no constant */"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B12 twin image: a string entry dropped as a zero",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(r[k].v || r[k].sp) r[m++]=r[k]; }",
+   "new": "    if(r[k].v) r[m++]=r[k]; }"
   }
  ]
 }

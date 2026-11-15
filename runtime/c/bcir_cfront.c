@@ -71,6 +71,8 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                                       * boundaries; `size` stays the DECLARED type width, for read promotion) */
                  int arr_count; int nadims; int adims[3];
                  int is_ptr; int ptee_size; int ptee_float; int ptee_sidx;
+                 int ptee_plain_char;   /* a pointer (or pointer-array element) member to plain `char`, which a string
+                                         * literal's address initializes in a static's image (CSUB-2) */
                  int ptee_depth;    /* a pointer (or pointer-array element) member's own pointer depth: 1 `T *m`,
                                      * 2 `T **m` -- what `*s->m` is, for `sizeof` (0: not a pointer) */
                  int elem_ptr;      /* arr_count>0 AND the element is a pointer (`T *arr[N]`): each element is
@@ -221,8 +223,9 @@ int bcir_cfront_target_chars(const char *target, int *char_signed, int *wchar_si
 typedef struct { char name[BCIR_CIR_NAME]; int assigned; int body; int addr; } mutent;
 
 typedef struct { long long lo, hi;                /* a bit range the initializer walk stored (CF-BRACE), and in a */
-                 unsigned long long v; int neg; } irange;   /* static's image the value stored there -- its 64-bit
-                                                             * two's complement, negative or not (CF-STATICTAB) */
+                 unsigned long long v; int neg;   /* static's image the value stored there -- its 64-bit two's */
+                 const char *sp; int spn; } irange;   /* complement, negative or not (CF-STATICTAB), or a string
+                                                       * literal's address by its spelling (`kstr`; CSUB-2) */
 typedef struct { int off, sidx, member; } iunion; /* a union the initializer walk gave a member, and which */
 /* A growable, NUL-terminated text the context owns (its allocator; kept across compiles, released by
  * bcir_cfront_context_destroy): `w` bytes written, `cap` held. */
@@ -1550,6 +1553,7 @@ static int p_struct_body(CC *c) {
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
       f->is_ptr=isptr; f->elem_ptr=elptr;
       f->ptee_size=(isptr||elptr)?ty.size:0; f->ptee_float=(isptr||elptr)?(ty.is_float?1:0):0;   /* pointee type */
+      f->ptee_plain_char=(isptr||elptr) && ty.kind==2 && ty.is_plain_char && !ty.ptr_to_struct && !ty.ptr_to_fp;
       f->ptee_sidx=((isptr||elptr) && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
       f->ptee_depth=(isptr||elptr)?(ty.ptr_depth?ty.ptr_depth:1):0;
       f->is_volatile=(ty.kind!=2 && ty.kind!=3 && ty.is_volatile)?1:0;   /* `volatile T m` (a pointer's `volatile`
@@ -1615,8 +1619,10 @@ static int p_struct_body(CC *c) {
  * arithmetic. Anything else -- an object, a call, `sizeof`, the comma, a floating constant, a pointer -- is no integer
  * constant expression (6.6p6), and neither is arithmetic C leaves undefined: `long long` arithmetic had folded `-1 > 5`
  * for `~0u > 5`, and a division by zero to 0. */
-typedef struct { unsigned long long p; int bits, sgn, kind; } kval;   /* a folded constant: its value's 64-bit two's
-  * complement, and its type -- an integer (kind 0) of `bits` bits, signed or not, a _Bool (1), a null pointer (2) */
+typedef struct { unsigned long long p; int bits, sgn, kind; const char *sp; int spn; } kval;   /* a folded constant: its
+  * value's 64-bit two's complement, and its type -- an integer (kind 0) of `bits` bits, signed or not, a _Bool (1), a
+  * null pointer (2) -- or the address of a string literal's array (3, only ever a static's entry whole: `sp` its
+  * canonical spelling, `spn` bytes, `kstr`) */
 static kval kint(unsigned long long p,int bits,int sgn);
 static long long kll(unsigned long long p);
 static int kpromote(const kval *a,kval *o);
@@ -7469,12 +7475,16 @@ static void p_stmt(CC *c);
  * rendered as its declaration's initializer (`kimage`). */
 #define KV_NOTCONST "a static initializer is not an integer constant expression"   /* the oracle's `_NOT_CONSTANT`: a
   * variable, a load, a call, an address, a floating value -- or arithmetic C leaves undefined, no constant either */
+#define KV_STRSLOT "a string literal in a static's initializer initializes only a pointer to plain char"   /* the
+  * oracle's `STATIC_STR` (CSUB-2): the address of a string literal's array is an address constant (C11 6.6p9), which
+  * C converts without a diagnostic only into a pointer to plain `char`, from a literal of no prefix */
 static unsigned long long kmask(int bits){ return bits>=64 ? ~0ull : (1ull<<bits)-1; }
 /* `p` reduced to a `bits`-bit integer type: modulo 2^bits, a signed type's two's complement (the oracle's `_kwrap`). */
 static unsigned long long kwrap(unsigned long long p,int bits,int sgn){
   p&=kmask(bits); if(sgn && bits<64 && ((p>>(bits-1))&1u)) p|=~kmask(bits); return p; }
 static long long kll(unsigned long long p){ return p>>63 ? -(long long)(~p)-1 : (long long)p; }   /* as signed */
-static kval kint(unsigned long long p,int bits,int sgn){ kval r; r.p=kwrap(p,bits,sgn); r.bits=bits; r.sgn=sgn; r.kind=0; return r; }
+static kval kint(unsigned long long p,int bits,int sgn){ kval r; r.p=kwrap(p,bits,sgn); r.bits=bits; r.sgn=sgn; r.kind=0;
+  r.sp=NULL; r.spn=0; return r; }
 /* An operand's integer promotion: a _Bool or a type narrower than int is an int; a pointer is no integer. */
 static int kpromote(const kval *a,kval *o){
   if(a->kind==2) return 0;
@@ -7597,6 +7607,8 @@ typedef struct {            /* one object or subobject the walk initializes (the
   int off, size;            /* its byte offset in the object, and its size */
   int bit_w, bit_off, abytes;   /* IK_SCAL: a bit-field member's width, bit offset and storage-unit span */
   int is_bool, is_atomic;   /* IK_SCAL (and IK_ARR's element): a `_Bool` / `_Atomic` slot */
+  int ptee_char;            /* IK_SCAL (and IK_ARR's element): a pointer, one level, to plain `char` -- the one slot a
+                             * string literal's address initializes in a static's image (KV_STRSLOT; CSUB-2) */
   bcir_ctype slot;          /* IK_SCAL (and IK_ARR's element): the declared type a stored value converts to */
 } iunit;
 typedef struct { iunit u; int idx, count, flat, top; } ifrm;   /* idx: the next subobject; count < 0: inferred */
@@ -7608,16 +7620,25 @@ typedef struct { uint32_t rid; int top_array, top_n, inferred, rng0, un0;
                                                  * its stores record their ranges only (CF-GBRACE); gname: the global */
 #define IW_MAXFRAMES 64     /* the subobjects one list may nest into (the oracle's `_INIT_MAX_FRAMES`) */
 
+/* `ty` is a pointer, one level, to plain `char` (`iunit.ptee_char`), and so is the member `F`. */
+static int ctype_ptee_char(const bcir_ctype *ty){
+  return ty->kind==2 && (ty->ptr_depth?ty->ptr_depth:1)==1 && ty->size==1 && ty->is_plain_char && !ty->ptr_to_struct &&
+         !ty->ptr_to_fp && !ty->is_float && !ty->is_bool && !ty->bit_width;
+}
+static int field_ptee_char(const field *F){
+  return (F->is_ptr || F->elem_ptr) && F->ptee_depth==1 && F->ptee_size==1 && F->ptee_plain_char && F->ptee_sidx<0 &&
+         !F->ptee_float;
+}
 /* A member's subobject: an array, a struct/union, or a scalar (a bit-field keeps its unit). */
 static void iunit_of_field(CC *c, iunit *u, const field *F, int base_off){
   memset(u,0,sizeof *u); u->off=base_off+F->byte_off; u->sidx=-1;
   if(farr(F)){ u->k=IK_ARR; u->sidx=F->elem_sidx; u->nd=F->nadims>0?F->nadims:1;
     if(F->nadims>0){ for(int d=0;d<3;d++) u->dims[d]=F->adims[d]; } else u->dims[0]=F->arr_count;
     u->es=F->size; u->size=F->arr_count*F->size; u->is_bool=F->is_bool; u->is_atomic=F->is_atomic;
-    u->slot=field_slot(F); return; }
+    u->slot=field_slot(F); u->ptee_char=field_ptee_char(F); return; }
   if(F->sidx>=0){ u->k=IK_AGG; u->sidx=F->sidx; u->size=c->s[F->sidx].size; return; }
   u->k=IK_SCAL; u->size=F->size; u->bit_w=F->bit_w; u->bit_off=F->bit_off; u->abytes=F->access_bytes;
-  u->is_bool=F->is_bool; u->is_atomic=F->is_atomic; u->slot=field_slot(F);
+  u->is_bool=F->is_bool; u->is_atomic=F->is_atomic; u->slot=field_slot(F); u->ptee_char=field_ptee_char(F);
 }
 /* Element `i` of the array `a`: a row of a multi-dimensional array, else a struct or scalar element. */
 static void iunit_elem(iunit *e, const iunit *a, int i){
@@ -7726,10 +7747,14 @@ static int init_overrides(CC *c, const iwalk *W, long long lo, long long hi){
   return 0;
 }
 /* The value the static's scalar subobject `u` holds from the constant `a` -- C's conversion as if by assignment --
- * recorded on its store's range `r` (the oracle's `_kleaf`): a pointer holds only the null pointer, a floating one the
- * integer itself, which the rendered initializer converts exactly as the source's does. */
+ * recorded on its store's range `r` (the oracle's `_kleaf`): a pointer holds only the null pointer -- or, a pointer to
+ * plain `char`, a string literal's address, held as its spelling (KV_STRSLOT) -- a floating one the integer itself,
+ * which the rendered initializer converts exactly as the source's does. */
 static int kleaf(CC *c,const kval *a,const iunit *u,irange *r){
   const bcir_ctype *s=&u->slot; unsigned long long p=a->p; int neg=a->sgn && (p>>63);
+  if(a->kind==3){                                      /* `T *` of plain `char`, one level, no struct or function */
+    if(u->k!=IK_SCAL || s->kind!=2 || !u->ptee_char || u->bit_w){ fail(c,KV_STRSLOT); return 0; }
+    r->v=0; r->neg=0; r->sp=a->sp; r->spn=a->spn; return 1; }
   if(u->k!=IK_SCAL || s->kind==1){ fail(c,KV_NOTCONST); return 0; }
   if(s->kind==2 || s->kind==3){ if(p){ fail(c,KV_NOTCONST); return 0; } neg=0; }
   else if(s->is_float){}                               /* the integer itself, signed as its own type */
@@ -7745,6 +7770,7 @@ static void init_store(CC *c, iwalk *W, const iunit *u, uint32_t v, int indexed)
   long long lo=(long long)u->off*8+u->bit_off, hi=lo+(u->bit_w?u->bit_w:(long long)u->size*8);
   if(!CC_ENSURE(c,c->iw_rng,c->iw_nrng,c->iw_caprng)) return;
   c->iw_rng[c->iw_nrng].lo=lo; c->iw_rng[c->iw_nrng].hi=hi; c->iw_rng[c->iw_nrng].v=0; c->iw_rng[c->iw_nrng].neg=0;
+  c->iw_rng[c->iw_nrng].sp=NULL; c->iw_rng[c->iw_nrng].spn=0;
   if(W->skip){ c->iw_nrng++; return; }              /* a file-scope initializer's shape: the range, no value */
   if(W->konst){ if(kleaf(c,&W->kv,u,&c->iw_rng[c->iw_nrng])) c->iw_nrng++; return; }   /* a static's image: no claim */
   c->iw_nrng++;
@@ -7823,6 +7849,45 @@ static int str_units(CC *c, uint32_t **out, int *n_out, int *unit_out){
       u[n++]=(uint32_t)val; } }
   *out=u; *n_out=n; *unit_out=unit; return 1;
 }
+/* A plain string literal's code units as both rails spell the literal in a static's image (the oracle's `_kstr`):
+ * printable ASCII as itself but for `"`, `\\` and `?` (a trigraph's first character, which `-std=c11` reads), every
+ * other unit a three-digit octal escape -- one spelling for every source spelling of the same array. In the scratch
+ * arena; NULL on exhaustion. */
+static char *kstr(CC *c, const uint32_t *u, int n, int *len){
+  size_t cap; char *s;
+  if(n<0 || !bcir_size_mul((size_t)n,4u,&cap) || !bcir_size_add(cap,3u,&cap)){ cc_raise_oom(c); return NULL; }
+  s=(char *)bcir_host_arena_allocate(&c->scratch,cap,1u);
+  if(!s){ cc_raise_oom(c); return NULL; }
+  int l=0; s[l++]='"';
+  for(int i=0;i<n;i++){ uint32_t ch=u[i];
+    if(ch>=0x20 && ch<0x7f && ch!='"' && ch!='\\' && ch!='?') s[l++]=(char)ch;
+    else { s[l++]='\\'; s[l++]=(char)('0'+((ch>>6)&7u)); s[l++]=(char)('0'+((ch>>3)&7u)); s[l++]=(char)('0'+(ch&7u)); } }
+  s[l++]='"'; s[l]=0; *len=l; return s;
+}
+/* A static's whole entry that lowered to `v` from the token `at` to the cursor, read as the address
+ * of a string literal's array -- an address constant (C11 6.6p9) -- when `v` is a literal the function interned and
+ * the entry's tokens are that literal and only it, in any redundant parentheses (the oracle's `_const_value(...,
+ * strings=True)`, which asks the same of the entry's node): `("a", "b")` evaluates to "b", which is no constant here,
+ * and neither is anything else that makes a claim. Its canonical spelling (`kstr`) in *out,
+ * kind 3. A literal of a prefix is refused (KV_STRSLOT). 0, nothing failed, for any other entry. */
+static int kstr_entry(CC *c, int at, uint32_t v, kval *out){
+  int lit=0;
+  for(int k=0;k<c->fn->n_host_literals && !lit;k++) lit=c->fn->host_literals[k].rid==v;
+  if(!lit) return 0;
+  int k=at, np=0; while(tok_is(tat(c,k),"(")){ k++; np++; }
+  if(tat(c,k)->k!=T_STR) return 0;
+  int j=k; while(tat(c,j)->k==T_STR) j++;
+  while(np>0 && tok_is(tat(c,j),")")){ j++; np--; }
+  if(np || j!=c->i) return 0;                          /* more than the literal: what it evaluates to is no constant */
+  if(str_tok_prefix_len(tat(c,k))){ fail(c,KV_STRSLOT); return 1; }
+  int save=c->i; uint32_t *units; int n, unit; c->i=k;
+  int ok=str_units(c,&units,&n,&unit);
+  c->i=save;
+  if(!ok) return 1;                                    /* refused, for the decoder's reason */
+  int len=0; char *sp=kstr(c,units,n,&len);
+  if(!sp) return 1;
+  *out=kint(0,0,0); out->kind=3; out->sp=sp; out->spn=len; return 1;
+}
 /* Initialize the character array `u` (of `count` elements; < 0: the declared array its literal sizes) from the
  * string literal at the cursor: one store per code unit, the NUL and the rest left to the zero baseline (the
  * oracle's `_init_string`); a literal longer than the array is refused. */
@@ -7843,10 +7908,12 @@ static void init_list(CC *c, iwalk *W, const iunit *obj, int top, int flat);
 /* An initializer entry's value (the cursor at it), evaluated once, before it is placed: lowered -- or, in a static's
  * image, folded into W->kv; in a file-scope initializer's shape, skipped (the oracle's `_init_value`). */
 static void skip_init_expr(CC *c, const tok *nm);   /* fwd: a file-scope initializer's entry, skipped */
+static int kstr_entry(CC *c, int at, uint32_t v, kval *out);   /* fwd: a string literal as a static's entry */
 static uint32_t init_value(CC *c, iwalk *W){
   if(W->skip){ skip_init_expr(c,W->gname); return 0; }   /* a file-scope initializer's shape: no value (CF-GBRACE) */
   if(!W->konst) return p_expr(c);
-  size_t from=c->fn->n_claims; uint32_t v=p_expr(c);
+  size_t from=c->fn->n_claims; int at=c->i; uint32_t v=p_expr(c);
+  if(!c->failed && kstr_entry(c,at,v,&W->kv)) return 0;
   if(!c->failed) W->kv=kfold(c,from,v);
   return 0;
 }
@@ -7931,7 +7998,7 @@ static iunit iunit_struct(CC *c, int si){
 static iunit iunit_array(const bcir_ctype *ty, int si, int es, const int *dims, int nd){
   iunit u; memset(&u,0,sizeof u); u.k=IK_ARR; u.sidx=ty->kind==1?si:-1; u.nd=nd<1?1:nd;
   for(int d=0;d<3 && d<u.nd;d++) u.dims[d]=dims[d];
-  u.es=es; u.slot=*ty; u.slot.nadims=0; u.is_bool=ty->is_bool; u.is_atomic=ty->is_atomic;
+  u.es=es; u.slot=*ty; u.slot.nadims=0; u.is_bool=ty->is_bool; u.is_atomic=ty->is_atomic; u.ptee_char=ctype_ptee_char(ty);
   u.size=es; for(int d=0; d<u.nd; d++) u.size*=u.dims[d];
   return u;
 }
@@ -7939,6 +8006,7 @@ static iunit iunit_array(const bcir_ctype *ty, int si, int es, const int *dims, 
 static iunit iunit_scalar(CC *c, const bcir_ctype *ty){
   iunit u; memset(&u,0,sizeof u); u.k=IK_SCAL; u.sidx=-1; u.slot=*ty; u.slot.nadims=0;
   u.size=ty->kind==2?cc_abi(c)->pointer_size:ty->size; u.is_bool=ty->is_bool; u.is_atomic=ty->is_atomic;
+  u.ptee_char=ctype_ptee_char(ty);
   return u;
 }
 /* A static's image rendered as its declaration's initializer (the oracle's `_render_image`) -- the brace list both
@@ -7948,8 +8016,9 @@ static iunit iunit_scalar(CC *c, const bcir_ctype *ty){
  * static its elements flat, as it is declared. */
 #define KV_ANONUNION "a static union initialized through an anonymous member other than its first"   /* the oracle's
   * `_ANON_UNION`: C names that member only through its own leaves, which the brace list does not spell */
-typedef struct { long long lo, w; unsigned long long v; int neg; int at; } krec;   /* a stored scalar: its bit offset
-  * and width, its value, and the order it was stored in (the last store wins) */
+typedef struct { long long lo, w; unsigned long long v; int neg; int at; const char *sp; int spn; } krec;   /* a stored
+  * scalar: its bit offset and width, its value (or a string's spelling), and the order it was stored in (the last
+  * store wins) */
 typedef struct { krec *r; int n; char *s; size_t len, cap; const iwalk *W; } kimg;   /* the image + the text so far */
 static int krec_cmp(const void *x,const void *y){
   const krec *a=(const krec *)x, *b=(const krec *)y;
@@ -7963,7 +8032,9 @@ static void kput(CC *c,kimg *m,const char *s,size_t n){   /* append to the text 
   memcpy(m->s+m->len,s,n); m->len+=n; m->s[m->len]=0; }
 static int kfirst(const kimg *m,long long lo){   /* the first stored scalar at bit `lo` or after it */
   int a=0,b=m->n; while(a<b){ int h=a+(b-a)/2; if(m->r[h].lo<lo) a=h+1; else b=h; } return a; }
-static void kspell(CC *c,kimg *m,const krec *r){   /* `Nu`, `-N`, and the one negative with no positive counterpart */
+static void kspell(CC *c,kimg *m,const krec *r){   /* `Nu`, `-N`, and the one negative with no positive counterpart;
+                                                    * a string literal's address by its canonical spelling */
+  if(r->sp){ kput(c,m,r->sp,(size_t)r->spn); return; }
   char d[48]; int l = !r->neg ? snprintf(d,sizeof d,"%lluu",r->v)
     : r->v==(1ull<<63) ? snprintf(d,sizeof d,"(-9223372036854775807 - 1)") : snprintf(d,sizeof d,"-%llu",0ull-r->v);
   kput(c,m,d,(size_t)l); }
@@ -8007,11 +8078,11 @@ static char *kimage(CC *c,const iwalk *W,const iunit *obj){
   krec *r=(krec *)bcir_host_arena_allocate(&c->scratch,(size_t)n*sizeof *r,sizeof(long long));
   if(!r){ cc_raise_oom(c); return NULL; }
   for(int k=0;k<n;k++){ const irange *g=&c->iw_rng[W->rng0+k];
-    r[k].lo=g->lo; r[k].w=g->hi-g->lo; r[k].v=g->v; r[k].neg=g->neg; r[k].at=k; }
+    r[k].lo=g->lo; r[k].w=g->hi-g->lo; r[k].v=g->v; r[k].neg=g->neg; r[k].at=k; r[k].sp=g->sp; r[k].spn=g->spn; }
   qsort(r,(size_t)n,sizeof *r,krec_cmp);
   for(int k=0;k<n;k++){                                   /* each scalar's last store, and only a nonzero one */
     if(k+1<n && r[k+1].lo==r[k].lo && r[k+1].w==r[k].w) continue;
-    if(r[k].v) r[m++]=r[k]; }
+    if(r[k].v || r[k].sp) r[m++]=r[k]; }
   if(!m) return NULL;
   kimg im; memset(&im,0,sizeof im); im.r=r; im.n=m; im.W=W;
   iunit top=*obj;

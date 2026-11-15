@@ -715,16 +715,37 @@ _NOT_CONSTANT = "a static initializer is not an integer constant expression"
 # a union given an anonymous member other than its first: C names that member only through its own
 # leaves, which the rendered brace list does not spell
 _ANON_UNION = "a static union initialized through an anonymous member other than its first"
+#: A string literal is an entry of a static's image only as the address of its array, an address constant (C11
+#: 6.6p9), and only where C converts that address without a diagnostic: into a pointer to plain `char`, at any
+#: qualification, from a literal of no prefix (CSUB-2; the twin's `KV_STRSLOT`). A wide or UTF literal, and any other
+#: slot -- an integer, a `_Bool`, a pointer to `unsigned char` or to a pointer -- are refused for this one reason.
+STATIC_STR = "a string literal in a static's initializer initializes only a pointer to plain char"
 
 
 class _KVal(NamedTuple):
     """A folded constant: its value and its C type -- an integer (`kind` "i") of `bits` bits, signed or
-    not; a `_Bool` ("b"); or a null pointer ("p")."""
+    not; a `_Bool` ("b"); a null pointer ("p"); or the address of a string literal's array ("s", only ever a
+    static's entry whole: `sp` its canonical spelling, `_kstr`)."""
 
     v: int
     bits: int = 32
     signed: bool = True
     kind: str = "i"
+    sp: str = ""
+
+
+def _kstr(units: list) -> str:
+    """A plain string literal's code units as both rails spell the literal in a static's image: printable ASCII
+    as itself but for `"`, `\\` and `?` (a trigraph's first character, which `-std=c11` reads), every other unit
+    a three-digit octal escape -- one spelling for every source spelling of the same array, whatever its escapes
+    and its pieces (the twin's `kstr`)."""
+    return (
+        '"'
+        + "".join(
+            chr(u) if 0x20 <= u < 0x7F and chr(u) not in '"\\?' else f"\\{u:03o}" for u in units
+        )
+        + '"'
+    )
 
 
 def _kwrap(v: int, bits: int, signed: bool) -> int:
@@ -857,8 +878,14 @@ def _kconvert(a: _KVal, t: _KVal) -> _KVal:
 
 def _kleaf(a: _KVal, ct: CType, bw: int) -> int:
     """The value the static's scalar subobject `ct` (a bit-field of `bw` bits) holds from the constant
-    `a`: C's conversion as if by assignment. A pointer holds only the null pointer; a floating one holds
+    `a`: C's conversion as if by assignment. A pointer holds only the null pointer -- or, a pointer to plain
+    `char`, the address of a string literal's array, held as its spelling (`STATIC_STR`); a floating one holds
     the integer itself, which the rendered initializer converts exactly as the source's does."""
+    if a.kind == "s":
+        pt = ct.of if ct.kind == "pointer" else None
+        if pt is None or pt.kind != "scalar" or pt.name != "char" or bw:
+            raise CLowerError(STATIC_STR)
+        return a.sp
     if ct.kind in ("pointer", "funcptr"):
         return _kconvert(a, _KVal(0, 0, False, "p")).v
     if ct.kind != "scalar" or ct.name == "void":
@@ -870,9 +897,12 @@ def _kleaf(a: _KVal, ct: CType, bw: int) -> int:
     return _kwrap(a.v, bw or (ct.bit_width if ct.is_bitint else ct.size * 8), ct.signed)
 
 
-def _kspell(v: int) -> str:
+def _kspell(v: "int | str") -> str:
     """A static's scalar as its rendered initializer spells it: `Nu` -- exact in whatever type it
-    initializes -- `-N`, and the one negative with no positive counterpart as an expression."""
+    initializes -- `-N`, and the one negative with no positive counterpart as an expression; a string
+    literal's address by the literal's canonical spelling (`_kstr`)."""
+    if isinstance(v, str):
+        return v
     if v >= 0:
         return f"{v}u"
     return "(-9223372036854775807 - 1)" if v == -(1 << 63) else str(v)
@@ -4336,7 +4366,7 @@ class _FuncLowerer:
         image (`w.const`), folded (`_const_value`); a file-scope initializer's shape (`w.shape`) takes none."""
         if w.shape:
             return None
-        return self._const_value(expr) if w.const else self._rvalue(expr)
+        return self._const_value(expr, strings=True) if w.const else self._rvalue(expr)
 
     # --- a static's constant image (CF-STATICTAB) ---
 
@@ -4439,16 +4469,29 @@ class _FuncLowerer:
             else:
                 setattr(self, k, v)
 
-    def _const_value(self, expr) -> _KVal:
+    def _const_value(self, expr, strings: bool = False) -> _KVal:
         """One entry of a static's initializer, as C evaluates an integer constant expression: lowered as
         any expression is, into the evaluation's scratch block, and the claims it made folded in order -- a
         constant (a literal, a `sizeof`, an enumerator) in its declared type, arithmetic, a cast, a select,
         each over values the entry itself produced. Any other claim, or a value produced elsewhere (a
         variable, a parameter, a string, a function), is not an integer constant expression. The twin's
-        `kfold`."""
+        `kfold`.
+        `strings`: the entry is a static's whole entry, which may also be a string literal -- in any redundant
+        parentheses, which the parse drops -- the address of its array (C11 6.6p9), its canonical spelling
+        (`_kstr`; the twin's `kstr_entry`). Only the literal itself is one: an entry that merely evaluates to it,
+        `("a", "b")` or a `_Generic` selecting it, is no constant here. Only a literal of no prefix is one
+        (`STATIC_STR`)."""
         block = self.block_stack[-1]
         start = len(block)
         v = self._rvalue(expr)
+        if strings and isinstance(expr, cast.StringLit) and v in self.str_globals:
+            try:
+                prefix, units = str_units(self.str_globals[v], lambda p: str_elem_size(p, self.abi))
+            except ValueError as e:
+                raise CLowerError(str(e)) from None
+            if prefix:
+                raise CLowerError(STATIC_STR)
+            return _KVal(0, 0, False, "s", _kstr(units))
         vals: dict = {}
         for c in block[start:]:
             if not isinstance(c, Claim) or len(c.wr) != 1 or any(r not in vals for r in c.rd):

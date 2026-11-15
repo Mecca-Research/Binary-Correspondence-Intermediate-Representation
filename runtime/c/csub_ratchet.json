@@ -18,10 +18,7 @@
       "rung": "CSUB-5"
     },
     "bcir_artifact_bundle.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: a static initializer is not an integer constant expression",
-      "construct": "a static table whose initializers are address constants (C11 6.6p9): a string table",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_asn1.c": {
       "verdict": "clean"
@@ -88,8 +85,8 @@
     },
     "bcir_decoder_pack.c": {
       "verdict": "blocked",
-      "blocker": "parse error: a static initializer is not an integer constant expression",
-      "construct": "a static table whose initializers are address constants (C11 6.6p9): a string table",
+      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
+      "construct": "an address-of an element of an array member reached through a loaded pointer, `&c->claims[v->claim_id]`",
       "rung": "CSUB-2"
     },
     "bcir_decoder_train.c": {
@@ -135,10 +132,7 @@
       "rung": "CSUB-2"
     },
     "bcir_jer.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: a static initializer is not an integer constant expression",
-      "construct": "a static table whose initializers are address constants (C11 6.6p9): a string table",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_kplan.c": {
       "verdict": "blocked",
@@ -243,10 +237,7 @@
       "verdict": "clean"
     },
     "bcir_sp_listing.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: a static initializer is not an integer constant expression",
-      "construct": "a static table whose initializers are address constants (C11 6.6p9): a string table",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_spm.c": {
       "verdict": "blocked",
