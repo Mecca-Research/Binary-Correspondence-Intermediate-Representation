@@ -289,6 +289,21 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-15 — CSUB-2b, second half: untagged struct tables in a block.**
+  - An untagged struct or union a block declaration defines lowers on both rails: `static const struct { ... } t[]`,
+    automatic or static, a union, a nested untagged member, several declarators, a `for` declaration's. Both rails
+    had refused every block-scope struct definition, each for a different reason.
+  - Nothing else can name the type, so each emit opens the function with a typedef of it, its members as the source
+    spells them, under `__bcir_anonN`, a name reserved to the implementation. The unit's existing respelling of
+    synthesized tags then names every object, temp and copy by it. The twin carries the typedef lines on its
+    function record, `bcir_func.block_types`, which only the emit reads.
+  - A tag defined in a block is refused alike, as is a struct or union defined anywhere else a type is named.
+  - **Evidence.** `cfront_csub2_untagged.c` runs as the original on each rail's emit, and each rail's linkable
+    artifact of it, built as C11, returns what the original does. A cross-rail test holds 4 lowered forms to one
+    digest and to both emits' typedefs, and 10 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 12 more (CS2B13–CS2B24), each swept RED.
+  - **The ratchet.** `bcir_ab_listing.c` and `bcir_emit.c` move on to the record table (CSUB-2c).
+
 - **2026-11-15 — CSUB-2b, first half: string literals in a static's image.**
   - A string literal is the address of its array, an address constant (C11 6.6p9). Both rails take one as an entry
     of a static's image: a block-scope `static const char *const t[]`, a pointer member of a static table's records,
@@ -307,6 +322,12 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     the two faults aim at it.
   - **The ratchet.** `bcir_artifact_bundle.c`, `bcir_jer.c` and `bcir_sp_listing.c` compile clean (25 of 58).
     `bcir_decoder_pack.c` stops at `&c->claims[v->claim_id]`, a CSUB-2e form.
+  - **What CI on Clang 23.1.6 found.** The twin had declared an inferred array of pointers, `T *a[] = {...}`, as
+    `uint32_t *a[n]`: it recorded the pointee only for an explicit size. The defect predates this slice. It was
+    invisible while such an array held only null pointers; a string made Clang 23 refuse the emit, which makes
+    `-Wincompatible-pointer-types` an error. Automatic locals had it too. The fix takes the inferred array as the
+    sized one. The CSUB-2 tests' C11 linkable build now makes that warning an error on every toolchain, so Clang 18
+    and GCC catch it as well, and fault CS2B25 holds it RED.
 
 - **2026-11-14 — CSUB-2a: array parameters of function types, and `_Alignas` on objects.**
   - The first slice of the table-idioms rung, on both rails. A function-pointer type's array parameter is a pointer

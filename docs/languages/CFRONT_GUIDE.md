@@ -530,6 +530,9 @@ _mm_sfence();                      //                   store (release) fence ->
   block, a pointer member of a static table's records, a scalar static: the address of its array, an address constant
   (C11 6.6p9). Both rails spell each entry by one canonical spelling, every code unit past printable ASCII, and `"`,
   `\` and `?`, an octal escape, so no trigraph reaches a C11 build (CSUB-2b).
+- An untagged struct or union a block declaration defines -- `static const struct { uint16_t bit; uint16_t w; } t[]
+  = {...};`, automatic or static, several declarators, a `for` declaration's. Each emit opens the function with a
+  typedef of it, `typedef struct { ... } __bcir_anonN;`, and names the type by it (CSUB-2b).
 
 ## Known limits
 
@@ -658,6 +661,9 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - A string literal in a static's image anywhere but a pointer to plain `char` (`a string literal in a static's
   initializer initializes only a pointer to plain char`), from a literal with a prefix, or an entry that only
   evaluates to one -- `"ab" + 1`, a cast, `?:`, `("a", "b")`, which is no constant expression (CSUB-2b).
+- A struct or union defined with a tag in a block (`a struct or union with a tag defined in a block is not
+  supported`), and one defined anywhere but a declaration of objects -- a cast, `sizeof`, a parameter, a compound
+  literal, `typeof` (`a struct or union defined outside a declaration of objects is not supported`; CSUB-2b).
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
