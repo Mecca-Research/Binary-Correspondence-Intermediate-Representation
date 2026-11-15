@@ -8728,8 +8728,10 @@ static void p_stmt_inner(CC *c) {
         * `struct P a[N]`: a SCALAR-kind array of struct-sized elements; carry the struct tag so the decl
         * emits `struct P a[N]` and `a[i].field` strides by the element struct (the venv keeps `si`). */
         fits(c,ar->agg,BCIR_CIR_AGG,"%s %s",ty.is_union?"union":"struct",ty.tag); }
-      else if(arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`: a
-        * SCALAR array of pointer-wide elements; the decl + `a[i]` load/store carry the pointee (void* for now) */
+      else if(is_arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`
+        * or `T *a[] = {...}`: a SCALAR array of pointer-wide elements; the decl + `a[i]` load/store carry the pointee.
+        * An inferred one had fallen through to the pointer local's branch below and been declared `uint32_t *a[n]`,
+        * which Clang 23 refuses for a string or another pointer type in its initializer (CSUB-2) */
         ar->ptr_depth=ty.ptr_depth?ty.ptr_depth:1;
         ar->ptee_bytes=(uint32_t)(ty.size>0?ty.size:0); ar->ptee_signed=(uint8_t)(ty.signd?1:0);   /* the decl's `T` */
         ar->ptee_float=(uint8_t)(ty.is_float?1:0); ar->ptee_plain_char=(uint8_t)(ty.is_plain_char?1:0);

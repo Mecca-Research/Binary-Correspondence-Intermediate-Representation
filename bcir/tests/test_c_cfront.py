@@ -10484,12 +10484,16 @@ def test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails(
 
 
 def _build_c11_run(d: str, cc: str, label: str, text: str, extra) -> str:
-    """Build `text` with `cc` under `-std=c11` -- the standard that reads trigraphs -- and run it; its stdout."""
+    """Build `text` with `cc` under `-std=c11` -- the standard that reads trigraphs -- and run it; its stdout. A
+    pointer initialized from another pointer type is an error, as Clang 23 makes it and `_build_run_c` asks: the twin
+    had declared `T *a[] = {...}` as `uint32_t *a[n]`, which Clang 18 and GCC only warn of."""
     cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
     with open(cpath, "w", encoding="utf-8") as fh:
         fh.write(text)
     b = subprocess.run(
-        [cc, "-std=c11", "-O2", cpath, "-o", epath, *extra], capture_output=True, text=True
+        [cc, "-std=c11", "-O2", "-Werror=incompatible-pointer-types", cpath, "-o", epath, *extra],
+        capture_output=True,
+        text=True,
     )
     assert b.returncode == 0, f"{label}: build failed under {cc} -std=c11:\n{b.stderr[-1500:]}"
     return subprocess.run([epath], capture_output=True, text=True, timeout=300).stdout.strip()

@@ -175,6 +175,13 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "    if(r[k].v || r[k].sp) r[m++]=r[k]; }",
    "new": "    if(r[k].v) r[m++]=r[k]; }"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B25 twin: an inferred array of pointers declared without its pointee (`uint32_t *a[n]`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      else if(is_arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`",
+   "new": "      else if(arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`"
   }
  ]
 }
