@@ -21,7 +21,7 @@ import time
 from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
-from bcir.frontends.cfront.lower import ROW_PTR_ELEM, ROW_PTR_PLACE, ROW_VALUE
+from bcir.frontends.cfront.lower import ROW_ADDR, ROW_PTR_ELEM, ROW_PTR_PLACE, ROW_VALUE
 from bcir.model import Domain
 from bcir.toolchain import BuildFailed, host_link_args
 from bcir.verify import cfront_structural_digest
@@ -325,6 +325,8 @@ _PTRVALUE = [
     #   returned by value, addressed, on direct arrays, member arrays and through loaded pointers (CSUB-2c)
     "cfront_csub2_rowptr.c",  # a pointer-to-array member `T (*m)[N]`: its elements by the row, the row sized, the
     #   pointer tested, copied and passed to a row-pointer parameter, through values, elements and loaded pointers (CSUB-2d)
+    "cfront_csub2_rows.c",  # a row of a multi-dimensional array used as a value -- passed, assigned, chosen, stepped,
+    #   compared, dereferenced -- of statics, globals, VLAs, parameters, members and row pointers; volatile addresses (CSUB-2d)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -7999,24 +8001,22 @@ def test_a_decayed_member_array_digests_apart_from_its_element():
         assert len(digests) == 2 and digests[0] != digests[1], (tmpl, digests)
 
 
-# CF-DECAY: a row -- of a multi-dimensional local, parameter or global, or a multi-dimensional member array --
-# used as a value, and arithmetic on a multi-dimensional array, would decay to a `T (*)[N]` the value model
-# has no spelling for (its emit declares the array flat, so C would step an element where the source steps a
-# row). Both rails refuse each one; both had read the row's flat element silently.
+# CF-DECAY: arithmetic on a multi-dimensional array, and a multi-dimensional member array used as a value, would
+# decay to a `T (*)[N]` the value model has no spelling for (its emit declares the array flat, so C would step an
+# element where the source steps a row). Both rails refuse each one; both had read the row's flat element silently.
+# A row of scalars used as a value -- `l2[1]`, `m[1]`, `gb[1]`, which this table refused until CSUB-2d -- is the
+# pointer to its first element on both rails now (`_CSUB2W_LOWERED`).
 _DECAY_REFUSED = (
-    "uintptr_t f(void) { uint16_t l2[4][6] = {0}; return (uintptr_t)l2[1] - (uintptr_t)l2; }",
-    "uint16_t *f(void) { static uint16_t l2[4][6]; return l2[1]; }",
     "uintptr_t f(void) { uint16_t l2[4][6] = {0}; return (uintptr_t)(l2 + 1) - (uintptr_t)l2; }",
     "uintptr_t f(uint8_t m[3][5]) { return (uintptr_t)(m + 1) - (uintptr_t)m; }",
-    "uint8_t *f(uint8_t m[3][5]) { return m[1]; }",
-    "uint8_t gb[3][5];\nuint8_t *f(void) { return gb[1]; }",
     "struct s { uint8_t m[2][3]; };\nuint8_t *f(struct s *p) { return (uint8_t *)p->m; }",
 )
 
 
 def test_a_row_used_as_a_value_is_refused_on_both_rails():
     """CF-DECAY: every form in `_DECAY_REFUSED` is refused by both rails (the twin with its refusal status,
-    never a crash) -- each had lowered to a read of the row's flat element."""
+    never a crash) -- each had lowered to a read of the row's flat element. (A row of scalars used as a value lowers
+    since CSUB-2d: `test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails`.)"""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
 
@@ -8749,14 +8749,8 @@ _GAPS_REFUSED = (
     ),
     (
         "uint32_t f(uint32_t i) { uint8_t m[3][5] = {0}; uint8_t *r = (uint8_t *)&m[i % 3u]; return r[1]; }",
-        "partial indexing of a multi-dimensional array",
-        "the address of a row of a multi-dimensional array",
-    ),
-    (
-        "struct s { uint8_t c; uint32_t a[2][3]; };\nstruct s ga[4];\n"
-        "uint32_t f(uint32_t i) { uint32_t *r = ga[i % 4u].a[1]; return r[0]; }",
-        "partial indexing of a struct member array",
-        "partial indexing of a struct member array",
+        ROW_ADDR,
+        ROW_ADDR,
     ),
     (
         "uint32_t g = 5u;\nuint32_t f(uint32_t i) { extern uint32_t g; return g + i; }",
@@ -8781,7 +8775,7 @@ def test_initializer_and_declaration_refusals_on_both_rails():
     excess initializer, an override of an initialized subobject, a string too long for its array, a
     non-character array given a string or an expression, a designator outside its array (past the end, past
     INT_MAX), a nesting past the 64 subobjects both walks bound, an unsized array with nothing to count, a
-    local pointer to an array, a row's address, a partial member-array index, a block-scope `extern` -- and
+    local pointer to an array, a row's address, a block-scope `extern` -- and
     the twin exits with its refusal, never a crash or a truncated walk."""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
@@ -10992,8 +10986,8 @@ _CSUB2R_LOWERED = (
 )
 # ... and the forms refused: (unit, the reason's text both rails' reasons begin with)
 _CSUB2R_REFUSED = (
-    # a row used as a value: a member's, and a row-pointer parameter's, which both rails had read as its first element
-    ("uint32_t f(struct fn *p, uint32_t k) { return len(p->calls[k]); }", ROW_VALUE),
+    # the row `*` designates: a member's, and a row-pointer parameter's, which both rails had read as its first element
+    # (a row by its subscript is a value: `_CSUB2W_LOWERED`)
     ("uint32_t f(struct fn *p) { char *r = *p->calls; return (uint32_t)r[0]; }", ROW_VALUE),
     ("uint32_t f(char (*rows)[4]) { char *r = *rows; return (uint32_t)r[1]; }", ROW_VALUE),
     # ... and `*m` of a two-dimensional array, local or file-scope, which both rails had read alike
@@ -13249,6 +13243,160 @@ def test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails
     src, oracle_emit, c_emit = _fixture_both_rails(fx)
     _parity_on_targets(os.path.join(_C, fx), src)
     _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _PROTORET_DRIVER)
+
+
+_CSUB2W_HEAD = (
+    "#include <stdint.h>\n#include <stddef.h>\n"
+    "struct fn { uint32_t n; char (*calls)[8]; uint16_t (*w)[3]; struct fn *next; };\n"
+    "struct mm { uint16_t m[4][3]; uint32_t n; };\n"
+    "struct am { uint32_t n; uint16_t m[4][3]; };\n"
+    "struct P { uint16_t x, y; };\n"
+    "typedef int64_t gf[4];\n"
+    "static uint16_t gm[4][3];\n"
+    "static uint32_t sum3(const uint16_t *s) { return s[0] + s[2]; }\n"
+    "static uint32_t len(const char *s) { uint32_t n = 0; while (s[n]) n++; return n; }\n"
+    "static int64_t g0(const int64_t *s) { return s[0] + s[3]; }\n"
+)
+# CSUB-2d: a row of scalars used as a value is the pointer to its first element, `&m[k][0]` -- passed, assigned,
+# initialized from, chosen by `?:`, stepped, compared, subtracted, dereferenced (`*m[k]`, `*(m[k] + i)`, stored through)
+# and sized; of a block static, a global, a VLA, a `T m[][N]` and a `gf p[4]` parameter, a member array (of a value,
+# through a loaded pointer, of an element of an array of structs, at three dimensions) and the row a pointer-to-array
+# member points at; and the address of a volatile array's element or member, a `volatile T *`, which the twin had typed
+# a `T *`
+_CSUB2W_LOWERED = (
+    "uint32_t f(struct fn *p, uint32_t k) { return len(p->calls[k]) + sum3(p->w[k]) + sum3(p->next->w[k]); }",
+    "uint32_t f(uint32_t k) { static uint16_t m[4][3]; uint16_t *r; r = m[k & 3u]; r[1] = 7;"
+    " const uint16_t *c = (k & 1u) ? m[0] : gm[2]; uint16_t *rows[2] = {m[k & 3u], gm[1]};"
+    " return sum3(r) + sum3(c) + rows[1][2] + sum3(gm[k & 3u]); }",
+    "uint32_t f(uint32_t k) { static uint16_t m[4][3]; uint16_t *s = m[k & 3u] + 1; *s += 2u;"
+    " return (m[k & 3u] == s) + (m[0] != m[1]) * 2u + (uint32_t)(m[2] - m[0]) + (uint32_t)sizeof m[k & 3u]"
+    " + !m[1]; }",
+    "uint32_t f(uint32_t k) { static uint16_t m[4][3]; m[1][1] = 5; *(m[k & 3u] + 1) += 7; *(2 + m[0]) = 3;"
+    " return *m[k & 3u] + *(m[k & 3u] + 1) + *(m[k & 3u] - 0 + 2) + (*(m[0] + 1) = 6); }",
+    "uint32_t f(uint32_t n, uint32_t k) { uint16_t v[n + 1u][3]; for (uint32_t i = 0; i <= n; i++) v[i][0] = (uint16_t)i;"
+    " uint16_t *r = v[k % (n + 1u)]; return r[0] + *v[n]; }",
+    "static uint32_t rs(uint16_t rows[][3], uint32_t k) { return sum3(rows[k]) + *rows[k]; }\n"
+    "uint32_t f(uint32_t k) { static uint16_t m[4][3]; return rs(m, k & 3u); }",
+    "static int64_t mix(gf p[4]) { return g0(p[1]) + g0(p[3]); }\n"
+    "uint32_t f(uint32_t k) { static gf q[4]; q[1][0] = (int64_t)k; return (uint32_t)(mix(q) + g0(q[2])); }",
+    "uint32_t f(struct mm *s, struct mm v, uint32_t k) { uint16_t *r = s->m[k & 3u]; r[1] = 2;"
+    " return sum3(v.m[k & 3u]) + *s->m[1] + *(s->m[2] + 1); }",
+    "uint32_t f(uint32_t k) { static struct am a[2]; a[1].m[2][2] = 7; uint16_t *r = a[k & 1u].m[2]; r[0] = 1;"
+    " return sum3(a[k & 1u].m[(k & 1u) ? 2 : 3]) + *a[0].m[1] + a[k & 1u].m[2][2]; }",
+    "struct am3 { uint32_t n; uint16_t m[2][4][3]; };\n"
+    "uint32_t f(struct am3 *p, uint32_t k) { static struct am3 a[2]; return sum3(a[k & 1u].m[1][2]) + sum3(p[k].m[0][1]); }",
+    "struct hp { struct am *p; };\nuint32_t f(struct hp *h, uint32_t k) { return sum3(h->p[k & 1u].m[2]); }",
+    "struct hq { struct mm *q; };\nuint32_t f(struct hq *h, uint32_t k) { uint16_t *r = h->q->m[k & 3u]; r[2] = 1;"
+    " return sum3(h->q->m[1]) + *h->q->m[2]; }",
+    "struct s { uint8_t c; uint32_t a[2][3]; };\nstruct s ga[4];\n"
+    "uint32_t f(uint32_t i) { uint32_t *r = ga[i % 4u].a[1]; return r[0]; }",
+    "uint32_t f(uint32_t k) { static float ys[3][5]; ys[1][2] = 1.5f; const float *r = ys[k % 3u]; return (uint32_t)r[2]; }",
+    # CF-DECAY's rows, which both rails had refused: of a local, a static, a parameter and a global
+    "uintptr_t f(void) { uint16_t l2[4][6] = {0}; return (uintptr_t)l2[1] - (uintptr_t)l2; }",
+    "uint16_t *f(void) { static uint16_t l2[4][6]; return l2[1]; }",
+    "uint8_t *f(uint8_t m[3][5]) { return m[1]; }",
+    "uint8_t gb[3][5];\nuint8_t *f(void) { return gb[1]; }",
+    # ... and an array no subscript designates is no row: `*(a + 1)` stays the element `a[1]` it is
+    "uint32_t f(uint32_t k) { static uint16_t a[4]; a[1] = 3; return *(a + 1) + *(k % 4u + a) + *(gm[1] + 2); }",
+    "uint32_t f(uint32_t k) { static volatile uint16_t m[4][3]; m[1][1] = 3; return sum3((const uint16_t *)m[k & 3u]); }",
+    "struct vx { volatile uint16_t x; volatile uint16_t q[3]; struct { volatile uint16_t v; } a[2]; };\n"
+    "uint32_t f(struct vx *s, uint32_t k) { static volatile uint16_t a[3]; volatile uint16_t *p = &a[k % 3u]; *p = 1;"
+    " return sum3((const uint16_t *)&s->x) + sum3((const uint16_t *)&s->q[k % 3u])"
+    " + sum3((const uint16_t *)&s->a[k & 1u].v) + sum3((const uint16_t *)&gm[k & 3u][0]); }",
+    "struct vm { volatile uint16_t m[4][3]; };\nstatic volatile uint16_t gv[4][3];\n"
+    "uint32_t f(struct vm *s, uint32_t k) { return sum3((const uint16_t *)s->m[k & 3u])"
+    " + sum3((const uint16_t *)&gv[k & 3u][1]) + sum3((const uint16_t *)gv[k & 3u]); }",
+)
+# ... and the forms refused, for one reason each: a row's address (a pointer to an array), its type taken by `typeof`
+# (the array, which the value model does not declare), and a row of no scalars
+_CSUB2W_REFUSED = (
+    (
+        "uint32_t f(uint32_t k) { static uint16_t m[4][3]; return (uint32_t)(uintptr_t)&m[k & 3u]; }",
+        ROW_ADDR,
+    ),
+    (
+        "uint32_t f(uint32_t k) { uint16_t *p = (uint16_t *)(&gm[k & 1u] + 1); return *p; }",
+        ROW_ADDR,
+    ),
+    (
+        "uint32_t f(struct mm *s, uint32_t k) { return (uint32_t)(uintptr_t)&s->m[k & 3u]; }",
+        ROW_ADDR,
+    ),
+    ("uint32_t f(struct mm s, uint32_t k) { return (uint32_t)(uintptr_t)&s.m[k & 3u]; }", ROW_ADDR),
+    (
+        "uint32_t f(struct fn *p, uint32_t k) { return (uint32_t)(uintptr_t)&p->calls[k]; }",
+        ROW_ADDR,
+    ),
+    ("uint32_t f(uint16_t (*r)[3], uint32_t k) { return (uint32_t)(uintptr_t)&r[k]; }", ROW_ADDR),
+    (
+        "uint32_t f(uint32_t k) { static struct am a[2]; return (uint32_t)(uintptr_t)&a[k & 1u].m[2]; }",
+        ROW_ADDR,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static uint16_t m[4][3]; __typeof__(m[1]) t; (void)k; return (uint32_t)sizeof t; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(struct fn *p, uint32_t k) { __typeof__(p->calls[k]) t; return (uint32_t)sizeof t; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static uint16_t m[2][2][3]; uint16_t *r = (uint16_t *)m[k & 1u]; return r[0]; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static struct P sm[2][3]; struct P *q = sm[k & 1u]; return q[0].x; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static struct P sm[2][3]; struct P q = *sm[k & 1u]; return q.x; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static char *pm[2][3]; char **q = pm[k & 1u]; return q[0] == 0; }",
+        ROW_VALUE,
+    ),
+)
+
+
+def test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2d. A row of scalars used as a value -- `bcir_channel.c`'s `strcmp(seen_keys[i], key)`, `bcir_verify.c`'s
+    `fixed_string(f->calls[k], ...)`, `bcir_ed25519.c`'s `fsub(a, p[1], p[0])`, `bcir_tensor.c`'s `ys[v]` -- is the
+    pointer to its first element on both rails, to one digest: `&m[k][0]`, lowered as that form lowers. Both had refused
+    it. A row's address, its type taken by `typeof` and a row of no scalars are refused alike. Found on the way and closed
+    with it: the twin had read `&g[k]` of a two-dimensional global and `&s->m[k]` of a member as `&g[0][k]` (and the
+    oracle `&g[k] + 1` as one element on), `typeof` of a row as its element on the oracle, and a volatile array's element
+    address as a `T *` on the twin. `cfront_csub2_rows.c` runs as the original on each rail's emit (`_ABI`), and each
+    rail's linkable artifact of it, built as C11, returns what the original does."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2W_LOWERED):
+            src = _CSUB2W_HEAD + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_CSUB2W_REFUSED):
+            src = _CSUB2W_HEAD + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_rows.c", "csub2_rows")
 
 
 def test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails():

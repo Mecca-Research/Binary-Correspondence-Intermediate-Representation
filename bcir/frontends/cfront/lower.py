@@ -933,6 +933,9 @@ DEREF_NOT = "dereference of a non-pointer"
 ROW_VALUE = (
     "partial indexing of a multi-dimensional array (a row used as a value) is not yet supported"
 )
+# ... and its address, `&m[k]`, a pointer to an array, which the value model does not spell (CSUB-2d; the twin's
+# `CC_ROW_ADDR`). A row of scalars used as a value is `&m[k][0]` on both rails (`_scalar_row`)
+ROW_ADDR = "the address of a row of a multi-dimensional array is not supported"
 SUBSCRIPT_NOT = "subscripted value is not an array or a pointer to an object"
 DOT_NOT = "member access on an object that is not a struct or union"
 ARROW_NOT = "member access `->` through a value that is not a pointer to a struct or union"
@@ -1876,6 +1879,10 @@ class _FuncLowerer:
                 raise CLowerError(f"typeof of unknown variable {tref.typeof_var!r}")
             base = self.env[tref.typeof_var][1]
         elif tref.typeof_expr is not None:  # `typeof(expr)` -> the operand's static type
+            # of a row, the array it is, which the value model does not declare (CSUB-2d; `_type_of`
+            # gives a row its element, which `_Generic` decays to); the twin's `typeof_row`
+            if self._row_of(tref.typeof_expr):
+                raise CLowerError(ROW_VALUE)
             base = self._type_of(tref.typeof_expr)
         elif tref.aggregate:  # a pointer may name a struct never defined (an opaque `struct fwd *`)
             base = _aggregate(self.aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
@@ -2380,7 +2387,17 @@ class _FuncLowerer:
             # the parser reads as `p[0][i]`. Both rails had read the row's first element (CSUB-2d)
             if self._row_valued(self._static_type(operand)):
                 raise CLowerError(ROW_VALUE)
-            if isinstance(operand, cast.Binary) and operand.op == "+":  # *(p + i) == p[i]
+            # `*(m[k] + i)` of a row of scalars: the pointer value the sum is, dereferenced below, as the twin's
+            # general deref of a pointer rvalue takes it (CSUB-2d)
+            row_sum = False
+            term = operand
+            while isinstance(term, cast.Binary) and term.op in ("+", "-") and not row_sum:
+                row_sum = self._scalar_row(term.rhs) if term.op == "+" else False
+                term = term.lhs
+            row_sum = row_sum or (term is not operand and self._scalar_row(term))
+            if (
+                isinstance(operand, cast.Binary) and operand.op == "+" and not row_sum
+            ):  # *(p + i) == p[i]
                 lt = self._static_type(operand.lhs)
                 # `*(p + i + j)`, `*(p - 1u + i)`: the left operand is itself a sum, which no subscript
                 # bases -- the pointer value it is, dereferenced below (CF-DEREFSUM)
@@ -2392,6 +2409,11 @@ class _FuncLowerer:
             # `*q[j]`: the element is a pointer, loaded, and dereferenced (the twin's general deref of
             # a pointer rvalue); `_addr` knows no subscripted base
             if isinstance(operand, cast.Index):
+                # `*m[k]` of a row of scalars: its first element, through the pointer the row's value is
+                # (`&m[k][0]`), as the twin's general deref of a pointer rvalue takes it (CSUB-2d)
+                if self._scalar_row(operand):
+                    rid = self._rvalue(operand)
+                    return _LV("mem", rid, self.rtypes[rid].of, byte_off=0)
                 el = self._lvalue(operand)
                 if el.ct.kind != "pointer":
                     raise CLowerError(DEREF_NOT)
@@ -2427,6 +2449,35 @@ class _FuncLowerer:
                 raise CLowerError(DEREF_NOT)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
+
+    def _row_of(self, node) -> bool:
+        """`node`, a subscript, designates a row: an array, as `sizeof` measures it (CSUB-2d)."""
+        if not isinstance(node, cast.Index):
+            return False
+        try:
+            t = self._sizeof_type(node)
+        except CLowerError:
+            return False
+        return t is not None and t.kind == "array"
+
+    def _scalar_row(self, node) -> bool:
+        """`node`, a subscript, designates a row of scalars -- an array one subscript short of a multi-dimensional
+        array's or a pointer to an array's element, whose element is a scalar (CSUB-2d): its type as `sizeof` measures
+        it (`_sizeof_type`) is an array of one dimension of scalars. A row of rows, of structs or of pointers stays
+        refused (`ROW_VALUE`, or `_array_value`'s reason). An array that no subscript designates is no row."""
+        if not isinstance(node, cast.Index):
+            return False
+        try:
+            t = self._sizeof_type(node)
+        except CLowerError:
+            return False
+        return (
+            t is not None
+            and t.kind == "array"
+            and len(t.shape) <= 1
+            and t.of is not None
+            and t.of.kind == "scalar"
+        )
 
     @staticmethod
     def _row_valued(t: "CType | None") -> bool:
@@ -3365,6 +3416,14 @@ class _FuncLowerer:
                 # pointer VARIABLE). The emit uses `_base_ptr` (decays a pointer/array base, addresses a value
                 # base), so every form lands the right byte address.
                 operand = node.operand
+                # `&m[k]` of a row: a pointer to an array, refused (CSUB-2d) -- after the limits of the
+                # row's first element, `&m[k][0]`, as the twin meets them on its way to the row
+                if self._row_of(operand):
+                    elem = operand
+                    while self._row_of(elem):
+                        elem = cast.Index(elem, cast.IntLit(0))
+                    self._lvalue(elem)
+                    raise CLowerError(ROW_ADDR)
                 # `&f`: the function's address, the value its designator converts to (C11 6.5.3.2p3,
                 # 6.3.2.1p4) -- 0 claims, as the designator's (CF-EXTDESIG)
                 name = self._designator(operand)
@@ -3436,6 +3495,11 @@ class _FuncLowerer:
             # `(T *)0`, `(op_t)0`: a null pointer constant converts to the pointer (C11 6.3.2.3p3), so its temp is
             # typed as one -- an `int` temp cast to a pointer of another width is a cast GCC rejects (CF-RTFP)
             return self._cast_value(self._null_pointer(v, ct), ct)
+        if isinstance(node, cast.Index) and self._scalar_row(node):
+            # a row of scalars used as a value -- `m[k]` of a `T m[A][B]`, `rows[k]` of a `T (*rows)[N]`, `p->calls[k]`,
+            # `s.m[k]`: it decays to a pointer to its first element (C11 6.3.2.1p3), which is `&m[k][0]`, the
+            # address both rails lower alike (CSUB-2d; the twin's `row_value`)
+            return self._rvalue(cast.Unary("&", cast.Index(node, cast.IntLit(0))))
         if isinstance(node, (cast.Index, cast.Member)):
             lv = self._lvalue(node)
             if lv.ct.kind == "array" and not lv.bit_width:

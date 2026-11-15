@@ -58,8 +58,8 @@
     },
     "bcir_channel.c": {
       "verdict": "blocked",
-      "blocker": "parse error: partial indexing of a multi-dimensional array (a row used as a value) is not yet supported",
-      "construct": "a row of a multi-dimensional array used as a value (`strcmp(seen_keys[i], key)` of `char seen_keys[64][48]`)",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "an array member of an array element used as a value (`strcmp(channels[i].name, channels[best].name)`)",
       "rung": "CSUB-2"
     },
     "bcir_control_plane.c": {
@@ -99,10 +99,7 @@
       "rung": "CSUB-5"
     },
     "bcir_ed25519.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: partial indexing of a multi-dimensional array (a row used as a value) is not yet supported",
-      "construct": "a row of a multi-dimensional array used as a value (`fe t[4][10]; f(t[1])`)",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_emit.c": {
       "verdict": "blocked",
@@ -238,8 +235,8 @@
     },
     "bcir_tensor.c": {
       "verdict": "blocked",
-      "blocker": "parse error: partial indexing of a multi-dimensional array (a row used as a value) is not yet supported",
-      "construct": "a row of a multi-dimensional array used as a value (`ys[v]` of `float ys[N][M]`); then threads and SIMD",
+      "blocker": "parse error: partial indexing of a struct member array is not yet supported",
+      "construct": "a subscript of a pointer element of a member array, through a loaded pointer (`j->pa[k][i] = v` of `uint16_t *pa[2]`); then threads and SIMD",
       "rung": "CSUB-2"
     },
     "bcir_tokenize_cli.c": {
@@ -253,8 +250,8 @@
     },
     "bcir_verify.c": {
       "verdict": "blocked",
-      "blocker": "parse error: partial indexing of a multi-dimensional array (a row used as a value) is not yet supported",
-      "construct": "the row a pointer-to-array member points at, used as a value (`fixed_string(f->calls[k], BCIR_CIR_NAME)`)",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "an array member of an element through a loaded pointer used as a value (`fixed_string(f->qcasts[k].type, sizeof f->qcasts[k].type)`)",
       "rung": "CSUB-2"
     },
     "bcir_xer.c": {

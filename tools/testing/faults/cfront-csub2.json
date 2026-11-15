@@ -11,7 +11,8 @@
   "bcir.tests.test_c_cfront:test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
-  "bcir.tests.test_c_cfront:test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails"
+  "bcir.tests.test_c_cfront:test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails"
  ],
  "faults": [
   {
@@ -895,6 +896,223 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "      const bcir_ctype *rt=declared_ret(c,&id);   /* a struct-returning call: `mk(x).field` postfixes the result --",
    "new": "      const bcir_ctype *rt=callee_ret(c,&id);   /* a struct-returning call: `mk(x).field` postfixes the result --"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W1 oracle: a row of scalars used as a value refused again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(node, cast.Index) and self._scalar_row(node):",
+   "new": "        if False and isinstance(node, cast.Index) and self._scalar_row(node):"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W2 oracle: a row of structs taken as a row of scalars",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            and t.of.kind == \"scalar\"\n        )",
+   "new": "            and t.of.kind in (\"scalar\", \"struct\", \"union\")\n        )"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W3 oracle: a row's address no longer refused as one",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                if self._row_of(operand):\n                    elem = operand",
+   "new": "                if False:\n                    elem = operand"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W4 oracle: `*m[k]` of a row refused again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                if self._scalar_row(operand):\n                    rid = self._rvalue(operand)",
+   "new": "                if False:\n                    rid = self._rvalue(operand)"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W5 oracle: `*(m[k] + i)` read as the element `m[k][i]`, not through the row's pointer",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            row_sum = row_sum or (term is not operand and self._scalar_row(term))",
+   "new": "            row_sum = row_sum or False"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W6 oracle: `typeof` of a row typed as its element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if self._row_of(tref.typeof_expr):\n                raise CLowerError(ROW_VALUE)",
+   "new": "            if False:\n                raise CLowerError(ROW_VALUE)"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W7 oracle: an array no subscript designates taken as a row, so `*(a + 1)` leaves the element's path",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if not isinstance(node, cast.Index):\n            return False\n        try:\n            t = self._sizeof_type(node)\n        except CLowerError:\n            return False\n        return (",
+   "new": "        try:\n            t = self._sizeof_type(node)\n        except CLowerError:\n            return False\n        return ("
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W8 twin: a row of a local, static, VLA or parameter array refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { uint32_t ra; if(row_value(c,v,&ra)) return ra; if(c->failed) return 0; }   /* `m[k]`: a row (CSUB-2d) */",
+   "new": "    { uint32_t ra; if(0 && row_value(c,v,&ra)) return ra; if(c->failed) return 0; }   /* `m[k]`: a row (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W9 twin: a row of a member array of a struct value refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { uint32_t ra; if(member_row_value(c,v,&mf,&ra)) return ra; if(c->failed) return 0; }   /* `s.m[k]`: a row (CSUB-2d) */",
+   "new": "    { uint32_t ra; if(0 && member_row_value(c,v,&mf,&ra)) return ra; if(c->failed) return 0; }   /* `s.m[k]`: a row (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W10 twin: a row of a member array through a loaded pointer refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      { uint32_t ra; if(member_row_value(c,&b,&mf,&ra)) return ra; if(c->failed) return 0; }   /* `p->q->m[k]` (CSUB-2d) */",
+   "new": "      { uint32_t ra; if(0 && member_row_value(c,&b,&mf,&ra)) return ra; if(c->failed) return 0; }   /* `p->q->m[k]` (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W11 twin: the row a pointer-to-array member points at refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(pfld.row_n>0 && sub_group_count(c,c->i)==1){  /* `p->calls[k]`: a row of the member's, `&p->calls[k][0]` (CSUB-2d) */",
+   "new": "      if(0 && pfld.row_n>0 && sub_group_count(c,c->i)==1){  /* `p->calls[k]`: a row of the member's, `&p->calls[k][0]` (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W12 twin: a row of a member array of an array-of-structs element refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,1);   /* `a[i].m[j]`, a row (CSUB-2d) */",
+   "new": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,0);   /* `a[i].m[j]`, a row (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W13 twin: a row of a member array of an element through a loaded pointer refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,1);   /* `...->p[i].m[j]`, a row (CSUB-2d) */",
+   "new": "        { field af; uint32_t tot; int r=0;   /* `...->p[i].m[j]`, a row (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W14 twin: an element's member row taken for an assignment's target",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,1);   /* `a[i].m[j]`, a row: no object */\n      if(r<0) return 0;                              /* assigned",
+   "new": "    { field af; uint32_t tot; int r=0;   /* `a[i].m[j]`, a row: no object */\n      if(r<0) return 0;                              /* assigned"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W15 twin: a row whose subscripts are all there taken as one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(pad && (nd<2 || sub_group_count(c,j+2)!=nd-1)) return 0;   /* no row: the element's paths take it */",
+   "new": "  if(pad && nd<2) return 0;   /* no row: the element's paths take it */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W16 twin: a member row's supplied `0` lost",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(padded) ix=zero_index(c);",
+   "new": "    if(padded) ix=lin;"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W17 twin: a row's supplied `0` lost",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(pad && ni<3) idxs[ni++]=zero_index(c);",
+   "new": "  if(pad && ni<3) idxs[ni++]=idxs[0];"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W18 twin: a row of a two-dimensional global indexed as a local's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(k==2){ field gf; (void)global_md_field_k(c,v,&gf,1);",
+   "new": "  if(k==3){ field gf; (void)global_md_field_k(c,v,&gf,1);"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W19 twin: a row of structs taken as a row of scalars",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(v->type.kind==1 || v->type.kind==3 || ptr_array(c,v) || ptr_levels(&v->type)>1",
+   "new": "  if(v->type.kind==3 || ptr_array(c,v) || ptr_levels(&v->type)>1"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W20 twin: `*(m[k] + i)` refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(is(c,\"[\") && row_at(c,pv)){ spec_end(c,&m); c->i=save; return 0; }",
+   "new": "      if(0 && is(c,\"[\") && row_at(c,pv)){ spec_end(c,&m); c->i=save; return 0; }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W21 twin: `*(m[k] + i) = v` refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(is(c,\"[\") && row_at(c,pv)) pv=NULL;",
+   "new": "          if(0 && is(c,\"[\") && row_at(c,pv)) pv=NULL;"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W22 twin: `typeof` of a row typed as the pointer its value is",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(c->typeof_row){ fail(c,CC_ROW_VALUE); return 1; } } }",
+   "new": "          if(0){ fail(c,CC_ROW_VALUE); return 1; } } }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W23 twin: `&g[k]` of a two-dimensional global read as `&g[0][k]` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(gm && sub_group_count(c,c->i)<gm->nd){ fail(c,CC_ROW_ADDR); return 0; } }",
+   "new": "          if(0 && gm && sub_group_count(c,c->i)<gm->nd){ fail(c,CC_ROW_ADDR); return 0; } }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W24 twin: `&s.m[k]` of a member array read as an element's address again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(!mf.elem_ptr && sub_group_count(c,c->i)<mf.nadims){ fail(c,CC_ROW_ADDR); return 0; }",
+   "new": "            if(0 && !mf.elem_ptr && sub_group_count(c,c->i)<mf.nadims){ fail(c,CC_ROW_ADDR); return 0; }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W25 twin: `&a[i].m[j]` of an element's member row refused for another reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(aos_member_array_x(c,v,ix,&af,&tot,1)>0){ fail(c,CC_ROW_ADDR); return 0; }",
+   "new": "            if(0){ fail(c,CC_ROW_ADDR); return 0; }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W26 twin: `&p->m[k]` of a row pointer's row refused for another reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(!c->failed) fail(c,c->plv_row ? CC_ROW_ADDR : \"address-of this lvalue through a loaded pointer is a follow-on\");",
+   "new": "    if(!c->failed) fail(c,\"address-of this lvalue through a loaded pointer is a follow-on\");"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W27 twin: `&a[i]` of a volatile array typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  last_ptr_to_volatile(c,v->type.is_volatile,v->sidx>=0 && sdef_vol(c,v->sidx));   /* `&a[i]` of volatile storage, as",
+   "new": "  last_ptr_to_volatile(c,0,0);   /* `&a[i]` of volatile storage, as"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W28 twin: a volatile member array's element address typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  last_ptr_to_volatile(c,mf->is_volatile||v->type.is_volatile,0);   /* of volatile storage: a `volatile T *`, as",
+   "new": "  last_ptr_to_volatile(c,0,0);   /* of volatile storage: a `volatile T *`, as"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W29 twin: `&s.arr[i]` of a volatile member typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            last_ptr_to_volatile(c,rvo,0);         /* a `volatile T *` of volatile storage, as `&x`'s (CSUB-2d) */",
+   "new": "            last_ptr_to_volatile(c,0,0);         /* a `volatile T *` of volatile storage, as `&x`'s (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W30 twin: `&s.arr[i].f` of a volatile field typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": " rpc=ef.is_plain_char; rvo|=ef.is_volatile;",
+   "new": " rpc=ef.is_plain_char;"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W31 twin: `&s.x` of a volatile member typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          last_ptr_to_volatile(c,mf.is_volatile||v->type.is_volatile,mf.sidx>=0 && sdef_vol(c,mf.sidx));   /* (CSUB-2d) */",
+   "new": "          last_ptr_to_volatile(c,0,0);   /* (CSUB-2d) */"
   }
  ]
 }
