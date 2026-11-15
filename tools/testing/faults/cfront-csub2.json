@@ -8,7 +8,8 @@
   "bcir.tests.test_c_cfront:test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
-  "bcir.tests.test_c_cfront:test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails"
+  "bcir.tests.test_c_cfront:test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails"
  ],
  "faults": [
   {
@@ -281,8 +282,8 @@
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
    "label": "CS2C2 oracle: an element's pointer member refused as a non-scalar field again",
    "path": "bcir/frontends/cfront/lower.py",
-   "old": "if fbw or ftype.kind not in (\"scalar\", \"pointer\"):",
-   "new": "if fbw or ftype.kind != \"scalar\":"
+   "old": "if fbw or ftype.kind not in (\"scalar\", \"pointer\", \"struct\", \"union\"):",
+   "new": "if fbw or ftype.kind not in (\"scalar\", \"struct\", \"union\"):"
   },
   {
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
@@ -467,11 +468,11 @@
    "new": "              if(0){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */"
   },
   {
-   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
-   "label": "CS2C29 twin: `&s.arr[i].in` of a struct member taken, which the oracle refuses",
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C29 twin: `&s.arr[i].in` of a struct member refused, which the oracle takes",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)||ef.sidx>=0){",
-   "new": "              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)){"
+   "old": "              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)){   /* a bit-field or function-pointer leaf",
+   "new": "              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)||ef.sidx>=0){   /* a bit-field or function-pointer leaf"
   },
   {
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
@@ -540,8 +541,8 @@
    "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
    "label": "CS2E7 twin: a bit-field member of a struct element through a loaded pointer addressed",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "        if(sub.bit_w || (sub.fp_sig && !sub.is_ptr) || sub.sidx>=0){   /* what the read paths refuse too */",
-   "new": "        if((sub.fp_sig && !sub.is_ptr) || sub.sidx>=0){   /* what the read paths refuse too */"
+   "old": "        if(sub.bit_w || (sub.fp_sig && !sub.is_ptr)){   /* what the read paths refuse too */",
+   "new": "        if((sub.fp_sig && !sub.is_ptr)){   /* what the read paths refuse too */"
   },
   {
    "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
@@ -589,14 +590,14 @@
    "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
    "label": "CS2E14 twin: `(p->a[i] += o)` of a struct element refused for no reason of the oracle's",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "        if(is_compound_op(aop)){ fail(c,\"this lvalue form's compound assignment as a value is a follow-on\"); return 0; }\n",
+   "old": "        if(is_compound_op(aop)){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }\n",
    "new": ""
   },
   {
    "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
    "label": "CS2E15 twin: `(p->a[i] = o)` of a struct element refused for no reason of the oracle's",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "        if(aop->k==T_PUN && aop->n==1 && aop->s[0]=='='){ fail(c,\"this lvalue form's assignment as a value is a follow-on\"); return 0; } }",
+   "old": "        if(aop->k==T_PUN && aop->n==1 && aop->s[0]=='='){ fail(c,CC_ASSIGN_VALUE_FO); return 0; } }",
    "new": " }"
   },
   {
@@ -612,6 +613,62 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "      if(elem_leaf_refused(c,&sub)) return;            /* `...->p[i].v[j]`, `...->p[i].q.x`: C's reason */\n",
    "new": ""
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C33 oracle: a struct member of an element refused as a non-scalar field again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "if fbw or ftype.kind not in (\"scalar\", \"pointer\", \"struct\", \"union\"):",
+   "new": "if fbw or ftype.kind not in (\"scalar\", \"pointer\"):"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C34 twin: a struct member of an element refused as a non-scalar field again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(s.bit_w||farr(&s)||(s.fp_sig && !s.is_ptr)){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }",
+   "new": "  if(s.bit_w||farr(&s)||s.sidx>=0||(s.fp_sig && !s.is_ptr)){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C35 twin: `a[i].in` loaded into an integer temp, not the aggregate",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub):sub->sidx>=0?tempagg(c,sub->sidx)\n    :",
+   "new": "static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub)\n    :"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C36 twin: `s.arr[i].in` loaded into an integer temp, not the aggregate",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub):sub->sidx>=0?tempagg(c,sub->sidx)\n    :",
+   "new": "static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub)\n    :"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C37 twin: `(a[i].in = v)` of a struct member taken as a value, which the oracle refuses",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(sub.sidx>=0){ fail(c,is_eq?CC_ASSIGN_VALUE_FO:CC_COMPOUND_VALUE_FO); return 0; }",
+   "new": "    if(0){ fail(c,is_eq?CC_ASSIGN_VALUE_FO:CC_COMPOUND_VALUE_FO); return 0; }"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C38 twin: `(s.arr[i].in = v)` of a struct member taken as a value, which the oracle refuses",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(soa && sub.sidx>=0 && (a_eq || is_compound_op(aop))){",
+   "new": "      if(0 && soa && sub.sidx>=0 && (a_eq || is_compound_op(aop))){"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C39 twin: `(p->a[i].in = v)` of a struct member through a loaded pointer taken as a value",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(ok && (lv.kind==4 || (lv.kind==3 && lv.f.sidx>=0))){",
+   "new": "      if(ok && lv.kind==4){"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C40 twin: `&p->a[i].in` typed no pointer to the struct",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(lv->kind==3 && lv->f.sidx>=0)               /* `&p->a[i].in`: a pointer to the struct member (CSUB-2c) */\n      fits(",
+   "new": "    if(0)               /* `&p->a[i].in`: a pointer to the struct member (CSUB-2c) */\n      fits("
   }
  ]
 }

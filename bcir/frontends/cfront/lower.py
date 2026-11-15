@@ -2327,8 +2327,9 @@ class _FuncLowerer:
             aos = self._aos_member(node)
             if aos is not None:
                 _el, _elem, ftype, _foff, _fbo, fbw, _agg = aos
-                # a scalar or a pointer (CSUB-2): a bitfield / struct / array element field is a follow-on
-                if fbw or ftype.kind not in ("scalar", "pointer"):
+                # a scalar, a pointer (CSUB-2c) or a struct or union, the aggregate value (CSUB-2c): a bitfield or an
+                # array element field is a follow-on
+                if fbw or ftype.kind not in ("scalar", "pointer", "struct", "union"):
                     raise CLowerError(  # both rails refuse it
                         f"array-of-structs non-scalar element field ('.{node.field}') is not yet supported"
                     )

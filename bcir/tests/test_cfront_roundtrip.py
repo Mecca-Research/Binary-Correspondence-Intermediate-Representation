@@ -414,8 +414,10 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # `cfront_fpret.c` joined.
     # 124 since CSUB-1: the new `cfront_stdheaders.c` round-trips -- its standard headers' constants, `offsetof`,
     # `bool` and `<math.h>`'s floating builtins re-parse from the emit as the constants they lowered to.
-    assert len(included) == 124, (
-        f"included-set size changed from the pinned 124 to {len(included)} -- a "
+    # 125 since CSUB-2c's struct members: the new `cfront_csub2_structmembers.c` round-trips -- its aggregate
+    # member loads and stores of array elements re-parse from the emit as the strided accesses they lowered to.
+    assert len(included) == 125, (
+        f"included-set size changed from the pinned 125 to {len(included)} -- a "
         f"fixture moved across the round-trip boundary; re-classify + re-pin. "
         f"included={sorted(included)}"
     )

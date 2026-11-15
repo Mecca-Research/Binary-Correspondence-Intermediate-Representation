@@ -2833,6 +2833,10 @@ static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t 
 #define CC_ARROW_NOT "member access `->` through a value that is not a pointer to a struct or union"
 #define CC_FN_NOT_LVALUE "a function designator is not an lvalue"
 #define CC_SIZEOF_FN "sizeof of a function designator"
+/* The oracle's follow-on reasons for an lvalue its `_assign` does not take as a value: a struct or union object, `(x.m =
+ * v)` of an aggregate member (CSUB-2c, CSUB-2e) */
+#define CC_ASSIGN_VALUE_FO "this lvalue form's assignment as a value is a follow-on"
+#define CC_COMPOUND_VALUE_FO "this lvalue form's compound assignment as a value is a follow-on"
 static field member_descend(CC *c, field f);   /* fwd: a nested `.m.k` member chain -> one flattened offset */
 /* The member of an array-of-structs element (the element struct is sdef `sidx`) named after the `.`/`->` at the
  * cursor, through any depth of nested struct/union members `.m.k` (CF-NESTMEM): one flattened offset in the
@@ -2849,7 +2853,7 @@ static int sdef_elem_field(CC *c, int sidx, field *sub) {
   field s=member_descend(c,ES->f[fi]);
   /* a pointer leaf is a value of its pointer type (CSUB-2); a function-pointer one is refused, as the oracle refuses it:
    * the twin had loaded it as a 64-bit integer and assigned that to the function pointer, which no C compiler takes */
-  if(s.bit_w||farr(&s)||s.sidx>=0||(s.fp_sig && !s.is_ptr)){ fail(c,"array-of-structs non-scalar element field"); return 0; }
+  if(s.bit_w||farr(&s)||(s.fp_sig && !s.is_ptr)){ fail(c,"array-of-structs non-scalar element field"); return 0; }
   *sub=s; return 1;
 }
 /* A member access through a subscripted element that is a pointer -- `arr[i]->m`, `pp[i]->m`, `o.p[i]->m`: the oracle's
@@ -2866,7 +2870,8 @@ static int elem_field(CC *c, const field *arr, field *sub) {
 /* `arr[i].field` (array-of-structs): load `sub->size` bytes at member_off(arr)+offsetof(sub), STRIDING by the
  * element size `arr->size` (imm[2]) -- decoupled from the field copy size (imm[1]). */
 static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {
-  uint32_t t=sub->is_ptr?tempptr_field(c,sub):sub->is_float?tempf(c,sub->size):tempi(c,sub->size,sub->signd);
+  uint32_t t=sub->is_ptr?tempptr_field(c,sub):sub->sidx>=0?tempagg(c,sub->sidx)
+    :sub->is_float?tempf(c,sub->size):tempi(c,sub->size,sub->signd);   /* a struct member: the aggregate value (CSUB-2c) */
   if(sub->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;
   if(sub->is_bool && sub->is_atomic && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* `_Atomic _Bool` field */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
@@ -2897,7 +2902,8 @@ static int aos_elem_field(CC *c, venv *base, field *sub) {
 /* `a[i].field` on a DIRECT array-of-structs variable: load `sub->size` bytes at offsetof(sub), STRIDING by
  * the element (struct) size `v->type.size` (imm[2]) -- the base is the array itself (member offset 0). */
 static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {
-  uint32_t t=sub->is_ptr?tempptr_field(c,sub):sub->is_float?tempf(c,sub->size):tempi(c,sub->size,sub->signd);
+  uint32_t t=sub->is_ptr?tempptr_field(c,sub):sub->sidx>=0?tempagg(c,sub->sidx)
+    :sub->is_float?tempf(c,sub->size):tempi(c,sub->size,sub->signd);   /* a struct member: the aggregate value (CSUB-2c) */
   if(sub->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;
   if(sub->is_bool && sub->is_atomic && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* `_Atomic _Bool` field */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
@@ -4170,9 +4176,9 @@ static int plv_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
         field sub; if(!elem_member_peek(c,pfld.ptee_sidx,&sub)) return 0;
         if(sub.is_ptr && !sub.fp_sig && (is(c,"->")||is(c,".")||is(c,"["))){   /* a pointer member: load, walk on */
           ptr=emit_index_field(c,&e,ix,&sub); psidx=sub.ptee_sidx; pfld=sub; continue; }
-        if(sub.bit_w || (sub.fp_sig && !sub.is_ptr) || sub.sidx>=0){   /* what the read paths refuse too */
+        if(sub.bit_w || (sub.fp_sig && !sub.is_ptr)){   /* what the read paths refuse too */
           fail(c,"array-of-structs non-scalar element field"); return 0; }
-        if(sub.is_ptr || sub.fp_sig || farr(&sub)) return 0;   /* no scalar here: rolled back */
+        if(sub.is_ptr || sub.fp_sig || farr(&sub)) return 0;   /* no object here: rolled back */
         if(is(c,"[")||is(c,".")||is(c,"->")) return 0;
         o->kind=3; o->b=e; o->idx=ix; o->f=sub; return 1;
       }
@@ -4242,7 +4248,9 @@ static uint32_t plv_addr(CC *c, const plv *lv){
   if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
     tr->is_signed=(uint8_t)(ty.signd?1:0); tr->is_float=(uint8_t)(ty.is_float?1:0); tr->ptr_depth=1;
     tr->is_complex=(uint8_t)(ty.is_complex?1:0); tr->is_bool=(uint8_t)(ty.is_bool?1:0);
-    tr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0); tr->is_atomic=(uint8_t)(plv_atomic(c,lv)?1:0); }
+    tr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0); tr->is_atomic=(uint8_t)(plv_atomic(c,lv)?1:0);
+    if(lv->kind==3 && lv->f.sidx>=0)               /* `&p->a[i].in`: a pointer to the struct member (CSUB-2c) */
+      fits(c,tr->agg,sizeof tr->agg,"%s %s",c->s[lv->f.sidx].is_union?"union":"struct",c->s[lv->f.sidx].tag); }
   bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
   if(cl){ cl->n_wr=1; cl->wr[0]=t; cl->rd[0]=lv->b.rid;
     if(lv->kind==1){ cl->n_rd=1; cl->n_imm=1; cl->imm[0]=lv->f.byte_off; }
@@ -5994,9 +6002,9 @@ static uint32_t p_unary_inner(CC *c) {
               if(!ef.bit_w && !farr(&ef) && !ef.fp_sig && elem_leaf_refused(c,&ef)) return 0;   /* for C's reason */
               if(farr(&ef) && is(c,"[")){          /* `&s.arr[i].m[j]`: the oracle's own limit, in its words */
                 fail(c,"a member array of a subscripted element that is not a plain array-of-structs element"); return 0; }
-              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)||ef.sidx>=0){   /* a bit-field, function-pointer or struct
-                * leaf, refused as the oracle refuses it (the twin had taken `&s.arr[i].in` of a struct member, and had
-                * typed `&s.arr[i].fn` an integer's address, which no C compiler assigns to the function pointer's) */
+              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)){   /* a bit-field or function-pointer leaf, refused as the
+                * oracle refuses it (the twin had typed `&s.arr[i].fn` an integer's address, which no C compiler
+                * assigns to the function pointer's); a struct leaf's address is a pointer to the struct (CSUB-2c) */
                 fail(c,"array-of-structs non-scalar element field"); return 0; }
               if(farr(&ef)){ fail(c,"address-of a non-scalar array-of-structs field is a follow-on"); return 0; }
               if(ef.is_ptr){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */
@@ -7015,6 +7023,8 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc;
       c->i=istart; c->i=save; return 0;
     }
+    if(sub.sidx>=0){ fail(c,is_eq?CC_ASSIGN_VALUE_FO:CC_COMPOUND_VALUE_FO); return 0; }   /* `(a[i].in = v)` of a
+                                                       * struct member: the oracle's reasons (CSUB-2c) */
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same strided slot */
       c->i++; uint32_t rhs=p_assign(c);
       uint32_t st=store_index_field(c,v,idx,&sub,rhs);
@@ -7110,9 +7120,10 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
       int ok=plv_chain(c,ptr,f.ptee_sidx,f,&lv);
       if(c->failed) return 0;
       const tok *aop=&c->t[c->i];
-      if(ok && lv.kind==4){                      /* `(p->a[i] = o)`, `(p->a[i] += o)` of a struct element: the oracle's reason */
-        if(is_compound_op(aop)){ fail(c,"this lvalue form's compound assignment as a value is a follow-on"); return 0; }
-        if(aop->k==T_PUN && aop->n==1 && aop->s[0]=='='){ fail(c,"this lvalue form's assignment as a value is a follow-on"); return 0; } }
+      if(ok && (lv.kind==4 || (lv.kind==3 && lv.f.sidx>=0))){   /* `(p->a[i] = o)`, `(p->a[i].in += o)`: an aggregate
+                                                                 * object, the oracle's reasons (CSUB-2c, CSUB-2e) */
+        if(is_compound_op(aop)){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }
+        if(aop->k==T_PUN && aop->n==1 && aop->s[0]=='='){ fail(c,CC_ASSIGN_VALUE_FO); return 0; } }
       if(!ok || plv_volatile(c,&lv) || !((aop->k==T_PUN && aop->n==1 && aop->s[0]=='=') || is_compound_op(aop))){
         c->fn->n_res=m_res;c->fn->n_claims=m_cl;c->rid=m_rid;c->cid=m_cid;c->cl_ctr=m_clc;   /* a read: undo */
         c->i=save; return 0; }
@@ -7128,6 +7139,9 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
       if(c->failed) return 0;
       const tok *aop=&c->t[c->i];
       int a_eq = aop->k==T_PUN && aop->n==1 && aop->s[0]=='=';
+      if(soa && sub.sidx>=0 && (a_eq || is_compound_op(aop))){   /* `(s.arr[i].in = v)` of a struct member: the
+                                                       * oracle's reasons (CSUB-2c) */
+        fail(c,a_eq?CC_ASSIGN_VALUE_FO:CC_COMPOUND_VALUE_FO); return 0; }
       if(!(a_eq || is_compound_op(aop)) || (!soa && f.elem_sidx>=0)){   /* a plain value, not an assignment -- or a
                                                        * struct element, the oracle's follow-on -> undo + fall back */
         c->fn->n_res=m_res;c->fn->n_claims=m_cl;c->rid=m_rid;c->cid=m_cid;c->cl_ctr=m_clc;

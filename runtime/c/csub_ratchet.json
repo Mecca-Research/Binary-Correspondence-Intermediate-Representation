@@ -34,8 +34,8 @@
     },
     "bcir_bpe.c": {
       "verdict": "blocked",
-      "blocker": "parse error: array-of-structs non-scalar element field",
-      "construct": "a struct-typed member of an array element, stored (`set->slots[j].name = name`): the record table",
+      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
+      "construct": "the address of a struct member reached through a loaded pointer, `&s->t->arena`",
       "rung": "CSUB-2"
     },
     "bcir_bundle_cli.c": {
@@ -94,9 +94,9 @@
     },
     "bcir_diag.c": {
       "verdict": "blocked",
-      "blocker": "parse error: array-of-structs non-scalar element field",
-      "construct": "a struct-typed member of an array element, passed by value (`d->notes[i].span`): the record table",
-      "rung": "CSUB-2"
+      "blocker": "verify error: R18: call to undefined function strlen",
+      "construct": "`strlen`, a hosted `<string.h>` call R18 does not know (a hosted tool)",
+      "rung": "CSUB-5"
     },
     "bcir_ed25519.c": {
       "verdict": "blocked",
