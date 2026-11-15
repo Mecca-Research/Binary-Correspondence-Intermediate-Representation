@@ -117,10 +117,7 @@
       "verdict": "clean"
     },
     "bcir_handoff.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: aggregate return through a prototype is not supported",
-      "construct": "a struct a call returns through a prototype, `bcir_ctl_admit_pack(...)`",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_hydrate.c": {
       "verdict": "clean"

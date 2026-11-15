@@ -13133,6 +13133,124 @@ int main(void) {
 )
 
 
+_PROTORET_DRIVER = (
+    _GAPS_SAME
+    + r"""
+pr_outcome pr_admit(const uint8_t *d, size_t n) {
+  pr_outcome o;
+  o.ok = (uint8_t)(n > 3u); o.why = (uint16_t)(d[0] * 3u + n); o.gen = ((uint64_t)d[1] << 33) | n;
+  return o;
+}
+struct pr_pair pr_make(uint32_t x) { struct pr_pair p = {x * 7u, x ^ 0x55u}; return p; }
+union pr_word pr_word_of(uint32_t x) { union pr_word u; u.w = x * 2654435761u; return u; }
+static struct pr_pair pr_pairs[4];
+struct pr_pair *pr_find(uint32_t x) { pr_pairs[x & 3u].a = x; pr_pairs[x & 3u].b = x + 9u; return &pr_pairs[x & 3u]; }
+static uint32_t pr_tab[4] = {3u, 5u, 7u, 11u};
+uint32_t *pr_table(void) { return pr_tab; }
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    SAME(pr_admit_entry, gaps_in[n]); SAME(pr_pair_entry, gaps_in[n]); SAME(pr_word_entry, gaps_in[n]);
+    SAME(pr_ptr_entry, gaps_in[n]);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+_PROTORET_HEAD = (
+    "#include <stdint.h>\n#include <stddef.h>\n"
+    "struct pr { uint32_t a, b; };\n"
+    "typedef struct { uint8_t ok; uint16_t why; uint64_t gen; } outcome;\n"
+    "union un { uint32_t w; uint8_t b[4]; };\n"
+    "struct pr mk(uint32_t x);\noutcome admit(const uint8_t *data, size_t len);\nunion un mku(uint32_t x);\n"
+    "struct pr *mkp(uint32_t x);\nuint32_t *arr(void);\n"
+)
+# CSUB-2: a struct or union a prototyped callee returns -- initialized from, assigned, read a member of in place, passed
+# and returned on by value, stored into an element and through a pointer, chosen by `?:`, its call a statement -- and a
+# pointer one returns, followed with `->` and `[]`
+_PROTORET_LOWERED = (
+    "uint32_t f(uint32_t x) { struct pr p = mk(x); return p.a + p.b; }",
+    "uint32_t f(uint32_t x) { return mk(x).b + mk(x + 1u).a; }",
+    "struct pr f(uint32_t x) { return mk(x); }",
+    "uint32_t f(const uint8_t *d, size_t n) { outcome c; c = admit(d, n); if (!c.ok) return c.why;"
+    " return (uint32_t)c.gen; }",
+    "static uint32_t sum(struct pr p) { return p.a * 3u + p.b; } uint32_t f(uint32_t x) { return sum(mk(x)); }",
+    "uint32_t f(uint32_t x) { union un u = mku(x); return u.b[0] + mku(x).w; }",
+    "uint32_t f(uint32_t x, int c) { struct pr p = c ? mk(x) : mk(x + 1u); return p.a; }",
+    "uint32_t f(uint32_t x) { struct pr q[2]; q[1] = mk(x); return q[1].b; }",
+    "struct h { struct pr p; uint32_t n; }; uint32_t f(struct h *h, uint32_t x) { h->p = mk(x); return h->p.a; }",
+    "uint32_t f(uint32_t x) { (void)mk(x); mk(x); return x; }",
+    "uint32_t f(uint32_t x) { return (uint32_t)sizeof mk(x) + (uint32_t)sizeof(mk(x).a); }",
+    "uint32_t f(uint32_t x) { return mkp(x)->a + mkp(x)[1].b + arr()[2]; }",
+)
+# ... and refused alike, for one reason each: the aggregate as an operand or a scalar, `->` of it, an incomplete one
+_PROTORET_REFUSED = (
+    (
+        "uint32_t f(uint32_t x) { return mk(x) + 1u; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+    (
+        "uint32_t f(uint32_t x) { if (mk(x)) return 1u; return 0u; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+    (
+        "uint32_t f(uint32_t x) { uint32_t v = mk(x); return v; }",
+        "a struct or union is converted to a scalar type",
+    ),
+    (
+        "uint32_t f(uint32_t x) { return mk(x)->a; }",
+        "member access `->` through a value that is not a pointer to a struct or union",
+    ),
+    (
+        "struct opaque;\nstruct opaque mko(uint32_t x);\nuint32_t f(uint32_t x) { mko(x); return x; }",
+        "the incomplete struct or union",
+    ),
+)
+
+
+def test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2. A struct or union a call returns through a prototype -- `bcir_handoff.c`'s `c = bcir_ctl_admit_pack(...)`,
+    a callee another unit defines -- is the aggregate value on both rails, to one digest, as a defined callee's is:
+    initialized from, assigned, read a member of in place, passed and returned on by value, stored, chosen by `?:`. The
+    twin had refused it ("aggregate return through a prototype"), and had read no `->` or `[]` after a pointer a
+    prototyped callee returns (`mkp(x)->a`, `arr()[2]`), which the oracle lowered. The aggregate as an operand or a
+    scalar, `->` of it, and an incomplete one are refused alike. `cfront_csub2_protoret.c` lowers to one claim graph on
+    the four targets, and each emit runs as the original, linked with a driver that defines the callees."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_PROTORET_LOWERED):
+            src = _PROTORET_HEAD + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_PROTORET_REFUSED):
+            src = _PROTORET_HEAD + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+    if exe is None:
+        return
+    fx = "cfront_csub2_protoret.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _PROTORET_DRIVER)
+
+
 def test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails():
     """CF-DECLS: `cfront_decls_link.c` -- callees another unit defines (the driver), prototyped with a pointer
     and an array parameter to `const` and an unnamed function-pointer parameter. Each rail's `extern` declaration

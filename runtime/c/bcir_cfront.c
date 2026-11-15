@@ -4790,7 +4790,6 @@ static uint32_t p_call(CC *c, const tok *name) {
        * opaque to the in-unit R18 call graph (NOT added to fn->calls) and emits verbatim (external
        * linkage) with the prototype's extern declaration in the prelude; unlike libm it derives no -l
        * flag. Result typing mirrors the defined-callee ladder below (the oracle's _call_result_ct). */
-      if(ptt->kind==1){ fail(c,"aggregate return through a prototype is not supported"); return temp(c,4); }
       char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.tu:%.*s",name->n,name->s);
       if(ptt->kind==0 && ptt->size==0){               /* a void cross-TU callee -> a bare statement */
         bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
@@ -4798,7 +4797,11 @@ static uint32_t p_call(CC *c, const tok *name) {
         qcast_call(c,cl,0,na,c->protos[pk].params,c->protos[pk].n_params,NULL);   /* (CF-QUALS) */
         return void_temp(c);                          /* a void result -- never read */
       }
-      uint32_t t = ptt->kind==2 ? temp_ptr(c,ptt,ptt->ptr_to_struct?find_struct(c,ptt->tag,(int)strlen(ptt->tag)):-1)
+      int asi = ptt->kind==1 ? find_struct(c,ptt->tag,(int)strlen(ptt->tag)) : -1;
+      if(ptt->kind==1 && asi<0){ fail(c,"aggregate return through a prototype is not supported"); return temp(c,4); }
+      uint32_t t = ptt->kind==1 ? tempagg(c,asi)      /* a struct or union returned by value (CSUB-2): the aggregate, as a
+                                                       * defined callee's -- `bcir_handoff.c`'s `c = bcir_ctl_admit_pack(...)` */
+                 : ptt->kind==2 ? temp_ptr(c,ptt,ptt->ptr_to_struct?find_struct(c,ptt->tag,(int)strlen(ptt->tag)):-1)
                  : ptt->kind==3 ? fp_ret_temp(c,ptt)
                  : ptt->is_complex ? tempc(c,ptt->size)
                  : ptt->is_float   ? tempf(c,ptt->size)
@@ -5628,7 +5631,8 @@ static uint32_t p_named_call(CC *c, tok id){
         uint32_t r=p_icall(c,fv);
         if(s>0 && s<=c->nsig && !c->failed){ bcir_ctype rt=c->sigs[s-1].ret; return call_result(c,r,&rt); }
         return call_value(c,r); }
-      const bcir_ctype *rt=callee_ret(c,&id);     /* a struct-returning call: `mk(x).field` postfixes the result */
+      const bcir_ctype *rt=declared_ret(c,&id);   /* a struct-returning call: `mk(x).field` postfixes the result --
+                                                     * a prototype's return too (CSUB-2) */
       uint32_t r=p_call(c,&id);
       return call_result(c,r,rt); }                 /* `mk(x).f`, `f()->v`; `g(x)(y)` through the result, which must be
                                                      * a function pointer */
