@@ -367,6 +367,9 @@ The count is now **30 of 58**: `bcir_handoff.c` compiles R1–R18 clean.
   - The twin read `&g[k]` of a two-dimensional global and `&s->m[k]` of a member array as the address of element `k`
     of row 0, `&g[0][k]`, a miscompile, and the oracle stepped `&g[k] + 1` by one element. Both refuse the row's
     address now.
+  - The twin read a member array's row used as a value, `f(s->m[k])` or `uint16_t *r = s.m[k]`, as its first
+    element: an integer passed or assigned where a pointer is wanted, an emit no C compiler takes. The oracle had
+    refused it. Both lower it as the row's pointer now.
   - The oracle typed `typeof(m[k])` as its element, so `sizeof` read 2 where C reads 6.
   - The twin typed the address of a volatile array's element, a volatile member and a volatile member array's element
     (`&a[i]`, `&s->x`, `&s->q[i]`, `&s->a[i].v`) a `T *`, which loses the volatile access a store through it makes.

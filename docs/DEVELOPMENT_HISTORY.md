@@ -298,9 +298,11 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
   - A row's address, `&m[k]`, is refused on both rails for one reason, `ROW_ADDR`; so are `typeof` of a row and a
     row of rows, structs or pointers.
   - Defects at the base: the twin read `&g[k]` of a two-dimensional global and `&s->m[k]` of a member array as
-    `&g[0][k]` and `&s->m[0][k]`, and the oracle stepped `&g[k] + 1` by one element; the oracle typed `typeof(m[k])` as its element;
-    the twin typed the address of a volatile array's element or member a `T *`. Each is closed. `typeof` of an array
-    object still differs between the rails (the twin declares one element) and is tracked.
+    `&g[0][k]` and `&s->m[0][k]`, and the oracle stepped `&g[k] + 1` by one element; the twin read a member array's
+    row used as a value, `f(s->m[k])`, as its first element, an emit no compiler takes; the oracle typed
+    `typeof(m[k])` as its element; the twin typed the address of a volatile array's element or member a `T *`. Each
+    is closed. `typeof` of an array object still differs between the rails (the twin declares one element) and is
+    tracked.
   - **Evidence.** `cfront_csub2_rows.c` (in `_ABI`) runs as the original under Clang and GCC on each rail's emit. A
     cross-rail test holds 22 lowered forms to one digest and to a strict build of both emits, and 13 refused ones to
     one reason each; each rail's linkable artifact, built as C11, returns what the original does.

@@ -13365,8 +13365,8 @@ def test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_
     pointer to its first element on both rails, to one digest: `&m[k][0]`, lowered as that form lowers. Both had refused
     it. A row's address, its type taken by `typeof` and a row of no scalars are refused alike. Found on the way and closed
     with it: the twin had read `&g[k]` of a two-dimensional global and `&s->m[k]` of a member as `&g[0][k]` (and the
-    oracle `&g[k] + 1` as one element on), `typeof` of a row as its element on the oracle, and a volatile array's element
-    address as a `T *` on the twin. `cfront_csub2_rows.c` runs as the original on each rail's emit (`_ABI`), and each
+    oracle `&g[k] + 1` as one element on), and `f(s->m[k])`, a member array's row, as its first element; `typeof` of a
+    row as its element on the oracle; and a volatile array's element address as a `T *` on the twin. `cfront_csub2_rows.c` runs as the original on each rail's emit (`_ABI`), and each
     rail's linkable artifact of it, built as C11, returns what the original does."""
     exe = _build_frontend(_session_build_dir()) if _CC else None
     with tempfile.TemporaryDirectory() as d:
