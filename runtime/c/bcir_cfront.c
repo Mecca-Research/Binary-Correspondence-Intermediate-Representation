@@ -5153,10 +5153,10 @@ static uint32_t elem_addr(CC *c, const venv *v, uint32_t ix){
  * pointer to its first element, `&m[k][0]`, and is lowered by the claims that form lowers to (the oracle's
  * `_scalar_row` rewrite): the source's subscripts, a supplied `0` (`zero_index`), and the element's address. 1 with the
  * address in *out; 0 when the subscripts are no such row (the caller's paths, and their refusals, take them). */
-/* 1 when the subscripts at the cursor make such a row of `v` (2: of a multi-dimensional global), nothing lowered. */
-static int row_at(CC *c, venv *v){
-  field gf;
-  if(global_md_field_k(c,v,&gf,1)) return 2;
+/* 1 when the subscripts at the cursor make such a row of `v` (2: of a multi-dimensional global, its field in *gf),
+ * nothing lowered. */
+static int row_at(CC *c, venv *v, field *gf){
+  if(global_md_field_k(c,v,gf,1)) return 2;
   int want=subscript_dims(c,v);
   if(want<2 || sub_group_count(c,c->i)!=want-1 || !names_object_ptr(c,v)) return 0;
   if(v->type.kind==1 || v->type.kind==3 || ptr_array(c,v) || ptr_levels(&v->type)>1
@@ -5164,8 +5164,8 @@ static int row_at(CC *c, venv *v){
   return 1;
 }
 static int row_value(CC *c, venv *v, uint32_t *out){
-  int k=row_at(c,v);
-  if(k==2){ field gf; (void)global_md_field_k(c,v,&gf,1); uint32_t ix=member_arr_index_x(c,&gf,1); if(c->failed) return 0;
+  field gf; int k=row_at(c,v,&gf);
+  if(k==2){ uint32_t ix=member_arr_index_x(c,&gf,1); if(c->failed) return 0;
     *out=c->row_rid=addr_member_elem(c,v,&gf,ix); return 1; }
   if(!k) return 0;
   uint32_t ix=array_index_nx(c,v,subscript_dims(c,v)-1,1); if(c->failed) return 0;
@@ -6112,7 +6112,8 @@ static BCIR_NOINLINE int deref_paren_fast(CC *c, uint32_t *out){
     if(pvp && names_object_ptr(c,pvp)){   /* `*(s + 1u)` of an integer: the general path refuses it (CF-FPTAB) */
       c->i++; venv pvsnap=*pvp; venv *pv=&pvsnap;   /* SNAPSHOT: the `+ i` index below can realloc c->env[] */
       int through=1;                                /* `*(q[j] ...)`: through the loaded pointer element */
-      if(is(c,"[") && row_at(c,pv)){ spec_end(c,&m); c->i=save; return 0; }   /* `*(m[k] + i)`: the row's value, the
+      field rg;
+      if(is(c,"[") && row_at(c,pv,&rg)){ spec_end(c,&m); c->i=save; return 0; }   /* `*(m[k] + i)`: the row's value, the
                                                        * general path's pointer (CSUB-2d) */
       if(is(c,"[")){ uint32_t lin=index_chain(c,pv); if(c->failed) return 0; through=step_to_elem_ptr(c,pv,lin); }
       if(through && is(c,"+")){ c->i++; uint32_t idx;
@@ -9244,7 +9245,8 @@ static void p_stmt_inner(CC *c) {
     if(is(c,"(")){ c->i++;                              /* *(p) or *(p + i) */
       if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);
         if(pvp && names_object_ptr(c,pvp)){ c->i++; pvsnap=*pvp; pv=&pvsnap;   /* (else the general path: CF-FPTAB) */
-          if(is(c,"[") && row_at(c,pv)) pv=NULL;     /* `*(m[k] + i) = v`: the general path's (CSUB-2d) */
+          field rg;
+          if(is(c,"[") && row_at(c,pv,&rg)) pv=NULL;     /* `*(m[k] + i) = v`: the general path's (CSUB-2d) */
           else if(is(c,"[")){ uint32_t lin=index_chain(c,pv);   /* `*(q[j] ...)`: through the loaded pointer element */
             if(c->failed) return;
             if(!step_to_elem_ptr(c,pv,lin)) pv=NULL; }

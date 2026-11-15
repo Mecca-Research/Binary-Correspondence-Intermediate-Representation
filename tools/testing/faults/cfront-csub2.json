@@ -1020,8 +1020,8 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W18 twin: a row of a two-dimensional global indexed as a local's",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "  if(k==2){ field gf; (void)global_md_field_k(c,v,&gf,1);",
-   "new": "  if(k==3){ field gf; (void)global_md_field_k(c,v,&gf,1);"
+   "old": "  if(k==2){ uint32_t ix=member_arr_index_x(c,&gf,1); if(c->failed) return 0;",
+   "new": "  if(k==3){ uint32_t ix=member_arr_index_x(c,&gf,1); if(c->failed) return 0;"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
@@ -1034,15 +1034,15 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W20 twin: `*(m[k] + i)` refused again",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "      if(is(c,\"[\") && row_at(c,pv)){ spec_end(c,&m); c->i=save; return 0; }",
-   "new": "      if(0 && is(c,\"[\") && row_at(c,pv)){ spec_end(c,&m); c->i=save; return 0; }"
+   "old": "      if(is(c,\"[\") && row_at(c,pv,&rg)){ spec_end(c,&m); c->i=save; return 0; }",
+   "new": "      if(0 && is(c,\"[\") && row_at(c,pv,&rg)){ spec_end(c,&m); c->i=save; return 0; }"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W21 twin: `*(m[k] + i) = v` refused again",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "          if(is(c,\"[\") && row_at(c,pv)) pv=NULL;",
-   "new": "          if(0 && is(c,\"[\") && row_at(c,pv)) pv=NULL;"
+   "old": "          if(is(c,\"[\") && row_at(c,pv,&rg)) pv=NULL;",
+   "new": "          if(0 && is(c,\"[\") && row_at(c,pv,&rg)) pv=NULL;"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
