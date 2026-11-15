@@ -96,7 +96,7 @@
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T9 the twin never re-reads a narrowing store's value through a loaded pointer",
       "new": "  (void)r; (void)sz; return 0;",
-      "old": "  return (lv->kind==1 && lv->f.bit_w) || sz < (int)(r?r->elem_bytes:4);",
+      "old": "  return ((lv->kind==1||lv->kind==3) && lv->f.bit_w) || sz < (int)(r?r->elem_bytes:4);",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

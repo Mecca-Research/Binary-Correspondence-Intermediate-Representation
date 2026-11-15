@@ -2074,6 +2074,8 @@ class _FuncLowerer:
         el = self._lvalue(n.base)
         if el.kind != "mem" or el.idx is None or el.ct.kind not in ("struct", "union"):
             return None
+        if n.arrow:  # `a[i]->m` of a struct element: `->` takes a pointer (C11 6.5.2.3p2; CSUB-2e)
+            raise CLowerError(ARROW_NOT)
         elem = self._complete(el.ct)
         agg, ftype, off, fbo, fbw = elem, elem, 0, 0, 0
         for name in reversed(hops):  # the element's struct, then each nested struct/union reached

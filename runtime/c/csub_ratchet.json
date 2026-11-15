@@ -34,8 +34,8 @@
     },
     "bcir_bpe.c": {
       "verdict": "blocked",
-      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
-      "construct": "an address-of an element of an array member reached through a loaded pointer, `&set->slots[j]`",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "a struct-typed member of an array element, stored (`set->slots[j].name = name`): the record table",
       "rung": "CSUB-2"
     },
     "bcir_bundle_cli.c": {
@@ -76,15 +76,15 @@
     },
     "bcir_decoder_gem.c": {
       "verdict": "blocked",
-      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
-      "construct": "an lvalue form the lowering does not take yet: an address-of, increment or assignment through a loaded pointer",
-      "rung": "CSUB-2"
+      "blocker": "verify error: R18: call to undefined function strlen",
+      "construct": "`strlen`, a hosted `<string.h>` call R18 does not know (a hosted tool)",
+      "rung": "CSUB-5"
     },
     "bcir_decoder_pack.c": {
       "verdict": "blocked",
-      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
-      "construct": "an address-of an element of an array member reached through a loaded pointer, `&c->claims[v->claim_id]`",
-      "rung": "CSUB-2"
+      "blocker": "verify error: R18: call to undefined function strlen",
+      "construct": "`strlen`, a hosted `<string.h>` call R18 does not know (a hosted tool)",
+      "rung": "CSUB-5"
     },
     "bcir_decoder_train.c": {
       "verdict": "blocked",
@@ -94,8 +94,8 @@
     },
     "bcir_diag.c": {
       "verdict": "blocked",
-      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
-      "construct": "an address-of an element of an array member reached through a loaded pointer, `&d->fixits[i]`",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "a struct-typed member of an array element, passed by value (`d->notes[i].span`): the record table",
       "rung": "CSUB-2"
     },
     "bcir_ed25519.c": {
@@ -106,8 +106,8 @@
     },
     "bcir_emit.c": {
       "verdict": "blocked",
-      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
-      "construct": "an address-of an element of an array member reached through a loaded pointer, `&b->t.constraints[b->constraint_count]`",
+      "blocker": "parse error: ;",
+      "construct": "an assignment through a dereferenced pointer used as a value, `*low = *high = &absent`",
       "rung": "CSUB-2"
     },
     "bcir_encode.c": {
@@ -118,8 +118,8 @@
     },
     "bcir_handoff.c": {
       "verdict": "blocked",
-      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
-      "construct": "an address-of an element of an array member reached through a loaded pointer, `&t->slots[i]`",
+      "blocker": "parse error: aggregate return through a prototype is not supported",
+      "construct": "a struct a call returns through a prototype, `bcir_ctl_admit_pack(...)`",
       "rung": "CSUB-2"
     },
     "bcir_hydrate.c": {
@@ -235,8 +235,8 @@
     },
     "bcir_spm.c": {
       "verdict": "blocked",
-      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
-      "construct": "an lvalue form the lowering does not take yet: an address-of, increment or assignment through a loaded pointer",
+      "blocker": "parse error: )",
+      "construct": "a pointer member's assignment used as a value, `!(t->pieces = (piece_t *)...)`",
       "rung": "CSUB-2"
     },
     "bcir_telemetry_envelope.c": {

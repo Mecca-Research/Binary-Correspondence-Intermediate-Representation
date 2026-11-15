@@ -2824,6 +2824,15 @@ static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t 
   mark_atomic(cl,fld->is_atomic);
   return t;
 }
+/* The operand kinds C requires of `*`, `[]`, `.` and `->` (C11 6.5.3.2p2, 6.5.2.1p1, 6.5.2.3p1-2) and of what
+ * `sizeof` measures (6.5.3.4p1), each wrong operand refused for one reason on both rails -- the oracle's
+ * `DEREF_NOT`, `SUBSCRIPT_NOT`, `DOT_NOT`, `ARROW_NOT`, `FN_NOT_LVALUE` and `SIZEOF_FN` (CF-FPTAB). */
+#define CC_DEREF_NOT "dereference of a non-pointer"
+#define CC_SUBSCRIPT_NOT "subscripted value is not an array or a pointer to an object"
+#define CC_DOT_NOT "member access on an object that is not a struct or union"
+#define CC_ARROW_NOT "member access `->` through a value that is not a pointer to a struct or union"
+#define CC_FN_NOT_LVALUE "a function designator is not an lvalue"
+#define CC_SIZEOF_FN "sizeof of a function designator"
 static field member_descend(CC *c, field f);   /* fwd: a nested `.m.k` member chain -> one flattened offset */
 /* The member of an array-of-structs element (the element struct is sdef `sidx`) named after the `.`/`->` at the
  * cursor, through any depth of nested struct/union members `.m.k` (CF-NESTMEM): one flattened offset in the
@@ -2831,6 +2840,9 @@ static field member_descend(CC *c, field f);   /* fwd: a nested `.m.k` member ch
  * (a bitfield/array/struct/pointer leaf is a consistent follow-on -- both rails route to fallback). Returns 1
  * with *sub filled, else 0 (and may have raised via fail()). The cursor is on the `.`/`->`. */
 static int sdef_elem_field(CC *c, int sidx, field *sub) {
+  /* the element is the struct itself (`aos_elem_field`'s and `elem_field`'s callers): `a[i]->m` takes no pointer
+   * (C11 6.5.2.3p2) -- both rails had read it as `a[i].m`, an emit no C compiler takes (CSUB-2e) */
+  if(is(c,"->")){ fail(c,CC_ARROW_NOT); return 0; }
   c->i++; tok fn=adv(c); sdef *ES=&c->s[sidx]; int fi=-1;
   for(int i=0;i<ES->nf;i++) if((int)strlen(ES->f[i].name)==fn.n&&!strncmp(ES->f[i].name,fn.s,fn.n)) fi=i;
   if(fi<0){ fail(c,"unknown field"); return 0; }
@@ -3668,15 +3680,6 @@ static uint32_t elem_temp(CC *c, venv *base) {
 }
 static const bcir_ctype *callee_ret(CC *c, const tok *id);     /* fwd: a defined function's return type */
 static const bcir_ctype *declared_ret(CC *c, const tok *id);   /* fwd: a prototype's */
-/* The operand kinds C requires of `*`, `[]`, `.` and `->` (C11 6.5.3.2p2, 6.5.2.1p1, 6.5.2.3p1-2) and of what
- * `sizeof` measures (6.5.3.4p1), each wrong operand refused for one reason on both rails -- the oracle's
- * `DEREF_NOT`, `SUBSCRIPT_NOT`, `DOT_NOT`, `ARROW_NOT`, `FN_NOT_LVALUE` and `SIZEOF_FN` (CF-FPTAB). */
-#define CC_DEREF_NOT "dereference of a non-pointer"
-#define CC_SUBSCRIPT_NOT "subscripted value is not an array or a pointer to an object"
-#define CC_DOT_NOT "member access on an object that is not a struct or union"
-#define CC_ARROW_NOT "member access `->` through a value that is not a pointer to a struct or union"
-#define CC_FN_NOT_LVALUE "a function designator is not an lvalue"
-#define CC_SIZEOF_FN "sizeof of a function designator"
 /* Whether the object `v` names is an address `*` or `[]` takes (C11 6.5.3.2p2, 6.5.2.1p1): a pointer to an object --
  * a declared one, or a file-scope one whose slot is a scalar -- or an array of any length, a VLA's too. A function
  * pointer is none (a `*` of one names the function), nor is any other object. Every fast path that reads or writes
@@ -4131,16 +4134,48 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
  * Kind 1: the member `f` of the struct `*b` points at; kind 2: the element `b[idx]`. `b.rid` is the loaded
  * pointer: its accesses carry no known extent (BCIR_BND_ASSUMED), as store_through_ptr's do. */
 typedef struct { int kind; venv b; field f; uint32_t idx; } plv;
+/* Kind 3: the scalar member `f` of the struct element `b[idx]` -- `p->a[i].m`, `b` the loaded pointer as
+ * ptr_elem_base makes it, strided by the element as an array-of-structs element's member is. Kind 4: that element
+ * itself, `&p->a[i]`, which an address takes; stepped or compound-assigned, it is the struct operand the arithmetic
+ * refuses (`agg_operand`), and assigned as a value the follow-on below (CSUB-2e). */
 /* The rest of the lvalue past the loaded pointer `ptr` (`psidx` its pointee struct, or -1; `pfld` the member it
  * was loaded from): the moves postfix_ptr_chain reads, stopping at the object instead of loading it -- a
  * pointer member followed by another `->`/`.`/`[` is loaded and walked again. 1 with the object in `*o`; 0 when
  * the object is not a scalar these paths store (a struct, an array or pointer member, a struct element): the
  * caller rolls back. Iterative, so a long `a->b->c->...` chain costs no stack. */
+/* The member `.m` (and its nested value-struct hops) of an element of the struct `sidx`, read without a refusal of
+ * its own: plv_chain's callers roll back what it does not take, and the read paths refuse what C or the subset does
+ * not take there (sdef_elem_field). 1 with *sub; 0 at no member or an unknown one. */
+static int elem_member_peek(CC *c, int sidx, field *sub){
+  if(!is(c,".")) return 0;
+  c->i++; if(!isk(c,T_ID)) return 0;
+  tok fn=adv(c); const sdef *S=&c->s[sidx]; int fi=-1;
+  for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fn.n && !strncmp(S->f[k].name,fn.s,(size_t)fn.n)) fi=k;
+  if(fi<0) return 0;
+  *sub=member_descend(c,S->f[fi]); return 1;
+}
 static int plv_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
   memset(o,0,sizeof *o);
   while(!c->failed){
     if(is(c,"[")){                                    /* `...->p[i]`: an element of the loaded pointer */
-      if(pfld.ptee_sidx>=0 || pfld.ptee_depth>1) return 0;   /* a struct or pointer element: not a scalar */
+      if(pfld.ptee_depth>1) return 0;                 /* a pointer element: not a scalar */
+      if(pfld.ptee_sidx>=0){                          /* `...->p[i].m`, `&...->p[i]`: an element of a pointer to
+                                                       * structs, as the oracle's `_lvalue` has it (CSUB-2e) */
+        c->i++; uint32_t ix=p_expr(c); if(c->failed || !eat(c,"]")) return 0;
+        venv e=ptr_elem_base(c,ptr,pfld.ptee_sidx,&pfld);
+        if(!is(c,".")){                               /* the element itself, or what C refuses after it */
+          if(is(c,"->")){ fail(c,CC_ARROW_NOT); return 0; }
+          if(is(c,"[")){ fail(c,"a subscript of an element that is not a pointer"); return 0; }
+          o->kind=4; o->b=e; o->idx=ix; return 1; }
+        field sub; if(!elem_member_peek(c,pfld.ptee_sidx,&sub)) return 0;
+        if(sub.is_ptr && !sub.fp_sig && (is(c,"->")||is(c,".")||is(c,"["))){   /* a pointer member: load, walk on */
+          ptr=emit_index_field(c,&e,ix,&sub); psidx=sub.ptee_sidx; pfld=sub; continue; }
+        if(sub.bit_w || (sub.fp_sig && !sub.is_ptr) || sub.sidx>=0){   /* what the read paths refuse too */
+          fail(c,"array-of-structs non-scalar element field"); return 0; }
+        if(sub.is_ptr || sub.fp_sig || farr(&sub)) return 0;   /* no scalar here: rolled back */
+        if(is(c,"[")||is(c,".")||is(c,"->")) return 0;
+        o->kind=3; o->b=e; o->idx=ix; o->f=sub; return 1;
+      }
       c->i++; uint32_t ix=p_expr(c); if(c->failed || !eat(c,"]")) return 0;
       o->kind=2; o->b.rid=ptr; o->b.sidx=-1; o->idx=ix;
       o->b.type.size=pfld.ptee_size?pfld.ptee_size:4; o->b.type.signd=pfld.signd;
@@ -4171,15 +4206,20 @@ static int plv_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
 static int plv_volatile(CC *c, const plv *lv){
   const bcir_resource *r=res_of(c->fn,lv->b.rid);
   if(r && r->domain==BCIR_DOM_MMIO) return 1;
-  return lv->kind==1 ? (lv->f.is_volatile || lv->b.type.is_volatile) : index_elem_vol(c,&lv->b);
+  if(lv->kind==4) return lv->b.type.is_volatile || sdef_vol(c,lv->b.sidx);
+  return lv->kind==1||lv->kind==3 ? (lv->f.is_volatile || lv->b.type.is_volatile) : index_elem_vol(c,&lv->b);
 }
-static int plv_atomic(CC *c, const plv *lv){ return lv->kind==1 ? lv->f.is_atomic : index_elem_atomic(c,&lv->b); }
-static bcir_ctype plv_slot(const plv *lv){ return lv->kind==1 ? field_slot(&lv->f) : index_elem_ctype(&lv->b); }
+static int plv_atomic(CC *c, const plv *lv){
+  if(lv->kind==4) return 0;
+  return lv->kind==1||lv->kind==3 ? lv->f.is_atomic : index_elem_atomic(c,&lv->b); }
+static bcir_ctype plv_slot(const plv *lv){
+  return lv->kind==1||lv->kind==3 ? field_slot(&lv->f) : index_elem_ctype(&lv->b); }
 static int plv_narrow(CC *c, const plv *lv, uint32_t val){   /* a store truncates `val`: re-read the object */
-  const bcir_resource *r=res_of(c->fn,val); int sz = lv->kind==1 ? lv->f.size : lv->b.type.size;
-  return (lv->kind==1 && lv->f.bit_w) || sz < (int)(r?r->elem_bytes:4);
+  const bcir_resource *r=res_of(c->fn,val); int sz = lv->kind==1||lv->kind==3 ? lv->f.size : lv->b.type.size;
+  return ((lv->kind==1||lv->kind==3) && lv->f.bit_w) || sz < (int)(r?r->elem_bytes:4);
 }
 static uint32_t plv_read(CC *c, plv *lv){
+  if(lv->kind==3) return emit_index_field(c,&lv->b,lv->idx,&lv->f);
   return lv->kind==1 ? emit_member(c,&lv->b,&lv->f,0) : emit_index(c,&lv->b,lv->idx);
 }
 /* `&obj` of an object through a loaded pointer (CF-SPLIT2: `&h.next->v`, `&n->next->p[i]`): the pointer to it,
@@ -4188,6 +4228,15 @@ static uint32_t plv_read(CC *c, plv *lv){
 static uint32_t plv_addr(CC *c, const plv *lv){
   if(lv->kind==1 && lv->f.bit_w){ fail(c,"cannot take the address of a bit-field"); return 0; }
   if(plv_volatile(c,lv)){ fail(c,"address-of a volatile object through a loaded pointer is a follow-on"); return 0; }
+  if(lv->kind==4){                                  /* `&p->a[i]`: a pointer to the struct element (CSUB-2e) */
+    const sdef *S=&c->s[lv->b.sidx]; int es=lv->b.type.size?lv->b.type.size:4;
+    uint32_t t=add_res(c,BCIR_DOM_RAM, es, 1,0,BCIR_RK_POINTER,"");
+    if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1]; tr->ptr_depth=1;
+      fits(c,tr->agg,sizeof tr->agg,"%s %s",S->is_union?"union":"struct",S->tag); }
+    bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+    if(cl){ cl->n_wr=1; cl->wr[0]=t; cl->n_rd=2; cl->rd[0]=lv->b.rid; cl->rd[1]=lv->idx;
+      cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=es; }
+    return t; }
   bcir_ctype ty=plv_slot(lv); int sz=ty.size?ty.size:4;
   uint32_t t=add_res(c,BCIR_DOM_RAM, sz, 1,0,BCIR_RK_POINTER,"");   /* a `T *` to the object */
   if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
@@ -4197,6 +4246,7 @@ static uint32_t plv_addr(CC *c, const plv *lv){
   bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
   if(cl){ cl->n_wr=1; cl->wr[0]=t; cl->rd[0]=lv->b.rid;
     if(lv->kind==1){ cl->n_rd=1; cl->n_imm=1; cl->imm[0]=lv->f.byte_off; }
+    else if(lv->kind==3){ cl->n_rd=2; cl->rd[1]=lv->idx; cl->n_imm=2; cl->imm[0]=lv->f.byte_off; cl->imm[1]=lv->b.type.size; }
     else { cl->n_rd=2; cl->rd[1]=lv->idx; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; } }
   return t;
 }
@@ -6736,6 +6786,7 @@ static uint32_t store_member_bf(CC *c, venv *base, const field *f, uint32_t val)
 static uint32_t p_assign(CC *c);   /* fwd: the rhs of an assignment-as-value is itself an assign (right-assoc) */
 static uint32_t plv_write(CC *c, plv *lv, uint32_t val){     /* the value as stored */
   if(lv->kind==1) return lv->f.bit_w ? store_member_bf(c,&lv->b,&lv->f,val) : store_member(c,&lv->b,&lv->f,val);
+  if(lv->kind==3) return store_index_field(c,&lv->b,lv->idx,&lv->f,val);   /* strided by the element (CSUB-2e) */
   bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
   if(cl){cl->n_rd=3;cl->rd[0]=lv->b.rid;cl->rd[1]=lv->idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;
     mark_access(c,cl,index_elem_vol(c,&lv->b)); mark_atomic(cl,index_elem_atomic(c,&lv->b));}
@@ -6755,6 +6806,8 @@ static uint32_t plv_assign_value(CC *c, plv *lv){
   char ch=op->s[0]; c->i++;
   const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
   if(at){ uint32_t rhs=p_assign(c);
+    if(lv->kind==3) return emit_rmw(c,suf,&slot,lv->b.rid,1,lv->idx,1,rhs,lv->f.byte_off,lv->f.size,lv->b.type.size,
+                                    plv_volatile(c,lv),BCIR_BND_ASSUMED);
     return lv->kind==1
       ? emit_rmw(c,suf,&slot,lv->b.rid,0,0,1,rhs,lv->f.byte_off,lv->f.size,0,plv_volatile(c,lv),BCIR_BND_ASSUMED)
       : emit_rmw(c,suf,&slot,lv->b.rid,1,lv->idx,1,rhs,0,0,0,plv_volatile(c,lv),BCIR_BND_ASSUMED); }
@@ -7057,6 +7110,9 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
       int ok=plv_chain(c,ptr,f.ptee_sidx,f,&lv);
       if(c->failed) return 0;
       const tok *aop=&c->t[c->i];
+      if(ok && lv.kind==4){                      /* `(p->a[i] = o)`, `(p->a[i] += o)` of a struct element: the oracle's reason */
+        if(is_compound_op(aop)){ fail(c,"this lvalue form's compound assignment as a value is a follow-on"); return 0; }
+        if(aop->k==T_PUN && aop->n==1 && aop->s[0]=='='){ fail(c,"this lvalue form's assignment as a value is a follow-on"); return 0; } }
       if(!ok || plv_volatile(c,&lv) || !((aop->k==T_PUN && aop->n==1 && aop->s[0]=='=') || is_compound_op(aop))){
         c->fn->n_res=m_res;c->fn->n_claims=m_cl;c->rid=m_rid;c->cid=m_cid;c->cl_ctr=m_clc;   /* a read: undo */
         c->i=save; return 0; }
@@ -7189,6 +7245,8 @@ static uint32_t member_elem_incdec(CC *c, venv *v, const field *fp, uint32_t idx
  * (re-read where the store narrows it); an `_Atomic` object one atomic read-modify-write. */
 static uint32_t plv_incdec(CC *c, plv *lv, int prefix, char ch){
   if(plv_atomic(c,lv)){ bcir_ctype slot=plv_slot(lv);
+    if(lv->kind==3) return emit_rmw(c,incdec_kind(prefix,ch),&slot,lv->b.rid,1,lv->idx,0,0,lv->f.byte_off,lv->f.size,
+                                    lv->b.type.size,plv_volatile(c,lv),BCIR_BND_ASSUMED);
     return lv->kind==1
       ? emit_rmw(c,incdec_kind(prefix,ch),&slot,lv->b.rid,0,0,0,0,lv->f.byte_off,lv->f.size,0,plv_volatile(c,lv),
                  BCIR_BND_ASSUMED)
@@ -8450,6 +8508,10 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
         if(r<0) return;
         if(r>0){ if(!store_member_elem_stmt(c,&e,&af,tot)) fail(c,"="); return; } }
       field sub; if(!aos_elem_field(c,&e,&sub)) return;
+      if(elem_leaf_refused(c,&sub)) return;            /* `...->p[i].v[j]`, `...->p[i].q.x`: C's reason */
+      if(sub.is_ptr && (is(c,"->")||is(c,"["))){       /* `...->p[i].q->m = v`, `...->p[i].buf[j] = v`: on through
+        * the pointer member it loads -- the oracle's store, where the twin had asked for an `=` (CSUB-2c, CSUB-2e) */
+        uint32_t nptr=emit_index_field(c,&e,idx,&sub); store_through_ptr(c,nptr,sub.ptee_sidx,sub); return; }
       if(!store_elem_field_stmt(c,&e,idx,&sub) && !c->failed) fail(c,"=");
       return; }
     venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;

@@ -7,7 +7,8 @@
   "bcir.tests.test_c_cfront:test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
   "bcir.tests.test_c_cfront:test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
-  "bcir.tests.test_c_cfront:test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails"
+  "bcir.tests.test_c_cfront:test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails"
  ],
  "faults": [
   {
@@ -491,6 +492,125 @@
    "label": "CS2C32 twin: `&a[i].q.x` refused for the twin's own reason",
    "path": "runtime/c/bcir_cfront.c",
    "old": "            if(elem_leaf_refused(c,&sub)) return 0;     /* `&a[i].v[0]`, `&a[i].p.x`: for C's reason (CF-FPTAB) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E1 oracle: `a[i]->m` of a struct element read as `a[i].m`",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if n.arrow:  # `a[i]->m` of a struct element: `->` takes a pointer (C11 6.5.2.3p2; CSUB-2e)\n            raise CLowerError(ARROW_NOT)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E2 twin: `a[i]->m` of a struct element read as `a[i].m`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(is(c,\"->\")){ fail(c,CC_ARROW_NOT); return 0; }\n  c->i++; tok fn=adv(c);",
+   "new": "  c->i++; tok fn=adv(c);"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E3 twin: the lvalue walk through a loaded pointer stopping at a struct element again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(pfld.ptee_depth>1) return 0;                 /* a pointer element: not a scalar */\n      if(pfld.ptee_sidx>=0){",
+   "new": "      if(pfld.ptee_sidx>=0 || pfld.ptee_depth>1) return 0;\n      if(0){"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E4 twin: a pointer member of a struct element not walked on through (`s->slots[j].next->id++`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          ptr=emit_index_field(c,&e,ix,&sub); psidx=sub.ptee_sidx; pfld=sub; continue; }",
+   "new": "          return 0; }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E5 twin: `->` after a struct element through a loaded pointer refused for no reason of C's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(is(c,\"->\")){ fail(c,CC_ARROW_NOT); return 0; }\n          if(is(c,\"[\")){",
+   "new": "          if(is(c,\"->\")) return 0;\n          if(is(c,\"[\")){"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E6 twin: `[` after a struct element through a loaded pointer refused for no reason the rails share",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(is(c,\"[\")){ fail(c,\"a subscript of an element that is not a pointer\"); return 0; }",
+   "new": "          if(is(c,\"[\")) return 0;"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E7 twin: a bit-field member of a struct element through a loaded pointer addressed",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(sub.bit_w || (sub.fp_sig && !sub.is_ptr) || sub.sidx>=0){   /* what the read paths refuse too */",
+   "new": "        if((sub.fp_sig && !sub.is_ptr) || sub.sidx>=0){   /* what the read paths refuse too */"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E8 twin: a struct element's member read as the element's scalar (`emit_index`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(lv->kind==3) return emit_index_field(c,&lv->b,lv->idx,&lv->f);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E9 twin: a struct element's member stored as the element's scalar",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(lv->kind==3) return store_index_field(c,&lv->b,lv->idx,&lv->f,val);   /* strided by the element (CSUB-2e) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E10 twin: `&p->a[i]` strided by a word, not the element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=es; }",
+   "new": "      cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=4; }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E11 twin: `&p->a[i].m` strided by the member, not the element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "cl->n_imm=2; cl->imm[0]=lv->f.byte_off; cl->imm[1]=lv->b.type.size; }",
+   "new": "cl->n_imm=2; cl->imm[0]=lv->f.byte_off; cl->imm[1]=lv->f.size; }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E12 twin: `p->a[i].cnt++` of an `_Atomic` member not one atomic step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(lv->kind==3) return emit_rmw(c,incdec_kind(prefix,ch),&slot,lv->b.rid,1,lv->idx,0,0,lv->f.byte_off,lv->f.size,\n                                    lv->b.type.size,plv_volatile(c,lv),BCIR_BND_ASSUMED);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E13 twin: `p->a[i].cnt += v` of an `_Atomic` member as a value not one atomic step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(lv->kind==3) return emit_rmw(c,suf,&slot,lv->b.rid,1,lv->idx,1,rhs,lv->f.byte_off,lv->f.size,lv->b.type.size,\n                                    plv_volatile(c,lv),BCIR_BND_ASSUMED);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E14 twin: `(p->a[i] += o)` of a struct element refused for no reason of the oracle's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(is_compound_op(aop)){ fail(c,\"this lvalue form's compound assignment as a value is a follow-on\"); return 0; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E15 twin: `(p->a[i] = o)` of a struct element refused for no reason of the oracle's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(aop->k==T_PUN && aop->n==1 && aop->s[0]=='='){ fail(c,\"this lvalue form's assignment as a value is a follow-on\"); return 0; } }",
+   "new": " }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E16 twin: a store through a struct element's pointer member asking for an `=` (`s->rows[j].buf[1] = v`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        uint32_t nptr=emit_index_field(c,&e,idx,&sub); store_through_ptr(c,nptr,sub.ptee_sidx,sub); return; }",
+   "new": "        if(0) store_through_ptr(c,0,sub.ptee_sidx,sub); }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E17 twin: a store to a struct element's member C refuses refused for no reason of C's (`s->a[i].v[0] = x`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(elem_leaf_refused(c,&sub)) return;            /* `...->p[i].v[j]`, `...->p[i].q.x`: C's reason */\n",
    "new": ""
   }
  ]

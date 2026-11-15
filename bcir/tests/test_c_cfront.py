@@ -318,6 +318,8 @@ _PTRVALUE = [
     #   (CSUB-2b)
     "cfront_csub2_records.c",  # pointer members of array elements, at a nested member's depth, read, subscripted,
     #   dereferenced, followed with `->`, stored and stored through (CSUB-2c)
+    "cfront_csub2_lvalues.c",  # an element of a pointer to structs through a loaded pointer: its address, a member
+    #   stepped, assigned as a value, addressed, and stored or stepped through a pointer member (CSUB-2e)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10738,6 +10740,118 @@ def test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails(
             )
         if exe is not None:
             _linkable_c11_runs_as_the_original(d, "cfront_csub2_records.c", "csub2_records")
+
+
+_CSUB2E_HEAD = (
+    "struct slot { uint32_t id; int16_t h; const char *name; struct slot *next; uint8_t *buf; uint32_t bits : 5;"
+    " _Atomic uint32_t cnt; };\n"
+    "union word { uint32_t w; uint8_t b[4]; };\n"
+    "struct set { struct slot *slots; size_t n; struct { struct slot *c; } t; union word *u; };\n"
+)
+# CSUB-2e: an element of a pointer to structs reached through a loaded pointer, `p->a[i]`, and its members -- the
+# element's address, a member stepped, assigned as a value, addressed, and stored or stepped through a pointer member
+_CSUB2E_LOWERED = (
+    "uint32_t f(struct set *s, size_t j) { const struct slot *e = &s->slots[j]; struct slot *g = &s->t.c[j];"
+    " return e->id + g->id + (uint32_t)(e - s->slots); }",
+    "uint32_t f(struct set *s, size_t j, uint32_t v) { s->slots[j].id++; uint32_t a = --s->slots[j].id;"
+    " uint32_t b = (s->slots[j].id = v); uint32_t c = (s->slots[j].id += v); return a + b + c + s->slots[j].h--; }",
+    "uint32_t f(struct set *s, size_t j) { uint32_t *p = &s->slots[j].id; int16_t *h = &s->slots[j].h;"
+    " struct slot *n = &s->slots[j].next[1]; return *p + (uint32_t)*h + n->id; }",
+    "uint32_t f(struct set *s, size_t j, uint8_t v) { s->slots[j].buf[1] = v; s->slots[j].buf[0] += v;"
+    " s->slots[j].next->next->id = 2u; s->slots[j].next->id++; return s->slots[j].buf[1]; }",
+    "uint32_t f(struct set *s, size_t j) { s->slots[j].cnt++; _Atomic uint32_t *c = &s->slots[j].cnt;"
+    " return (s->slots[j].cnt += 2u) + *c; }",
+    "uint32_t f(struct set *s, size_t j) { union word *u = &s->u[j]; uint32_t *w = &s->u[j].w; return u->b[0] + *w; }",
+)
+# ... and the forms refused: (unit, the reason's name in `lower`, or the text both rails' reasons begin with)
+_CSUB2E_REFUSED = (
+    # `->` of a struct element: both rails had read it as `.`, an emit no C compiler takes
+    ("uint32_t f(struct slot *t, uint32_t i) { return t[i]->id; }", "ARROW_NOT"),
+    ("uint32_t f(struct slot *t, uint32_t i) { t[i]->id = 1u; return 0u; }", "ARROW_NOT"),
+    ("uint32_t f(struct set *s, size_t j) { return s->slots[j]->id; }", "ARROW_NOT"),
+    (
+        "struct o { struct slot a[2]; };\nuint32_t f(struct o *t, uint32_t i) { return t->a[i & 1u]->id++; }",
+        "ARROW_NOT",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j) { return s->slots[j][0].id; }",
+        "a subscript of an element that is not a pointer",
+    ),
+    # ... through the address and step paths too, and after a member of one
+    (
+        "uint32_t f(struct set *s, size_t j) { uint32_t *p = &s->slots[j]->id; return *p; }",
+        "ARROW_NOT",
+    ),
+    ("uint32_t f(struct set *s, size_t j) { s->slots[j]->id++; return 0u; }", "ARROW_NOT"),
+    (
+        "uint32_t f(struct set *s, size_t j) { struct slot *p = &s->slots[j][0]; return p->id; }",
+        "a subscript of an element that is not a pointer",
+    ),
+    ("uint32_t f(struct set *s, size_t j) { s->slots[j].id[0] = 1u; return 0u; }", "SUBSCRIPT_NOT"),
+    ("uint32_t f(struct set *s, size_t j) { s->slots[j].next.id = 1u; return 0u; }", "DOT_NOT"),
+    (
+        "uint32_t f(struct set *s, size_t j) { uint32_t *p = &s->slots[j].bits; return *p; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j, struct slot o) { struct slot x = (s->slots[j] = o); return x.id; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j, struct slot o) { struct slot x = (s->slots[j] += o); return x.id; }",
+        "this lvalue form's compound assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j) { s->slots[j]++; return 0u; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+)
+
+
+def test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2e. An element of a pointer to structs reached through a loaded pointer -- `&set->slots[j]`, `&d->fixits[i]`,
+    `&b->t.constraints[n]`, `&c->claims[v->claim_id]`, `&t->slots[i]`, the first refusal of `bcir_bpe.c`,
+    `bcir_diag.c`, `bcir_emit.c`, `bcir_decoder_pack.c` and `bcir_handoff.c` -- is an lvalue on both rails, to one
+    digest: its address a pointer to the struct, a member of it stepped, assigned as a value, compound-assigned or
+    addressed, a store or a step through a pointer member it holds. The oracle had lowered each; the twin's lvalue walk
+    through a loaded pointer (`plv_chain`) had stopped at a struct element, and its store through one had asked for an
+    `=` after a pointer member (`s->rows[j].buf[1] = v`), which CSUB-2c had opened. `->` of a struct element, `a[i]->m`,
+    which both rails had read as `a[i].m` -- an emit no C compiler takes -- is refused for C's reason on both, as are
+    the forms C or the subset refuses after one. `cfront_csub2_lvalues.c` runs as the original on each rail's emit
+    (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
+    from bcir.frontends.cfront import lower as low
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n" + _CSUB2E_HEAD
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2E_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, name) in enumerate(_CSUB2E_REFUSED):
+            why = getattr(low, name, name)
+            src = head + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_lvalues.c", "csub2_lvalues")
 
 
 def _linkable_c11_runs_as_the_original(d: str, fx: str, entry: str) -> None:
