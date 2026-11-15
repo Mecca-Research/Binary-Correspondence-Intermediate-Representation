@@ -138,7 +138,7 @@ itself forbids, and RED before GREEN.
 | Rung | What the subset gains | What it brings under the verified compiler |
 |---|---|---|
 | **CSUB-1** Conformance (**landed 2026-11-11**: `bcir-cc` compiles 21 of the runtime's 58 production units with R1–R18 clean, where it compiled 4; the ratchet below holds all 58. Both rails' preprocessors are now one engine, Prosser's algorithm with the argument prescan, one rescan and `#`'s spacing, which also closed four twin miscompiles §4.1 names) | Function-like macro calls whose arguments span lines (C11 6.10.3p10). `static_assert` and `_Static_assert` at file scope. Complete freestanding headers: `<stdint.h>`'s limits and its `INTn_C`/`UINTn_C` macros; `<stddef.h>`'s `NULL`, `offsetof`, `max_align_t` and `PTRDIFF_MAX` (`bcir_host_alloc.h` needs `max_align_t` and `offsetof`, §3.1); `<stdbool.h>`, `<limits.h>` and `<float.h>`; `<math.h>`'s `NAN` and `INFINITY`. | The serialization core: `bcir_asn1.c`, `bcir_binrec.c`, `bcir_encode.c`, `bcir_runtime.c`, `bcir_exec.c`, `bcir_control_plane.c` and `bcir_ai_kernels.c`'s portable path. It is also every program in these domains that includes a standard header. |
-| **CSUB-2** Table idioms (**in progress**: CSUB-2a landed 2026-11-14, §4.2; 22 of the 58 units compile clean) | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. Three more the ratchet found first in units the measurement had not reached: a member read through a local's address, `(&v)->m`, as a macro writes it (`bcir_kplan.c`); a row of a multi-dimensional array used as a value, `f(t[1])` of `fe t[4][10]` (`bcir_ed25519.c`); and the address-of, increment and assignment of an lvalue reached through a loaded pointer (`bcir_spm.c`, `bcir_decoder_gem.c`, both quarantine units). | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c` and `bcir_handoff.c`: the table-driven dispatch every codec and catalog reader is written in. |
+| **CSUB-2** Table idioms (**in progress**: CSUB-2a and CSUB-2b's string tables landed 2026-11-14 and 2026-11-15, §4.2; 25 of the 58 units compile clean) | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. Three more the ratchet found first in units the measurement had not reached: a member read through a local's address, `(&v)->m`, as a macro writes it (`bcir_kplan.c`); a row of a multi-dimensional array used as a value, `f(t[1])` of `fe t[4][10]` (`bcir_ed25519.c`); and the address-of, increment and assignment of an lvalue reached through a loaded pointer (`bcir_spm.c`, `bcir_decoder_gem.c`, both quarantine units). | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c` and `bcir_handoff.c`: the table-driven dispatch every codec and catalog reader is written in. |
 | **CSUB-3** C23 bits and checked arithmetic | `<stdbit.h>` (endian queries, bit width, leading and trailing zeros, population count) and `<stdckdint.h>` (`ckd_add`, `ckd_sub`, `ckd_mul`), each with its exact C23 semantics. The master roadmap lists both as near-term gaps (§4.1). One shared `bcir_bytes.h` built on them replaces the nine copies of the endian helpers, byte-identical. | Varints, bitmaps, length fields and every bounds check of the L3 kind ("bounds live where the resource commits") written as checked arithmetic rather than hand-rolled comparisons. |
 | **CSUB-4** The atomics API | `<stdatomic.h>`'s explicit-order calls: `atomic_load_explicit`, `atomic_store_explicit`, `atomic_fetch_add_explicit` and `atomic_compare_exchange_*_explicit`, with `memory_order`. They map onto the memory model the oracle already states (`lower.memory_model`) and the law rail's atomic orderings. | `bcir_ring.c` and the lock-free single-producer, single-consumer structures the AI system's services run on (`BCIR_AI_SYSTEM_ROADMAP.md` §5.2). |
 | **CSUB-5** A hosted profile | A declared hosted class, not part of the freestanding subset: `<stdio.h>` streams and file I/O under the injected-allocator memory class (`../languages/C_MEMORY_DISCIPLINE.md`). Memory mapping goes through a declared host interface. | The loaders `bcir_q8_model.c` and `bcir_llama.c`, and the quarantine's recovery |
@@ -221,7 +221,23 @@ moves with each: a unit's first refusal is the next construct the rung must take
 this rung: an element's address through a loaded pointer (`&t->slots[i]`), and a row of a two-dimensional array
 used as a value.
 
-**Next:** the string and untagged-struct tables (CSUB-2b), the record table (CSUB-2c), pointer-to-array members
+**CSUB-2b, first half (2026-11-15): string tables.**
+- **A string literal in a static's image.** A string literal is the address of its array, an address constant (C11
+  6.6p9). It is now an entry of a static's image:
+  - a block-scope `static const char *const names[]`;
+  - a pointer member of a static table's records, by braces, brace elision or designators;
+  - a scalar static.
+- **One spelling.** Both rails render each entry by one canonical spelling: printable ASCII as itself, every other
+  code unit and `"`, `\` and `?` an octal escape. So the image, and the digest over it, agree whatever escapes and
+  pieces the source used, and the emit never spells a trigraph, which `-std=c11` reads.
+- **Where it is taken.** Only where C converts the address without a diagnostic: into a pointer to plain `char`,
+  from a literal of no prefix, and only the literal itself. An entry that merely evaluates to one, `("a", "b")`,
+  is no constant. Every other slot and prefix is refused alike, for one reason.
+
+`bcir_artifact_bundle.c`, `bcir_jer.c` and `bcir_sp_listing.c` now compile clean. `bcir_decoder_pack.c` stops at
+an element's address through a loaded pointer (`&c->claims[v->claim_id]`).
+
+**Next:** the untagged-struct tables (CSUB-2b's second half), the record table (CSUB-2c), pointer-to-array members
 (CSUB-2d), and the remaining lvalue forms (CSUB-2e). Every first refusal the rung names in §3 and §3.1 is one of
 these.
 

@@ -526,6 +526,10 @@ _mm_sfence();                      //                   store (release) fence ->
 - `_Alignas(N)` / `alignas(N)` on an object (C11 6.7.5) -- a local, each declarator off one specifier, a block static,
   a file-scope object of any storage class -- with the strictest of several specifiers. Each emit spells it on the
   object's declaration: the function-level emit a block object's, the linkable emit a global's (CSUB-2a).
+- A string literal as an entry of a static's image -- `static const char *const names[] = {"ok", "size"};` in a
+  block, a pointer member of a static table's records, a scalar static: the address of its array, an address constant
+  (C11 6.6p9). Both rails spell each entry by one canonical spelling, every code unit past printable ASCII, and `"`,
+  `\` and `?`, an octal escape, so no trigraph reaches a C11 build (CSUB-2b).
 
 ## Known limits
 
@@ -651,6 +655,9 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   - one on a variable-length array, or on a declaration that defines the struct or union it aligns.
 
   A function-pointer parameter declared as an array of arrays, or as a variable-length array, is refused as well.
+- A string literal in a static's image anywhere but a pointer to plain `char` (`a string literal in a static's
+  initializer initializes only a pointer to plain char`), from a literal with a prefix, or an entry that only
+  evaluates to one -- `"ab" + 1`, a cast, `?:`, `("a", "b")`, which is no constant expression (CSUB-2b).
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
@@ -658,7 +665,7 @@ When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exac
 ran this compiler over the runtime's units. Its first rung, CSUB-1 (2026-11-11), closed the three gaps that blocked
 most of them: multi-line macro invocations, static assertions and the standard headers above. `bcir-cc` now
 compiled 21 of the runtime's 58 production units with R1-R18 clean, where it had compiled 4; CSUB-2a (2026-11-14)
-brought it to 22. The ratchet gate
+brought it to 22, and CSUB-2b's string tables (2026-11-15) to 25. The ratchet gate
 `tools/c/csub_ratchet.py` (the `csub_ratchet` section of `tools/c/check_runtime.sh`) holds each unit
 `runtime/c/MEMORY_CLASSIFICATION.txt` lists to its record in `runtime/c/csub_ratchet.json`: clean, or blocked with
 its first refusal, the construct it is about and the rung that lifts it. A unit added to the runtime is added to the

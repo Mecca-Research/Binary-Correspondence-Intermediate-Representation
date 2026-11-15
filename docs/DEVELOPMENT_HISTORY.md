@@ -289,6 +289,25 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-15 — CSUB-2b, first half: string literals in a static's image.**
+  - A string literal is the address of its array, an address constant (C11 6.6p9). Both rails take one as an entry
+    of a static's image: a block-scope `static const char *const t[]`, a pointer member of a static table's records,
+    a scalar static. Both had refused every one as no integer constant expression.
+  - Each entry is rendered by one canonical spelling on both rails, so the image and the digest over it agree. `?`
+    is an octal escape, so the emit never spells a trigraph, which `-std=c11` reads.
+  - It is taken only where C converts the address without a diagnostic: a pointer to plain `char`, from a literal
+    of no prefix, and only the literal itself. Every other slot, prefix or computed address is refused alike. The
+    twin's members now record whether a pointer member points at plain `char`.
+  - **Evidence.** `cfront_csub2_strtab.c` runs as the original on each rail's emit. A cross-rail test holds 4
+    lowered forms to one digest and to both emits' spellings, and 16 refused ones to one reason each. It also runs
+    each rail's linkable artifact of the fixture, built as C11, against the original.
+  - **Standing faults.** `cfront-csub2.json` gains 12 (CS2B1–CS2B12), each swept RED. The first sweep found two
+    checks no witness could fire. Each rail had asked that the entry make no claim, a check that never decided an
+    outcome, and the real rule was missing: the entry must be the literal itself. Both rails now ask that, and
+    the two faults aim at it.
+  - **The ratchet.** `bcir_artifact_bundle.c`, `bcir_jer.c` and `bcir_sp_listing.c` compile clean (25 of 58).
+    `bcir_decoder_pack.c` stops at `&c->claims[v->claim_id]`, a CSUB-2e form.
+
 - **2026-11-14 — CSUB-2a: array parameters of function types, and `_Alignas` on objects.**
   - The first slice of the table-idioms rung, on both rails. A function-pointer type's array parameter is a pointer
     to its element (C11 6.7.6.3p7), as a definition's is. `bcir_shard_manifest.h`'s `const uint8_t digest[32]`
