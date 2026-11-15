@@ -46,9 +46,9 @@
     },
     "bcir_cc.c": {
       "verdict": "blocked",
-      "blocker": "parse error: (",
-      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
-      "rung": "CSUB-2"
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
     },
     "bcir_cfront.c": {
       "verdict": "blocked",
@@ -58,8 +58,8 @@
     },
     "bcir_channel.c": {
       "verdict": "blocked",
-      "blocker": "parse error: (",
-      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
+      "blocker": "parse error: partial indexing of a multi-dimensional array (a row used as a value) is not yet supported",
+      "construct": "a row of a multi-dimensional array used as a value (`strcmp(seen_keys[i], key)` of `char seen_keys[64][48]`)",
       "rung": "CSUB-2"
     },
     "bcir_control_plane.c": {
@@ -123,10 +123,7 @@
       "rung": "CSUB-2"
     },
     "bcir_hydrate.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: (",
-      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_jer.c": {
       "verdict": "clean"
@@ -174,10 +171,7 @@
       "verdict": "clean"
     },
     "bcir_plan.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: (",
-      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_plan_sign.c": {
       "verdict": "clean"
@@ -262,8 +256,8 @@
     },
     "bcir_verify.c": {
       "verdict": "blocked",
-      "blocker": "parse error: (",
-      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
+      "blocker": "parse error: partial indexing of a multi-dimensional array (a row used as a value) is not yet supported",
+      "construct": "the row a pointer-to-array member points at, used as a value (`fixed_string(f->calls[k], BCIR_CIR_NAME)`)",
       "rung": "CSUB-2"
     },
     "bcir_xer.c": {

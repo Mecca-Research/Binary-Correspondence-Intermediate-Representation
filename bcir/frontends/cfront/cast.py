@@ -36,6 +36,9 @@ class TypeRef:
     ptr_quals: tuple = ()  # the qualifiers after each `*`, from the base out -- `const char *const *`
     #   has `(("const",), ())` -- each a tuple of `const` and `restrict`; () when no `*` is qualified.
     #   A function type spells and compares them (CF-QUALS)
+    row_ptr: bool = False  # the declarator was `(*name)[N]`, a pointer to an array: `array` is `(0, N)`, the shape of
+    #   the `T name[][N]` it is the type of as a parameter -- and, as a member or a block object, the
+    #   pointer itself, not an array of rows (CSUB-2d)
 
 
 # --- expressions ---

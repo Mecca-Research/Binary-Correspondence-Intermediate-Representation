@@ -21,6 +21,7 @@ import time
 from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
+from bcir.frontends.cfront.lower import ROW_PTR_ELEM, ROW_PTR_PLACE, ROW_VALUE
 from bcir.model import Domain
 from bcir.toolchain import BuildFailed, host_link_args
 from bcir.verify import cfront_structural_digest
@@ -322,6 +323,8 @@ _PTRVALUE = [
     #   stepped, assigned as a value, addressed, and stored or stepped through a pointer member (CSUB-2e)
     "cfront_csub2_structmembers.c",  # struct and union members of array elements: read, stored, copied, passed and
     #   returned by value, addressed, on direct arrays, member arrays and through loaded pointers (CSUB-2c)
+    "cfront_csub2_rowptr.c",  # a pointer-to-array member `T (*m)[N]`: its elements by the row, the row sized, the
+    #   pointer tested, copied and passed to a row-pointer parameter, through values, elements and loaded pointers (CSUB-2d)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10947,6 +10950,147 @@ def test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails()
             _linkable_c11_runs_as_the_original(
                 d, "cfront_csub2_structmembers.c", "csub2_structmembers"
             )
+
+
+_CSUB2R_HEAD = (
+    "struct fn { uint32_t n; char (*calls)[8]; uint16_t (*w)[3]; struct fn *next; };\n"
+    "struct box { struct fn f; struct fn arr[2]; struct fn *pa; };\n"
+    "static uint32_t rowsum(uint16_t (*r)[3], uint32_t k) { return r[k][0] + r[k][2]; }\n"
+    "static uint32_t len(const char *s) { uint32_t n = 0; while (s[n]) n++; return n; }\n"
+)
+# CSUB-2d: a pointer-to-array member, `T (*m)[N]` -- its elements by the row (read, stored, stepped, compound-assigned
+# and assigned as a value, addressed), the row sized, the pointer tested and copied, taken from a two-dimensional array,
+# passed to a row-pointer parameter and its type taken by `typeof`; through a struct value, an element of a member array,
+# a loaded pointer and a union
+_CSUB2R_LOWERED = (
+    "uint32_t f(const struct fn *p, uint32_t k) { return (uint32_t)p->calls[k][1] + p->w[k][2]; }",
+    "uint32_t f(struct fn *p, uint32_t k, uint16_t v) { p->w[k][1] = v; p->w[k][2] += v; p->w[k][0]++; ++p->w[k][0];"
+    " uint16_t x = (p->w[k][1] = v); uint32_t y = p->w[k][0]--; return x + y + p->w[k][1]; }",
+    "uint32_t f(struct fn *p, uint32_t k) { uint16_t *q = &p->w[k][1]; *q = 7; char *c = &p->calls[k][0];"
+    " return *q + (uint32_t)*c + (uint32_t)(&p->w[k][2] - &p->w[0][0]); }",
+    "uint32_t f(struct fn *p) { struct fn s; return (uint32_t)(sizeof p->calls + sizeof *p->calls + sizeof p->calls[0]"
+    " + sizeof p->calls[0][0] + sizeof s.w[1] + sizeof *s.w + sizeof(struct fn)); }",
+    "uint32_t f(struct fn *p, struct fn *q) { uint32_t r = 0; if (!p->calls) r += 1; if (p->w == 0) r += 2;"
+    " if (p->w) r += 4; r += p->calls ? 8u : 16u; r += p->w == q->w; return r; }",
+    "uint32_t f(struct fn *p, struct fn *q, uint32_t k) { static uint16_t buf[4][3]; p->w = 0; p->w = q->w; q->w = buf;"
+    " q->w[1][2] = 5; return buf[1][2] + (p->w == 0) + rowsum(q->w, k & 3u); }",
+    "uint32_t f(uint32_t k) { static uint16_t buf[4][3]; struct fn s; s.w = buf; s.w[k & 3u][1] = 9;"
+    " s.w[k & 3u][2] += 2; return s.w[k & 3u][1] + buf[k & 3u][2]; }",
+    "uint32_t f(struct box *b, uint32_t i, uint32_t k) { b->arr[i & 1u].w[k][1] = 3; b->arr[i & 1u].w[k][2]++;"
+    " b->f.w[k][0] = 1; return b->arr[i & 1u].w[k][1] + b->pa[i].w[k][0]; }",
+    "uint32_t f(struct fn *p, uint32_t k) { p->next->w[k][1] = 4; p->next->w[k][1] += 1; p->next->next->w[k][2]++;"
+    " struct fn s = *p; return p->next->w[k][1] + (uint32_t)p->next->calls[k][2] + s.w[k][0]; }",
+    "uint32_t f(struct fn *p) { __typeof__(p->w) q = p->w; q[0][1] = 4; return q[1][2] + (uint32_t)sizeof *q; }",
+    "union u { uint16_t (*w)[3]; uint64_t raw; };\n"
+    "uint32_t f(union u *x, uint32_t k) { x->w[k][1] = 3; return x->w[k][1] + (uint32_t)x->raw; }",
+    "static uint32_t g2[2][3];\nuint32_t f(uint32_t k, uint32_t (*p)[3]) { static uint32_t m[2][3]; m[0][1] = k;"
+    " (*m)[2] = 3u; (*g2)[1] = k; (*p)[0] = 2u; return (*m)[1] + (*m)[2] + (*g2)[1] + (*p)[0]"
+    " + (uint32_t)sizeof *m + (uint32_t)sizeof *g2; }",
+    "struct fr { float (*fl)[2]; _Bool (*bs)[4]; const char (*names)[4]; };\n"
+    "uint32_t f(struct fr *p, uint32_t k) { float x = p->fl[k][1] * 2.0f; p->fl[k][0] += x; p->bs[k][3] = 7;"
+    " return (uint32_t)p->fl[k][0] + p->bs[k][3] + (uint32_t)p->names[k][0]; }",
+)
+# ... and the forms refused: (unit, the reason's text both rails' reasons begin with)
+_CSUB2R_REFUSED = (
+    # a row used as a value: a member's, and a row-pointer parameter's, which both rails had read as its first element
+    ("uint32_t f(struct fn *p, uint32_t k) { return len(p->calls[k]); }", ROW_VALUE),
+    ("uint32_t f(struct fn *p) { char *r = *p->calls; return (uint32_t)r[0]; }", ROW_VALUE),
+    ("uint32_t f(char (*rows)[4]) { char *r = *rows; return (uint32_t)r[1]; }", ROW_VALUE),
+    # ... and `*m` of a two-dimensional array, local or file-scope, which both rails had read alike
+    (
+        "uint32_t f(uint32_t k) { static uint32_t m[2][3]; m[0][1] = k; uint32_t *r = *m; return r[1]; }",
+        ROW_VALUE,
+    ),
+    (
+        "static uint32_t g2[2][3];\nuint32_t f(uint32_t k) { g2[0][1] = k; uint32_t *r = *g2; return r[1]; }",
+        ROW_VALUE,
+    ),
+    # arithmetic on it, a step of it, a subscript of its element
+    (
+        "uint32_t f(struct fn *p) { return rowsum(p->w + 1, 0); }",
+        "arithmetic on a multi-dimensional array",
+    ),
+    (
+        "uint32_t f(struct fn *p) { p->w += 1; return 0; }",
+        "arithmetic on a multi-dimensional array",
+    ),
+    (
+        "uint32_t f(struct fn *p) { p->w++; return 0; }",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+    (
+        "uint32_t f(struct fn *p, uint32_t k) { return (uint32_t)p->calls[k][1][0]; }",
+        "a subscript of an element",
+    ),
+    # a row of no scalar, of two dimensions, no size or past the bound, of a qualified or `_BitInt` element
+    (
+        "struct pt { uint32_t x; }; struct g { struct pt (*rows)[2]; };\nuint32_t f(struct g *p) { return 0; }",
+        ROW_PTR_ELEM,
+    ),
+    ("struct g { uint32_t (*m)[2][3]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    ("struct g { uint32_t *(*m)[2]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    ("struct g { uint32_t (*m)[]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    (
+        "typedef uint32_t row_t[4];\nstruct g { row_t (*m)[2]; };\nuint32_t f(struct g *p) { return 0; }",
+        ROW_PTR_ELEM,
+    ),
+    ("struct g { uint8_t (*m)[70000]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    (
+        "struct g { volatile uint32_t (*m)[2]; };\nuint32_t f(struct g *p) { return 0; }",
+        ROW_PTR_ELEM,
+    ),
+    (
+        "struct g { _Atomic uint32_t (*m)[2]; };\nuint32_t f(struct g *p) { return 0; }",
+        ROW_PTR_ELEM,
+    ),
+    ("struct g { _BitInt(12) (*m)[2]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    # one declared where neither rail declares it: at file scope, or in a typedef
+    ("static uint32_t (*gp)[4];\nuint32_t f(uint32_t k) { return gp[k][1]; }", ROW_PTR_PLACE),
+    ("extern uint32_t (*gx)[4];\nuint32_t f(void) { return gx[1][2]; }", ROW_PTR_PLACE),
+    ("typedef uint32_t (*rowp_t)[4];\nuint32_t f(rowp_t p) { return p[1][2]; }", ROW_PTR_PLACE),
+)
+
+
+def test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2d. A member `T (*m)[N]` -- `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]`, which five units include -- is a
+    pointer to a row of N scalars on both rails, to one digest: laid out as a pointer, `p->m[k][j]` element `k*N + j` of
+    the flat pointer it is loaded as, read, stored, stepped and addressed, `sizeof *p->m` the row, the pointer tested,
+    copied and passed on, through a struct value, an element, a loaded pointer and a union. Both had refused the
+    declaration. A row used as a value, arithmetic on the pointer, and the forms no row of scalars is are refused alike,
+    and so is one at file scope or in a typedef, where the oracle had read an array of rows. `*rows` of a row-pointer
+    parameter, which both rails had read as its first element, is refused as the row it is. `cfront_csub2_rowptr.c` runs
+    as the original on each rail's emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what
+    the original does."""
+    head = "#include <stdint.h>\n#include <stddef.h>\n" + _CSUB2R_HEAD
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2R_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_CSUB2R_REFUSED):
+            src = head + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_rowptr.c", "csub2_rowptr")
 
 
 def _linkable_c11_runs_as_the_original(d: str, fx: str, entry: str) -> None:

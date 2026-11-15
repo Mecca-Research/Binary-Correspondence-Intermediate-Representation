@@ -34,6 +34,8 @@ from .lower import (
     GENERIC_QUALIFIED,
     QUAL_DEEP,
     QUAL_LEVELS,
+    ROW_PTR_ELEM,
+    ROW_PTR_PLACE,
     OFFSETOF_BITFIELD,
     OFFSETOF_DESIGNATOR,
     OFFSETOF_INCOMPLETE,
@@ -538,6 +540,8 @@ class _Parser:
         The first declarator (`tref`, `name`) is already parsed. The twin's `p_global`."""
         extern, static = "extern" in self.storage, "static" in self.storage
         while True:
+            if tref.row_ptr:  # `T (*g)[N]` at file scope (CSUB-2d)
+                raise CParseError(ROW_PTR_PLACE, pos=self.peek().pos)
             unit.globals.append(
                 dataclasses.replace(
                     self._global(tref, name, extern=extern, static=static), align=align
@@ -616,6 +620,8 @@ class _Parser:
             base = self._type_spec()
         # `typedef T *(*NAME)(PARAMS);`: a pointer return (CF-FPRET)
         base = self._fp_return_stars(base)
+        if self._row_ptr_declarator_at(self._skip_stars(0)):  # `typedef T (*NAME)[N];` (CSUB-2d)
+            raise CParseError(ROW_PTR_PLACE, pos=self.peek().pos)
         if self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*":
             tref, name = self._funcptr_declarator(base)  # typedef RET (*NAME)(PARAMS);
         else:
@@ -1004,7 +1010,11 @@ class _Parser:
                         continue
                     break
                 fbase = self._fp_return_stars(base)  # `T *(*name)(params)` (CF-FPRET)
-                if self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*":
+                if self._row_ptr_declarator_at(self._skip_stars(0)):  # `T (*name)[N]` (CSUB-2d)
+                    tref, name = self._row_ptr_member(base)
+                elif (
+                    self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*"
+                ):
                     tref, name = self._funcptr_declarator(
                         fbase
                     )  # `RET (*name)(params)` -- a funcptr member
@@ -1343,6 +1353,50 @@ class _Parser:
                 k += 1
         return k
 
+    def _row_ptr_declarator_at(self, k: int = 0) -> bool:
+        """`( * name ) [` at `k` tokens from the cursor: a pointer-to-array declarator `T (*name)[N]` (C11 6.7.6.1),
+        which a function-pointer declarator `T (*name)(P)` shares its first four tokens with (the twin's
+        `row_ptr_at`)."""
+
+        def tok(j, kind, text):
+            t = self.peek(k + j)
+            return t.kind == kind and t.text == text
+
+        return (
+            tok(0, "PUNCT", "(")
+            and tok(1, "OP", "*")
+            and self.peek(k + 2).kind == "IDENT"
+            and self.peek(k + 2).text not in _PTR_QUAL
+            and tok(3, "PUNCT", ")")
+            and tok(4, "PUNCT", "[")
+        )
+
+    def _row_ptr_member(self, base: cast.TypeRef):
+        """A member `T (*name)[N]` (CSUB-2d), `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]`: a pointer to a row of N
+        scalars, laid out as a pointer, whose `p->m[k][j]` steps by the row. A row of more than one dimension, of no
+        constant size or past 65535, or of an element no plain scalar is (a struct, a pointer, a function pointer, a
+        typedef'd array, a `typeof`, a `_BitInt`, a volatile or `_Atomic` one), is refused (`ROW_PTR_ELEM`), as the
+        twin refuses it."""
+        pos = self.peek().pos
+        if not self.at("PUNCT", "("):  # `T *(*m)[N]`: a row of pointers
+            raise CParseError(ROW_PTR_ELEM, pos=pos)
+        tref, name = self._declarator(base)
+        if (
+            len(tref.array) != 2
+            or not 0 < tref.array[1] <= 65535
+            or base.ptr
+            or base.array
+            or base.funcptr
+            or base.aggregate
+            or base.typeof_var
+            or base.typeof_expr is not None
+            or base.bit_width
+            or "volatile" in base.quals
+            or "_Atomic" in base.quals
+        ):
+            raise CParseError(ROW_PTR_ELEM, pos=pos)
+        return tref, name
+
     def _declarator(self, base: cast.TypeRef, abstract: bool = False):
         """Parse `*` pointer prefixes, the name, and `[N]` array suffixes onto `base`. `abstract`: a
         parameter's, whose name may be left out (the name is then ""). Each `*` keeps its qualifiers
@@ -1379,6 +1433,7 @@ class _Parser:
                         typeof_var=base.typeof_var,
                         typeof_expr=base.typeof_expr,
                         bit_width=base.bit_width,
+                        row_ptr=True,
                     ), nm
             self.i = save  # not `(*name)[..]` -> a normal declarator
         name = self.eat("IDENT").text if not abstract or self.at("IDENT") else ""

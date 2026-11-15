@@ -75,6 +75,9 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                                          * literal's address initializes in a static's image (CSUB-2) */
                  int ptee_depth;    /* a pointer (or pointer-array element) member's own pointer depth: 1 `T *m`,
                                      * 2 `T **m` -- what `*s->m` is, for `sizeof` (0: not a pointer) */
+                 int row_n;         /* a pointer member to a row, `T (*m)[N]` (CSUB-2d): N, the scalars of the row it points
+                                     * at -- `ptee_size` is one of them -- so `p->m[k][j]` is element `k*N + j` of the flat
+                                     * `T *` it is loaded as (`ptr_member_sub`); 0: not one */
                  int elem_ptr;      /* arr_count>0 AND the element is a pointer (`T *arr[N]`): each element is
                                      * pointer_size wide, and the ptee_* fields describe what it points at, as
                                      * they do for a pointer member (`is_ptr` stays 0: the member is an array) */
@@ -1039,6 +1042,17 @@ static int td_ptr_qual(CC *c, bcir_ctype *ty, int cst, int vol){
  * refused, and so is a struct or union defined anywhere else a type is named (CSUB-2). */
 #define CC_AGG_BLOCK_TAGGED "a struct or union with a tag defined in a block is not supported"
 #define CC_AGG_TYPE_NAME "a struct or union defined outside a declaration of objects is not supported"
+/* `T (*m)[N]`, a pointer to an array, as a member (C11 6.7.6.1; CSUB-2d): `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]`,
+ * a pointer whose pointee is a row of N scalars, as a `T m[][N]` parameter's is. A row of another element -- a struct,
+ * a pointer, a function pointer, a typedef'd array, a volatile, `_Atomic` or `_BitInt` one, or a second dimension -- is
+ * refused, and one longer than a loaded pointer's `row_n` holds; so is one at file scope or in a typedef. A row used as a value -- `p->m[k]`, `*p->m`, `*rows` of a parameter
+ * -- would decay to a pointer the value model does not spell (the oracle's `ROW_*`). */
+#define CC_ROW_PTR_ELEM "a pointer to an array is supported only as a pointer to one row of at most 65535 scalars"
+#define CC_ROW_PTR_PLACE "a pointer to an array is supported only as a parameter or a member"
+#define CC_ROW_VALUE "partial indexing of a multi-dimensional array (a row used as a value) is not yet supported"
+/* `( * name ) [` at token `k`: a pointer-to-array declarator, which a function pointer's `( * name ) (` shares its
+ * first four tokens with (the oracle's `_row_ptr_declarator_at`). */
+static int row_ptr_at(CC *c, int k);
 static int block_aggregate(CC *c, int agg_ok);   /* fwd: `struct { ... }` among a block declaration's specifiers */
 static int starts_decl_type(CC *c);
 /* `_Alignas ( N )` / `alignas ( N )` at the cursor, among a declaration's specifiers (C11 6.7.5; CSUB-2): kept in
@@ -1310,6 +1324,12 @@ static int fp_decl_at(CC *c, int abstract){
   if(!tok_is(tat(c,k),")") || !tok_is(tat(c,k+1),"(")) return 0;
   return k;
 }
+static int row_ptr_at(CC *c, int k){
+  const tok *n=tat(c,k+2);
+  return tok_is(tat(c,k),"(") && tok_is(tat(c,k+1),"*") && n->k==T_ID && !tok_is(n,"const") && !tok_is(n,"volatile")
+         && !tok_is(n,"restrict") && !tok_is(n,"__restrict") && !tok_is(n,"__restrict__")
+         && tok_is(tat(c,k+3),")") && tok_is(tat(c,k+4),"[");
+}
 /* One `*` more on the function-pointer type `ty` (CF-FPTAB): a pointer to a function pointer, whose pointee rides on --
  * the declarator's own `*`s, as `apply_stars` applies a specifier's. */
 static void fp_star(CC *c, bcir_ctype *ty){
@@ -1486,13 +1506,22 @@ static int p_struct_body(CC *c) {
         }
         if(is(c,",")){c->i++;continue;} break;
       }
-      tok nm; int mpre_nd=0, mpre_dims[3]={0,0,0};
+      tok nm; int mpre_nd=0, mpre_dims[3]={0,0,0}, row_n=0;
       int mk=fp_decl_at(c,0);
       if(mk && mk!=c->i+3){               /* `RET (*fn[N])(P)`, `RET (**pp)(P)`: a member table of, or pointer to,
                                           * function pointers (CF-FPTAB), parsed whole; its dims are the member's */
         bcir_ctype rty=ty, fty; int stars;
         if(fp_inline_decl(c,&rty,si,&fty,&stars,mpre_dims,&mpre_nd,&nm)) return -1;
         ty=fty; for(int s=0;s<stars;s++) fp_star(c,&ty);
+      } else
+      if(row_ptr_at(c,c->i)){             /* `T (*m)[N]`: a pointer to a row of N scalars (CSUB-2d) -- a pointer member
+                                          * whose pointee is the row's element, and `row_n` its N */
+        c->i+=2; nm=adv(c); c->i++;       /* `( *`, the name, `)` */
+        int nd=0; long long d=0;
+        while(is(c,"[")){ c->i++; d=is(c,"]") ? 0 : ce_dim(c,0); if(c->failed) return -1; eat(c,"]"); nd++; }
+        if(nd!=1 || d<=0 || d>65535 || ty.kind!=0 || btd || ty.is_volatile || ty.is_atomic || ty.bit_width>0 || ty.is_valist){
+          fail(c,CC_ROW_PTR_ELEM); return -1; }
+        ty.kind=2; ty.ptr_depth=1; row_n=(int)d;
       } else
       if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
          && tat(c,c->i+2)->k==T_ID){       /* a function-pointer member `RET (*name)(params)` -> a kind-3 (8-byte)
@@ -1573,6 +1602,7 @@ static int p_struct_body(CC *c) {
       f->ptee_plain_char=(isptr||elptr) && ty.kind==2 && ty.is_plain_char && !ty.ptr_to_struct && !ty.ptr_to_fp;
       f->ptee_sidx=((isptr||elptr) && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
       f->ptee_depth=(isptr||elptr)?(ty.ptr_depth?ty.ptr_depth:1):0;
+      f->row_n=isptr?row_n:0;
       f->is_volatile=(ty.kind!=2 && ty.kind!=3 && ty.is_volatile)?1:0;   /* `volatile T m` (a pointer's `volatile`
                                                                            * qualifies its pointee, not itself) */
       f->ptee_volatile=(ty.kind==2 && ty.is_volatile)?1:0;               /* `volatile T *m`: the pointee */
@@ -1934,6 +1964,7 @@ static void p_typedef(CC *c){
     if(p_type(c,&ty,&sidx))return;                    /* scalar / pointer / typedef-of-typedef */
   }
   int bdims[3], bnd=td_dims_of(c,bdims);   /* a typedef'd array base */
+  if(row_ptr_at(c,skip_stars(c,c->i))){ fail(c,CC_ROW_PTR_PLACE); return; }   /* `typedef T (*NAME)[N];` (CSUB-2d) */
   if(is(c,"(")){                                       /* typedef RET (*NAME)(PARAMS); -- a funcptr */
     int save=c->i; c->i++;
     if(is(c,"*") && tat(c,c->i+1)->k==T_ID && tok_is(tat(c,c->i+2),")")){
@@ -2690,6 +2721,8 @@ static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx){
       ty->kind=2; ty->size=r->elem_bytes?(int)r->elem_bytes:4; ty->signd=r->is_signed;
       ty->is_float=r->is_float; ty->ptr_depth=(uint8_t)(r->ptr_depth?r->ptr_depth:1);
       ty->is_plain_char=r->is_plain_char;
+      if(r->row_n){ ty->nadims=2; ty->adims[1]=r->row_n; }   /* `typeof(p->m)` of a `T (*m)[N]`: the row pointer, as
+                                                         * `typeof(rows)` of a parameter is (CSUB-2d) */
       if(r->agg[0]){ ty->ptr_to_struct=1;               /* a pointer-to-struct: recover the tag + struct index */
         const char *sp=strchr(r->agg,' '); const char *tg=sp?sp+1:r->agg;
         fits(c,ty->tag,sizeof ty->tag,"%s",tg);
@@ -2763,6 +2796,7 @@ static uint32_t tempptr_field(CC *c, const field *fld){
   if(c->fn->n_res){ bcir_resource *t=&c->fn->res[c->fn->n_res-1];
     t->is_signed=(uint8_t)(fld->signd?1:0); t->is_float=(uint8_t)(fld->ptee_float?1:0);
     t->is_atomic=(uint8_t)(fld->ptee_atomic?1:0);          /* a pointer to `_Atomic` storage (CF-ATOMIC) */
+    t->row_n=(uint16_t)fld->row_n;                        /* `T (*m)[N]`: a pointer to a row (CSUB-2d) */
     if(fld->ptee_sidx>=0) fits(c,t->agg,sizeof t->agg,"%s %s",
       c->s[fld->ptee_sidx].is_union?"union":"struct", c->s[fld->ptee_sidx].tag); }
   if(fld->fp_sig && c->fn->n_res){                       /* `op_t *tab`: a pointer to function pointers (CF-FPTAB) */
@@ -3754,6 +3788,20 @@ static uint32_t array_index_n(CC *c, venv *v, int maxd) {
   return lin;
 }
 static uint32_t array_index(CC *c, venv *v) { return array_index_n(c,v,INT_MAX); }   /* every subscript */
+static int sub_group_count(CC *c, int k);
+/* The subscript of the pointer `ptr` loaded from the member `pf`, the cursor at its `[`: the element index it takes. A
+ * pointer to a row, `T (*m)[N]` (CSUB-2d), takes two, `p->m[k][j]`, Horner-flattened by the row as a `T m[][N]`
+ * parameter's are (`array_index_n`, the oracle's shape-flattened `_lvalue(Index)`): the row alone is refused
+ * (CC_ROW_VALUE), and a subscript of its element is C's refusal of one. */
+static uint32_t ptr_member_sub(CC *c, uint32_t ptr, const field *pf){
+  if(pf->row_n<=0){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); return ix; }
+  if(sub_group_count(c,c->i)<2){ fail(c,CC_ROW_VALUE); return 0; }
+  venv rv; memset(&rv,0,sizeof rv); rv.rid=ptr; rv.sidx=-1;
+  rv.type.kind=2; rv.type.size=pf->ptee_size; rv.type.ptr_depth=1; rv.type.nadims=2; rv.type.adims[1]=pf->row_n;
+  uint32_t lin=array_index_n(c,&rv,2);
+  if(!c->failed && is(c,"[")) fail(c,"a subscript of an element that is not a pointer");
+  return lin;
+}
 /* The consecutive balanced `[...]` groups starting at token `k`. */
 static int sub_group_count(CC *c, int k){
   int n=0;
@@ -3940,8 +3988,11 @@ static venv ptr_elem_base(CC *c, uint32_t ptr, int psidx, const field *pfld){
 /* Dereference a pointer RVALUE (rid). Depth-aware: `*pp` where pp is `T**` (depth 2) loads a pointer
  * (pointer_size bytes) into a `T*` temp (depth 1); `*p` where p is `T*` loads the base scalar. The
  * general form powers `**pp` (deref the result of `*pp`) and `*(<expr>)`. */
+static int rid_multidim(CC *c, uint32_t rid);
 static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
   const bcir_resource *r=res_of(c->fn,rid);
+  if(r && r->kind==BCIR_RK_POINTER && rid_multidim(c,rid)){ fail(c,CC_ROW_VALUE); return rid; }   /* `*p->m`: the row a
+    * pointer to an array points at, which is no scalar (CSUB-2d) */
   if(r && r->is_funcptr && r->kind==BCIR_RK_SCALAR) return rid;   /* `*fp`, `*inc`: the function, which converts back
     * to the pointer to it -- no read (C11 6.5.3.2p4, 6.3.2.1p4; CF-FPTAB) */
   if(!r || r->kind!=BCIR_RK_POINTER){ fail(c,CC_DEREF_NOT); return rid; }
@@ -3978,6 +4029,9 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
 }
 static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load (named pointer or array) */
   const bcir_resource *r=res_of(c->fn,pv->rid);
+  if(rid_multidim(c,pv->rid)){ fail(c,CC_ROW_VALUE); return pv->rid; }   /* `*rows` of a `T (*rows)[N]` parameter,
+    * `*m` of a `T m[A][B]`: the row it designates -- one load had read its first element, an emit no compiler takes
+    * (CSUB-2d) */
   if(pv->type.kind==3 && !(r && (r->is_array || r->ptee_funcptr))) return named_read(c,pv);   /* `*fp`: the
     * function, which converts back to the pointer (C11 6.5.3.2p4) -- the object's value, never a read through it */
   if(r && r->kind!=BCIR_RK_POINTER && r->is_array && pv->type.kind!=1){   /* `*a` on an ARRAY: its first element,
@@ -4079,7 +4133,7 @@ static uint32_t member_index_field_value(CC *c, venv *base, const field *arr, ui
 static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
   for(;;){
     if(is(c,"[")){                                   /* `...->p[i]`: index the loaded pointer (base[idx]) */
-      c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+      uint32_t ix=ptr_member_sub(c,ptr,&pfld); if(c->failed) return 0;
       if(psidx>=0 && (is(c,".")||is(c,"->"))){       /* `...->p[i].f`: a member of an element of a pointer to
                                                       * structs, strided by the element as `a[i].f` is */
         venv e=ptr_elem_base(c,ptr,psidx,&pfld);
@@ -4182,7 +4236,7 @@ static int plv_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
         if(is(c,"[")||is(c,".")||is(c,"->")) return 0;
         o->kind=3; o->b=e; o->idx=ix; o->f=sub; return 1;
       }
-      c->i++; uint32_t ix=p_expr(c); if(c->failed || !eat(c,"]")) return 0;
+      uint32_t ix=ptr_member_sub(c,ptr,&pfld); if(c->failed) return 0;   /* `p->m[k][j]` of a row too (CSUB-2d) */
       o->kind=2; o->b.rid=ptr; o->b.sidx=-1; o->idx=ix;
       o->b.type.size=pfld.ptee_size?pfld.ptee_size:4; o->b.type.signd=pfld.signd;
       o->b.type.is_float=(uint8_t)pfld.ptee_float;
@@ -5138,6 +5192,7 @@ static void szt_field(CC *c, szt *t, const field *f){
     e->kind=2; e->size=f->ptee_size; e->signd=f->signd; e->is_float=(uint8_t)(f->ptee_float?1:0);
     e->is_atomic=(uint8_t)(f->ptee_atomic?1:0); e->ptr_depth=(uint8_t)(f->ptee_depth>0?f->ptee_depth:1);
     if(f->ptee_sidx>=0){ e->ptr_to_struct=1; t->si=f->ptee_sidx; }
+    if(f->row_n>0){ e->nadims=2; e->adims[1]=f->row_n; }   /* `T (*m)[N]`: `*p->m` is the row (CSUB-2d) */
   } else if(f->sidx>=0 || f->elem_sidx>=0){
     e->kind=1; t->si=f->sidx>=0?f->sidx:f->elem_sidx; e->size=c->s[t->si].size;
   } else {                                        /* a scalar: `size` is its laid-out width, `_Atomic` included */
@@ -6264,7 +6319,7 @@ static int member_is_store(CC *c,int j){
 static int rid_multidim(CC *c, uint32_t rid){
   const bcir_resource *r=res_of(c->fn,rid);
   if(!r) return 0;
-  if(r->vla_ndims>1) return 1;
+  if(r->vla_ndims>1 || r->row_n) return 1;   /* ... and a pointer to a row a member held (CSUB-2d) */
   for(int i=0;i<c->nenv;i++) if(c->env[i].rid==rid && c->env[i].type.nadims>1) return 1;
   if(r->read_only && r->name[0]){
     int gi=find_global(c,r->name,(int)strlen(r->name));
@@ -8514,7 +8569,7 @@ static void store_through_ptr(CC *c, uint32_t ptr, int psidx, field pfld) {
 }
 static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) {
   if(is(c,"[")){                                        /* `...->p[i] = v` -- indexed store via the pointer */
-    c->i++; uint32_t idx=p_expr(c); eat(c,"]");
+    uint32_t idx=ptr_member_sub(c,ptr,&pfld); if(c->failed) return;   /* `p->m[k][j] = v` of a row too (CSUB-2d) */
     if(psidx>=0 && (is(c,".")||is(c,"->"))){            /* `...->p[i].f = v`: a member of an element of a pointer
                                                          * to structs, stored strided by the element */
       venv e=ptr_elem_base(c,ptr,psidx,&pfld);
@@ -10713,7 +10768,8 @@ static int looks_global(CC *c){
   int pf=p_type(c,&ty,&si); c->align_ok=0; c->decl_align=0;
   if(!pf){
     if(isk(c,T_ID)){ c->i++; if(!is(c,"(")) global=1; }
-    else if(fp_decl_at(c,0)) global=1; }   /* `RET (*g)(P) ...;`: a function-pointer global (CF-FPTAB) */
+    else if(fp_decl_at(c,0)) global=1;     /* `RET (*g)(P) ...;`: a function-pointer global (CF-FPTAB) */
+    else if(row_ptr_at(c,c->i)) global=1; }   /* `T (*g)[N];`: refused by p_global_declarator (CSUB-2d) */
   c->i=save; c->failed=sf; c->err[0]=0;
   return global;
 }
@@ -10947,6 +11003,7 @@ static int lk_value(CC *c, int a, int b, ctext *t){ return lk_render(c,a,b,0,t);
  * its shape (`global_init_shape`). `si`: the specifier's struct; `btd` / `btdd`: a typedef'd array specifier's
  * dimensions, inner to the declarator's. */
 static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, const int *btdd, int st){
+  if(row_ptr_at(c,c->i)){ fail(c,CC_ROW_PTR_PLACE); return; }   /* `T (*g)[N]` at file scope (CSUB-2d) */
   if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return; }
   bcir_ctype ty=*base; apply_stars(c,&ty);
   if(c->failed) return;

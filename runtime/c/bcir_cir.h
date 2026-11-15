@@ -135,6 +135,10 @@ typedef struct bcir_resource {
   uint8_t  typedef_named;    /* a named local whose name is one of the unit's typedef names, which the emitted function
                               * may spell: its hoisted declaration may not take the name (CF-TYPEDEFSCOPE; the oracle's
                               * `_uniq`). Emit-only. */
+  uint16_t row_n;            /* a POINTER to a row, loaded from a member `T (*m)[N]` (CSUB-2d): N, the row's scalars (0:
+                              * not one). It is declared flat, as a `T m[][N]` parameter is, so arithmetic on it, which
+                              * would step by the row, is refused, as a parameter's is (`rid_multidim`), and `typeof` of
+                              * it is the row pointer (`p_typeof_expr`). In the padding before `align` */
   uint16_t align;            /* a local's or a static's `_Alignas(N)` (CSUB-2), spelled on its declaration; 0 -- none.
                               * Emit-only, as a declared type is: the claim graph and its digest do not read it. */
 } bcir_resource;

@@ -926,6 +926,13 @@ NOT_CALLABLE = "called object is not a function or function pointer"
 #: where a default typed it -- `*s` of an integer read memory at `s` as a `uint32_t`, `p.x` read through the
 #: pointer's own type, `s[1]` of an integer and `*fp = v` lowered on both rails.
 DEREF_NOT = "dereference of a non-pointer"
+# a row of a multi-dimensional array, or the row a pointer to an array points at (`*p` of a `T (*p)[N]`), used as a
+# value: it would decay to a pointer to its first element, which the value model does not spell yet -- reading the
+# flat storage instead read an element (CF-DECAY; CSUB-2d: `char *r = *rows` had read `rows[0][0]` on both rails, an
+# emit no compiler takes). The twin's `CC_ROW_VALUE`
+ROW_VALUE = (
+    "partial indexing of a multi-dimensional array (a row used as a value) is not yet supported"
+)
 SUBSCRIPT_NOT = "subscripted value is not an array or a pointer to an object"
 DOT_NOT = "member access on an object that is not a struct or union"
 ARROW_NOT = "member access `->` through a value that is not a pointer to a struct or union"
@@ -987,6 +994,18 @@ ALIGN_AGG = (
 # struct or union defined anywhere else a type is named: a cast, `sizeof`, a parameter, a return type, a member's
 # qualified type (`AGG_TYPE_NAME`)
 AGG_BLOCK_TAGGED = "a struct or union with a tag defined in a block is not supported"
+# `T (*m)[N]`, a pointer to an array as a member or a block object (C11 6.7.6.1; CSUB-2d), as `bcir_cir.h` writes
+# `char (*calls)[BCIR_CIR_NAME]`: a pointer, whose pointee is a row of N scalars -- the type a `T m[][N]` parameter has
+# (its `shape`), indexed and sized by the row. A row of another element -- a struct, a pointer, a function pointer, a
+# typedef'd array, a volatile, `_Atomic` or `_BitInt` one, or a second dimension -- is refused, and so is one past the
+# twin's bound on a loaded row pointer's row, 65535 (the twin's `CC_ROW_PTR_ELEM`)
+ROW_PTR_ELEM = (
+    "a pointer to an array is supported only as a pointer to one row of at most 65535 scalars"
+)
+# ... and declared where it is: a parameter or a member. A file-scope one, and a typedef of one, are refused (the twin's
+# `CC_ROW_PTR_PLACE`); a block object keeps its own reason, below. The oracle had read `T (*g)[N]` at file scope as an
+# array of rows, an emit no compiler takes
+ROW_PTR_PLACE = "a pointer to an array is supported only as a parameter or a member"
 AGG_TYPE_NAME = "a struct or union defined outside a declaration of objects is not supported"
 # `T *volatile p`, `volatile ptr_t p`: a pointer object that is itself volatile, every access of which C performs as
 # written (C11 6.7.3p7) -- which neither rail's accesses do, so it is refused rather than dropped (CF-QUALS; the
@@ -2278,9 +2297,7 @@ class _FuncLowerer:
                     # fewer subscripts than the array has dimensions: a ROW, whose value would decay to a
                     # row pointer `T (*)[N]` the value model has no spelling for -- indexing its flat
                     # storage instead read an element (CF-DECAY). The twin's `index_chain` refuses alike.
-                    raise CLowerError(
-                        "partial indexing of a multi-dimensional array (a row used as a value) is not yet supported"
-                    )
+                    raise CLowerError(ROW_VALUE)
                 lin = here[0]
                 for d in range(1, len(here)):
                     if vla_str is not None:  # dim d's snapshot rid (NO c.const -- the runtime
@@ -2359,6 +2376,10 @@ class _FuncLowerer:
             # `*fp = v`, `(*fp)++`: a function is no object (6.3.2.1p1)
             if self._fn_valued(operand):
                 raise CLowerError(FN_NOT_LVALUE)
+            # `*p` of a `T (*p)[N]`, `*m` of a `T m[A][B]`: the row it designates, which is no scalar -- `(*p)[i]`
+            # the parser reads as `p[0][i]`. Both rails had read the row's first element (CSUB-2d)
+            if self._row_valued(self._static_type(operand)):
+                raise CLowerError(ROW_VALUE)
             if isinstance(operand, cast.Binary) and operand.op == "+":  # *(p + i) == p[i]
                 lt = self._static_type(operand.lhs)
                 # `*(p + i + j)`, `*(p - 1u + i)`: the left operand is itself a sum, which no subscript
@@ -2406,6 +2427,15 @@ class _FuncLowerer:
                 raise CLowerError(DEREF_NOT)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
+
+    @staticmethod
+    def _row_valued(t: "CType | None") -> bool:
+        """`*` of a value of type `t` designates a row (CSUB-2d): `t` is a pointer to an array -- a `T (*p)[N]`
+        parameter or member, shaped as `T p[][N]` -- or a multi-dimensional array, flat with its `shape` or nested
+        (a file-scope one). The twin's `rid_multidim`."""
+        if t is None or t.kind not in ("pointer", "array"):
+            return False
+        return len(t.shape) > 1 or (t.kind == "array" and t.of is not None and t.of.kind == "array")
 
     def _byte_offset_access(self, node: cast.Cast) -> "_LV | None":
         """`*(volatile T *)((char *)p + K)`: one volatile access of `T` at byte offset `K` from the device
@@ -6075,6 +6105,10 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
             tref,
             abi,
         )
+    # `T (*m)[N]`: a pointer to the row, shaped as a `T m[][N]` parameter (CSUB-2d)
+    if tref.row_ptr:
+        elem = _resolve_member_type(replace(tref, array=(), row_ptr=False), aggregates, abi)
+        return replace(pointer(elem, abi), shape=tuple(tref.array))
     if tref.aggregate:  # a pointer member may name a struct not laid out yet (or ever)
         base = _aggregate(aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
     elif tref.bit_width:  # C23 `_BitInt(N)` (e.g. a function return type)
