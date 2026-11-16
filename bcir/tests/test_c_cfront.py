@@ -329,6 +329,8 @@ _PTRVALUE = [
     #   compared, dereferenced -- of statics, globals, VLAs, parameters, members and row pointers; volatile addresses (CSUB-2d)
     "cfront_csub2_elemarrays.c",  # an array member of an array element used as a value -- a channel table's names
     #   compared, a cast table's types checked through a loaded pointer, stepped, chosen, sized (CSUB-2c)
+    "cfront_csub2_volatile.c",  # volatile objects stepped and reached through a pointer sum -- the quarantine's counter
+    #   and the device registers a driver steps -- one read, one write each (CSUB-2e)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10675,6 +10677,25 @@ def _emits_compile_strictly(d: str, src: str, emits: dict) -> None:
         assert run.returncode == 0, (rail, src[-300:], run.stderr[-600:])
 
 
+# A volatile access as both emits spell it: through a `volatile T *` the access names, `*(volatile T *)(...)`.
+_VOL_ACCESS = re.compile(r"\*\((?:const )?volatile ")
+_EMIT_COMMENT = re.compile(r"^\s*(/\*|\*\s|\*/|\*$|//)")
+
+
+def _same_volatile_accesses(emits: dict) -> None:
+    """Both rails' emits spell the same number of volatile accesses (CSUB-2e). A store the claim graph does not mark
+    volatile is emitted as a byte copy through a plain pointer, `memcpy((char *)c + 0, ...)` of a `volatile T *`: no
+    volatile access, and neither the digest (which holds no claim's volatile bit) nor a strict build (the cast is
+    explicit) sees it."""
+    counts = {
+        rail: len(
+            _VOL_ACCESS.findall("\n".join(l for l in e.splitlines() if not _EMIT_COMMENT.match(l)))
+        )
+        for rail, e in emits.items()
+    }
+    assert len(set(counts.values())) == 1, counts
+
+
 def test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails():
     """CSUB-2c. A pointer member of an array element -- `order[i].name`, `d->notes[i].message`, `t[i].name.s` at a
     nested member's depth -- is a value of its pointer type on both rails, to one digest: loaded as an element's member
@@ -12745,25 +12766,24 @@ def test_split_forms_lower_alike_and_run_as_the_original_on_both_rails():
     _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _SPLITS_DRIVER)
 
 
-# The forms stay refused where the object is a device's: a re-read of it (the value of `=`/OP= and a prefix
-# step) or its read-modify-write through a device pointer would be an extra device access, which the oracle's
-# `_mmio` gate refuses and the twin's `plv_volatile` refuses alike.
+# The forms stay refused where the object is a device's and its value would re-read it -- the value of `=`/OP= and
+# a prefix step that narrows -- an extra device access, which the oracle's `_mmio` gate refuses and the twin's
+# `plv_volatile` refuses alike. A step of one, `h.d->v++` or `++h.d->r`, is one read and one write and lowers on both
+# rails since CSUB-2e (`_CSUB2V_LOWERED`).
 _SPLITS_DEVICE = (
-    "struct dv {{ uint32_t v; volatile uint32_t r; }};\nstruct dh {{ struct dv *d; }};\n"
+    "struct dv {{ uint32_t v; volatile uint32_t r; uint8_t b; }};\nstruct dh {{ struct dv *d; }};\n"
     "uint32_t f(struct dh h, uint32_t s) {{ {body} }}\n"
 )
 _SPLITS_DEVICE_BODIES = (
-    "return h.d->v++;",  # a plain member of a struct that holds volatile storage
-    "return ++h.d->r;",  # a volatile member
-    "return (h.d->v = s);",
-    "return (h.d->r += s);",
-    "h.d->v--; return s;",
+    "return (h.d->v = s);",  # a plain member of a struct that holds volatile storage
+    "return (h.d->r += s);",  # a volatile member
+    "return ++h.d->b;",  # a prefix step that narrows: its value re-reads the member
 )
 
 
 def test_split_forms_on_a_device_object_are_refused_on_both_rails():
-    """CF-SPLIT2: an increment, or an assignment used as a value, through a loaded pointer into a struct that
-    holds volatile storage is refused on both rails -- the oracle's device gate (`_mmio`), the twin's
+    """CF-SPLIT2: an assignment used as a value, or a prefix step that narrows, through a loaded pointer into a
+    struct that holds volatile storage is refused on both rails -- the oracle's device gate (`_mmio`), the twin's
     `plv_volatile` reading the loaded pointer's device domain -- rather than lowered by one rail alone."""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
@@ -13498,6 +13518,148 @@ def test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_o
             )
         if exe is not None:
             _linkable_c11_runs_as_the_original(d, "cfront_csub2_elemarrays.c", "csub2_elemarrays")
+
+
+_CSUB2V_HEAD = "#include <stdint.h>\n"
+_CSUB2V_FO = "inc/dec of this lvalue form is a follow-on"
+# CSUB-2e: a step of a volatile scalar is one read and one write -- through a pointer (`bcir_quarantine.h`'s
+# `(*c)++`), of an element, a member, a volatile struct's member, member array element or array element, and of a
+# named object, as a statement or a value; and a pointer sum of a pointer to volatile storage is one, read and stored
+# through (the twin had typed it a `T *`)
+_CSUB2V_LOWERED = (
+    "uint32_t f(volatile uint32_t *c) { return (*c)++; }",
+    "uint32_t f(volatile uint32_t *c) { return ++*c; }",
+    "uint32_t f(volatile uint32_t *c) { (*c)--; --*c; return 0; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return c[k]++; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return ++c[k]; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return (*(c + k))++; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return ++*(c + k - 1u); }",
+    "uint32_t f(volatile uint8_t *c) { return (*c)++; }",
+    "uint32_t f(volatile uint32_t **pp) { return (**pp)++; }",
+    "uint32_t f(volatile float *c) { return (uint32_t)((*c)++); }",
+    "typedef volatile unsigned long ctr;\n"
+    "static inline unsigned long next(ctr *c) { return (*c)++; }\n"
+    "unsigned long f(ctr *c) { return next(c) + *c; }",
+    "volatile uint32_t g[4]; uint32_t f(uint32_t k) { return g[k & 3u]++; }",
+    "uint32_t f(uint32_t k) { volatile uint32_t a[4] = {0}; a[k & 3u]++; return a[0]; }",
+    "volatile uint32_t m2[2][3]; uint32_t f(uint32_t k) { return m2[k & 1u][2]++; }",
+    "struct s { volatile uint32_t n; }; uint32_t f(struct s *p) { return p->n++; }",
+    "struct s { volatile uint32_t n; uint32_t m; }; uint32_t f(struct s *p) { p->m++; return ++p->m; }",
+    "struct s { uint32_t n; }; uint32_t f(volatile struct s *p) { return p->n++; }",
+    "struct s { uint32_t n; uint32_t a[2]; }; uint32_t f(volatile struct s *p, uint32_t k) { return p->a[k & 1u]++; }",
+    "struct in { uint32_t x; }; struct s { uint32_t n; struct in i; };\n"
+    "uint32_t f(volatile struct s *p) { return p->i.x++; }",
+    "struct s { uint32_t n; }; uint32_t f(volatile struct s *p, uint32_t k) { return p[k].n++; }",
+    # a pointer member of a volatile struct's element: the pointer it loads (the twin had declared it an integer)
+    "struct s { uint32_t n; uint32_t *q; }; uint32_t f(volatile struct s *p, uint32_t k) { return p[k].q[1]++; }",
+    "struct s { uint32_t n; uint32_t *q; }; uint32_t f(volatile struct s *p, uint32_t k) { return p[k].q[1] + k; }",
+    # through a loaded pointer into a device struct (CF-SPLIT2 had pinned these refused)
+    "struct dv { uint32_t v; volatile uint32_t r; }; struct dh { struct dv *d; };\n"
+    "uint32_t f(struct dh h, uint32_t s) { uint32_t a = h.d->v++; a += ++h.d->r; h.d->v--; return a + s; }",
+    "struct dv { uint32_t v; volatile uint32_t r; }; struct dh { struct dv *d; };\n"
+    "uint32_t f(struct dh *ph) { return ph->d->r++; }",
+    "struct dv { uint32_t v; volatile uint32_t r; }; struct e { uint32_t n; struct dv *p; };\n"
+    "uint32_t f(struct e *t, uint32_t i) { uint32_t a = t[i].p->r++; return a + ++t[i].p->v; }",
+    "volatile uint32_t gv; uint32_t f(uint32_t k) { gv++; return gv + k; }",
+    "uint32_t f(uint32_t k) { volatile uint32_t x = k; x++; return x; }",
+    "uint32_t f(uint32_t k) { static volatile uint32_t t; t = k; uint32_t a = ++t; return a + t--; }",
+    "volatile uint16_t g16; uint32_t f(uint32_t k) { g16 = (uint16_t)k; g16++; --g16; return g16--; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return *(c + k - 1u); }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return *(k + c); }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { *(c + k - 1u) = 5u; return 0; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { volatile uint32_t *q = c + k; *q = 2u; return *q; }",
+)
+# ... and the forms refused, for one reason each: a prefix step that narrows, whose value would re-read the object (a
+# second access), on every path; a bitfield of a device region; and an assignment or a compound one through a pointer
+# to volatile storage used as a value
+_CSUB2V_REFUSED = (
+    ("uint32_t f(volatile uint8_t *c) { return ++*c; }", _CSUB2V_FO),
+    ("uint32_t f(volatile uint8_t *c, uint32_t k) { return ++c[k]; }", _CSUB2V_FO),
+    ("volatile uint8_t m3[2][3]; uint32_t f(uint32_t k) { return ++m3[k & 1u][2]; }", _CSUB2V_FO),
+    ("struct s { uint8_t n; }; uint32_t f(volatile struct s *p) { return ++p->n; }", _CSUB2V_FO),
+    (
+        "struct s { volatile uint8_t n; uint8_t m; }; uint32_t f(struct s *p) { return ++p->m; }",
+        _CSUB2V_FO,
+    ),
+    (
+        "struct s { uint32_t n; uint8_t b; }; uint32_t f(volatile struct s *p, uint32_t k) { return ++p[k].b; }",
+        _CSUB2V_FO,
+    ),
+    (
+        "struct s { volatile uint32_t n; uint8_t b; }; uint32_t f(struct s *p, uint32_t k) { return ++p[k].b; }",
+        _CSUB2V_FO,
+    ),
+    ("uint32_t f(uint32_t k) { volatile uint8_t t = (uint8_t)k; return ++t; }", _CSUB2V_FO),
+    (
+        "struct dv { uint32_t v; volatile uint8_t r; }; struct e { uint32_t n; struct dv *p; };\n"
+        "uint32_t f(struct e *t, uint32_t i) { return ++t[i].p->r; }",
+        _CSUB2V_FO,
+    ),
+    (
+        "struct s { volatile uint32_t n; uint32_t b : 4; }; uint32_t f(struct s *p) { return p->b++; }",
+        "inc/dec of a volatile/MMIO bitfield is a follow-on",
+    ),
+    (
+        "uint32_t f(volatile uint32_t *c, uint32_t k) { uint32_t r = (*(c + k - 1u) = 5u); return r; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(volatile uint32_t *c, uint32_t k) { uint32_t r = (*c = k); return r; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(volatile uint32_t *c, uint32_t k) { return *(c + k) += 1u; }",
+        "this lvalue form's compound assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(volatile uint8_t *c, uint32_t k) { uint32_t r = (*(c + 1) |= (uint8_t)k); return r; }",
+        "this lvalue form's compound assignment as a value is a follow-on",
+    ),
+)
+
+
+def test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2e. A step of a volatile scalar -- `bcir_quarantine.h`'s `return (*c)++;` of a `volatile unsigned long *`,
+    the first refusal of both quarantine units -- is one read and one write on both rails, to one digest: through a
+    pointer (`*c`, `c[k]`, `*(c + k)`, `**pp`), of a volatile array's element, a volatile member or a plain one of a
+    device struct, a volatile struct's member, member array element or array element, and a named object as a
+    statement or a value. The oracle had refused every one of them but the named object, whose postfix value it read
+    twice; the twin lowered the members only, and `gv++;` without its device accesses. A pointer sum of a pointer to
+    volatile storage is a `volatile T *` on the twin, which had typed it a `T *` -- every access through it lost. A
+    prefix step that narrows (its value a re-read), a bitfield of a device region, and an assignment through a pointer
+    to volatile storage used as a value stay refused alike. `cfront_csub2_volatile.c` runs as the original on each
+    rail's emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2V_LOWERED):
+            src = _CSUB2V_HEAD + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            emits = {"oracle": "\n".join(r.emitted.values()), "twin": emit}
+            _emits_compile_strictly(d, src, emits)
+            _same_volatile_accesses(emits)
+        for n, (body, why) in enumerate(_CSUB2V_REFUSED):
+            src = _CSUB2V_HEAD + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_volatile.c", "csub2_volatile")
 
 
 def test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails():

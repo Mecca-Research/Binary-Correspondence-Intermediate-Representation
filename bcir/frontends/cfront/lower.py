@@ -4755,8 +4755,9 @@ class _FuncLowerer:
         (postfix) or the NEW value (prefix). The lvalue is resolved ONCE (C evaluates it once, so a
         side-effecting index `arr[f()]++` runs f() once). A pointer steps by element (c.ptradd/sub). A
         NAMED-LOCAL postfix must SNAPSHOT the old value first -- `_read` returns the mutable storage rid, which
-        the store would then clobber. A volatile/MMIO target (an extra access) and a non-scalar memory lvalue
-        stay a both-rails fallback."""
+        the store would then clobber. A volatile object steps as one read and one write -- a named one read once,
+        into the temp that is its old value -- and a prefix step of one that narrows stays a both-rails fallback (its
+        value would re-read it, a second access), as a non-scalar memory lvalue does (CSUB-2e)."""
         lv = self._lvalue(node.operand)
         # `(*p)++`, `p->in++`, `g_a[1]++` of a struct: the operand of `++` and `--` is a real or a pointer (C11
         # 6.5.2.4p1, 6.5.3.1p1), refused as an operator's operand is (CF-STRUCTCOND; was the follow-on below, and
@@ -4764,18 +4765,19 @@ class _FuncLowerer:
         self._scalar_operands(lv.ct)
         if lv.bit_width and lv.kind == "mem" and self._mmio(lv.rid):
             raise CLowerError("inc/dec of a volatile/MMIO bitfield is a follow-on")
-        if lv.kind != "var" and not (
-            _is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)
-        ):
-            raise CLowerError(
-                "inc/dec of this lvalue form is a follow-on"
-            )  # MMIO / non-scalar member
+        # a volatile object -- through a pointer to volatile storage, `(*c)++` of `bcir_quarantine.h`'s counter, or an
+        # element or a member of a device region -- steps as any memory scalar does: one read, one write (CSUB-2e)
+        if lv.kind != "var" and not _is_scalar_member_lv(node.operand, lv):
+            raise CLowerError("inc/dec of this lvalue form is a follow-on")  # a non-scalar member
         if lv.ct.atomic:  # an `_Atomic` object: one read-modify-write, no snapshot or re-read
             kind = ("pre" if node.prefix else "post") + ("inc" if node.op == "+" else "dec")
             return self._atomic_rmw(lv, kind)
-        cur = self._read(lv)
+        named_vol = lv.kind == "var" and lv.ct.volatile and lv.ct.kind == "scalar"
+        # a named volatile object is read once, into a fresh temp (`_rvalue`'s device read), and that temp is the old
+        # value: the snapshot read the storage a second time (CSUB-2e)
+        cur = self._rvalue(node.operand) if named_vol else self._read(lv)
         if (
-            not node.prefix and lv.kind == "var"
+            not node.prefix and lv.kind == "var" and not named_vol
         ):  # snapshot: _read hands back the mutable storage rid,
             old = self._temp(lv.ct, "id_old")  # which the store below would clobber -- a same-type
             self._emit(
@@ -4805,6 +4807,9 @@ class _FuncLowerer:
             return old  # postfix: the pre-step value
         nt = self.rtypes.get(new)  # prefix: the STORED new value -- re-read if the target
         if lv.bit_width or (nt is not None and lv.ct.size < nt.size):
+            # the re-read: a second access of the object
+            if named_vol or (lv.kind == "mem" and self._mmio(lv.rid)):
+                raise CLowerError("inc/dec of this lvalue form is a follow-on")
             return self._read(lv)  # narrows (a bitfield / sub-int local), else `new`
         return new
 

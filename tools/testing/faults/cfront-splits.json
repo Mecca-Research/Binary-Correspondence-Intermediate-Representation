@@ -31,9 +31,9 @@
     },
     {
       "expects": "test_split_forms_on_a_device_object_are_refused_on_both_rails",
-      "label": "S4 the oracle steps a member of a device struct as a value",
-      "new": "            _is_scalar_member_lv(node.operand, lv)\n        ):",
-      "old": "            _is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)\n        ):",
+      "label": "S4 the oracle re-reads a device struct's member for a prefix step that narrows",
+      "new": "            if named_vol:",
+      "old": "            if named_vol or (lv.kind == \"mem\" and self._mmio(lv.rid)):",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
@@ -87,7 +87,7 @@
     },
     {
       "expects": "test_split_forms_on_a_device_object_are_refused_on_both_rails",
-      "label": "T8 the twin steps a member of a device struct as a value (the loaded pointer's domain unread)",
+      "label": "T8 the twin takes a device struct's member through a loaded pointer as plain storage (the loaded pointer's domain unread)",
       "new": "  (void)r;",
       "old": "  if(r && r->domain==BCIR_DOM_MMIO) return 1;",
       "path": "runtime/c/bcir_cfront.c"

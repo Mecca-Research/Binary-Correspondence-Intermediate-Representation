@@ -13,7 +13,8 @@
   "bcir.tests.test_c_cfront:test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
-  "bcir.tests.test_c_cfront:test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails"
+  "bcir.tests.test_c_cfront:test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails"
  ],
  "faults": [
   {
@@ -419,8 +420,8 @@
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
    "label": "CS2C21 twin: an inc/dec through an element's pointer member not stepped (`t[i].p[0]++`)",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "  if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)) return 0;\n  *out=plv_incdec(c,&lv,prefix,ch); return 1;\n}\n",
-   "new": "  if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)) return 0;\n  return 0;\n}\n"
+   "old": "  if(!ok || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */\n  *out=plv_incdec(c,&lv,prefix,ch); return 1;\n}\n",
+   "new": "  if(!ok || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */\n  return 0;\n}\n"
   },
   {
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
@@ -1205,6 +1206,181 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "  if(sub_group_count(c,j+2)!=nd-(pad!=0)){",
    "new": "  if(sub_group_count(c,j+2)!=nd-pad){"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V1 oracle: a step of a volatile object through a pointer, an element or a member refused again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if lv.kind != \"var\" and not _is_scalar_member_lv(node.operand, lv):\n",
+   "new": "        if lv.kind != \"var\" and not (_is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)):\n"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V2 oracle: a named volatile object's postfix step read twice, its snapshot a second read",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        named_vol = lv.kind == \"var\" and lv.ct.volatile and lv.ct.kind == \"scalar\"\n",
+   "new": "        named_vol = False\n"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V3 oracle: a narrowing prefix step of a volatile object re-reads it",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if named_vol or (lv.kind == \"mem\" and self._mmio(lv.rid)):",
+   "new": "            if False:"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V4 twin: a pointer sum of a pointer to volatile storage typed a `T *`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(!parr && (snap.is_volatile || snap.domain==BCIR_DOM_MMIO)){",
+   "new": "    if(0 && !parr && (snap.is_volatile || snap.domain==BCIR_DOM_MMIO)){"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V5 twin: an assignment through a pointer to volatile storage used as a value refused for no reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(br && br->kind==BCIR_RK_POINTER && (br->is_volatile || br->domain==BCIR_DOM_MMIO) && (is_eq || is_compound_op(op))){",
+   "new": "  if(0 && br && br->kind==BCIR_RK_POINTER && (br->is_volatile || br->domain==BCIR_DOM_MMIO) && (is_eq || is_compound_op(op))){"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V6 twin: `(*c)++` of a named pointer to volatile storage refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return v->type.kind==2 && !v->type.ptr_to_struct",
+   "new": "  return v->type.kind==2 && !v->type.is_volatile && !v->type.ptr_to_struct"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V7 twin: a step through any other pointer to volatile storage, `(**pp)++`, refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(br && br->kind==BCIR_RK_POINTER && (br->ptr_depth?br->ptr_depth:1)==1 && !br->agg[0] && !br->is_voidptr)\n      form=3;",
+   "new": "    if(br && br->kind==BCIR_RK_POINTER && (br->ptr_depth?br->ptr_depth:1)==1 && !br->agg[0] && !br->is_voidptr\n       && !br->is_volatile && br->domain!=BCIR_DOM_MMIO)\n      form=3;"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V8 twin: the store of a step through a pointer to volatile storage not a device access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  mark_access(c,cl,vol);                                         /* a volatile pointee: the write a device sees */",
+   "new": "  /* unmarked */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V9 twin: a narrowing prefix step through a pointer to volatile storage re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(vol){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }",
+   "new": "    if(0){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V10 twin: `c[k]++` of a pointer to volatile storage, or of a volatile array, refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(isk(c,T_ID) && ((v->type.kind==0 && v->sidx<0) || ptr_elem_lv_x(c,v,1))   /* volatile too (CSUB-2e) */",
+   "new": "  if(isk(c,T_ID) && ((v->type.kind==0 && !v->type.is_volatile && v->sidx<0) || ptr_elem_lv(c,v))   /* volatile too (CSUB-2e) */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V11 twin: a narrowing prefix step of a volatile element re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(index_elem_vol(c,v)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }   /* of a volatile element, a second access */",
+   "new": "      /* re-read */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V12 twin: a member of a volatile struct stepped refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(isk(c,T_ID) && v->sidx>=0 && tat(c,c->i+1)->k==T_PUN\n     && ((tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='.')",
+   "new": "  if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile && tat(c,c->i+1)->k==T_PUN\n     && ((tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='.')"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V13 twin: a narrowing prefix step of a device region's member re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(v->type.is_volatile || f.is_volatile || sdef_vol(c,v->sidx)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }",
+   "new": "      if(v->type.is_volatile || f.is_volatile){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V14 twin: a bitfield of a device region stepped as one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(f.bit_w && step_dev(c,v,&f)){ fail(c,\"inc/dec of a volatile/MMIO bitfield is a follow-on\"); return 0; }",
+   "new": "    if(0){ fail(c,\"inc/dec of a volatile/MMIO bitfield is a follow-on\"); return 0; }"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V15 twin: a narrowing prefix step of a volatile member array's element re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(step_dev(c,v,sf) || f.is_volatile){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return nw; }   /* re-read: a second access (CSUB-2e) */",
+   "new": "    /* re-read */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V16 twin: a narrowing prefix step of an element's field of a device region re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(step_dev(c,v,&sub)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }   /* re-read: a second access (CSUB-2e) */",
+   "new": "      /* re-read */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V17 twin: a field of a volatile struct array's element stepped refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(isk(c,T_ID) && v->sidx>=0\n     && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){",
+   "new": "  if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile\n     && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V18 twin: `gv++;` of a named volatile object read inside the add, not as its device read",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  uint32_t cur = v->type.kind!=2 && !(v->type.is_atomic && v->type.kind==0) ? named_read(c,v) : v->rid;",
+   "new": "  uint32_t cur = v->rid;"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V19 twin: a named volatile object stepped as a value refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(obj_vol(c,v)){                                        /* a named volatile scalar: one read, one write -- the",
+   "new": "  if(0 && obj_vol(c,v)){                                        /* a named volatile scalar: one read, one write -- the"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V20 twin: a narrowing prefix step of a named volatile object as a value taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if((int)sz < (int)(nr?nr->elem_bytes:4)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }   /* re-read: a second access */",
+   "new": "    if(0){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }   /* re-read: a second access */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V21 twin: a pointer member of a volatile struct's element loaded into an integer temp",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),   /* a pointer member is `T *t` (CSUB-2e) */",
+   "new": "            tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),   /* a pointer member is `T *t` (CSUB-2e) */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V22 twin: a device region known by its struct's volatile member taken as plain storage at a narrowing step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return v->type.is_volatile || (f && f->is_volatile) || sdef_vol(c,v->sidx) || (r && r->domain==BCIR_DOM_MMIO);",
+   "new": "  return v->type.is_volatile || (f && f->is_volatile);"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V23 twin: a step through a loaded pointer into a device struct refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(!ok || !incdec_settle(c,prefix,save)){            /* a device's object too: one read, one write (CSUB-2e) */",
+   "new": "      if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)){            /* a device's object too: one read, one write (CSUB-2e) */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V24 twin: a step through an element's pointer member into a device struct refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!ok || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */",
+   "new": "  if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V25 twin: a narrowing prefix step through a loaded pointer into a device struct re-reads its member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(plv_volatile(c,lv)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return nw; }   /* re-read: a second",
+   "new": "  if(0){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return nw; }   /* re-read: a second"
   }
  ]
 }

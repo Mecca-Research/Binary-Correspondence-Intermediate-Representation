@@ -190,15 +190,15 @@
     },
     "bcir_quarantine.c": {
       "verdict": "blocked",
-      "blocker": "parse error: inc/dec of this lvalue form is a follow-on",
-      "construct": "an lvalue form the lowering does not take yet: an address-of, increment or assignment through a loaded pointer",
-      "rung": "CSUB-2"
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
     },
     "bcir_quarantine_recover.c": {
       "verdict": "blocked",
-      "blocker": "parse error: inc/dec of this lvalue form is a follow-on",
-      "construct": "an lvalue form the lowering does not take yet: an address-of, increment or assignment through a loaded pointer",
-      "rung": "CSUB-2"
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
     },
     "bcir_ring.c": {
       "verdict": "blocked",

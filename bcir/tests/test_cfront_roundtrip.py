@@ -418,8 +418,10 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # member loads and stores of array elements re-parse from the emit as the strided accesses they lowered to.
     # 126 since CSUB-2c's array members used as values: the new `cfront_csub2_elemarrays.c` round-trips -- the
     # address of a member array's first element re-parses from the emit as the strided address it lowered to.
-    assert len(included) == 126, (
-        f"included-set size changed from the pinned 126 to {len(included)} -- a "
+    # 127 since CSUB-2e's volatile steps: the new `cfront_csub2_volatile.c` round-trips -- each step's one device read
+    # and one device write re-parse from the emit as the volatile accesses they lowered to.
+    assert len(included) == 127, (
+        f"included-set size changed from the pinned 127 to {len(included)} -- a "
         f"fixture moved across the round-trip boundary; re-classify + re-pin. "
         f"included={sorted(included)}"
     )
