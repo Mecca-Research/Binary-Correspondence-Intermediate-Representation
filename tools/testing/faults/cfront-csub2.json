@@ -12,7 +12,8 @@
   "bcir.tests.test_c_cfront:test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
   "bcir.tests.test_c_cfront:test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails",
-  "bcir.tests.test_c_cfront:test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails"
+  "bcir.tests.test_c_cfront:test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails"
  ],
  "faults": [
   {
@@ -901,8 +902,8 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W1 oracle: a row of scalars used as a value refused again",
    "path": "bcir/frontends/cfront/lower.py",
-   "old": "        if isinstance(node, cast.Index) and self._scalar_row(node):",
-   "new": "        if False and isinstance(node, cast.Index) and self._scalar_row(node):"
+   "old": "        if isinstance(node, (cast.Index, cast.Member)) and self._scalar_row(node):",
+   "new": "        if False and isinstance(node, (cast.Index, cast.Member)) and self._scalar_row(node):"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
@@ -936,14 +937,14 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W6 oracle: `typeof` of a row typed as its element",
    "path": "bcir/frontends/cfront/lower.py",
-   "old": "            if self._row_of(tref.typeof_expr):\n                raise CLowerError(ROW_VALUE)",
-   "new": "            if False:\n                raise CLowerError(ROW_VALUE)"
+   "old": "            if self._row_of(te) or (isinstance(te, cast.Member) and self._scalar_row(te)):\n                raise CLowerError(ROW_VALUE)",
+   "new": "            if (isinstance(te, cast.Member) and self._scalar_row(te)):\n                raise CLowerError(ROW_VALUE)"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W7 oracle: an array no subscript designates taken as a row, so `*(a + 1)` leaves the element's path",
    "path": "bcir/frontends/cfront/lower.py",
-   "old": "        if not isinstance(node, cast.Index):\n            return False\n        try:\n            t = self._sizeof_type(node)\n        except CLowerError:\n            return False\n        return (",
+   "old": "        if not isinstance(node, (cast.Index, cast.Member)):\n            return False\n        try:\n            t = self._sizeof_type(node)\n        except CLowerError:\n            return False\n        return (",
    "new": "        try:\n            t = self._sizeof_type(node)\n        except CLowerError:\n            return False\n        return ("
   },
   {
@@ -978,29 +979,29 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W12 twin: a row of a member array of an array-of-structs element refused again",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,1);   /* `a[i].m[j]`, a row (CSUB-2d) */",
-   "new": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,0);   /* `a[i].m[j]`, a row (CSUB-2d) */"
+   "old": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,2);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */",
+   "new": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,0);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W13 twin: a row of a member array of an element through a loaded pointer refused again",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,1);   /* `...->p[i].m[j]`, a row (CSUB-2d) */",
-   "new": "        { field af; uint32_t tot; int r=0;   /* `...->p[i].m[j]`, a row (CSUB-2d) */"
+   "old": "        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,2);   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */",
+   "new": "        { field af; uint32_t tot; int r=0;   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W14 twin: an element's member row taken for an assignment's target",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,1);   /* `a[i].m[j]`, a row: no object */\n      if(r<0) return 0;                              /* assigned",
-   "new": "    { field af; uint32_t tot; int r=0;   /* `a[i].m[j]`, a row: no object */\n      if(r<0) return 0;                              /* assigned"
+   "old": "    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,2);   /* `a[i].m[j]`, a row, or `a[i].m`: no object */\n      if(r<0) return 0;                              /* assigned",
+   "new": "    { field af; uint32_t tot; int r=0;   /* `a[i].m[j]`, a row, or `a[i].m`: no object */\n      if(r<0) return 0;                              /* assigned"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W15 twin: a row whose subscripts are all there taken as one",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "  if(pad && (nd<2 || sub_group_count(c,j+2)!=nd-1)) return 0;   /* no row: the element's paths take it */",
-   "new": "  if(pad && nd<2) return 0;   /* no row: the element's paths take it */"
+   "old": "  if(pad && sub_group_count(c,j+2)!=nd-1) return 0;  /* no row: the element's paths take it */\n  if(pad==1 && nd<2) return 0;\n",
+   "new": "  if(pad && nd<2) return 0;   /* no row: the element's paths take it */\n"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
@@ -1113,6 +1114,97 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "          last_ptr_to_volatile(c,mf.is_volatile||v->type.is_volatile,mf.sidx>=0 && sdef_vol(c,mf.sidx));   /* (CSUB-2d) */",
    "new": "          last_ptr_to_volatile(c,0,0);   /* (CSUB-2d) */"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X1 oracle: an array member of an element taken as no member array of an element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if not (isinstance(node, cast.Member) and not node.arrow and self._aos_rooted(node)):\n            return False\n        n = node",
+   "new": "        if True:\n            return False\n        n = node"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X2 oracle: an element of a named array's member array taken as no row, refused again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(base, cast.Name):\n            return True\n        if isinstance(base, cast.Member):",
+   "new": "        if isinstance(base, cast.Name):\n            return False\n        if isinstance(base, cast.Member):"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X3 oracle: an element of a member array of an aggregate, `h->arr[k].m`, taken as one a pointer member holds",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            return t is not None and t.kind == \"pointer\"\n        return False\n\n    def _scalar_row",
+   "new": "            return t is not None\n        return False\n\n    def _scalar_row"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X4 oracle: any member array taken as an element's, `h->arr[k].m` among them",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(node, cast.Member) and not self._elem_member_array(node):\n            return False\n",
+   "new": ""
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X5 oracle: an element's member array used as a value refused again (the value's site takes subscripts only)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(node, (cast.Index, cast.Member)) and self._scalar_row(node):",
+   "new": "        if isinstance(node, cast.Index) and self._scalar_row(node):"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X6 oracle: `*a[i].m` read through the general path, not the member array's first element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if isinstance(operand, cast.Member) and self._scalar_row(operand):",
+   "new": "            if False and isinstance(operand, cast.Member) and self._scalar_row(operand):"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X7 oracle: `typeof` of an element's member array typed as its element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if self._row_of(te) or (isinstance(te, cast.Member) and self._scalar_row(te)):\n                raise CLowerError(ROW_VALUE)",
+   "new": "            if self._row_of(te):\n                raise CLowerError(ROW_VALUE)"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X8 twin: an element's member array, `a[i].m`, not taken as one when no `[` follows",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(pad==2 && farr(&m) && !tok_is(tat(c,j+2),\".\")) break;   /* `a[i].m`, the member array itself */",
+   "new": "    if(0 && farr(&m) && !tok_is(tat(c,j+2),\".\")) break;   /* `a[i].m`, the member array itself */"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X9 twin: a member array of structs or pointers as a value refused for the subscript's reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(pad && nd==1 && (m.elem_sidx>=0 || m.elem_ptr)) return 0;   /* a member array of structs or pointers as a",
+   "new": "  if(0 && nd==1 && (m.elem_sidx>=0 || m.elem_ptr)) return 0;   /* a member array of structs or pointers as a"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X10 twin: an element's member array read as a value refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,2);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */",
+   "new": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,1);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X11 twin: an element's member array through a loaded pointer, `f->q[k].t`, refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,2);   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */",
+   "new": "        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,1);   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X12 twin: an element's member array taken for an assignment's target",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,2);   /* `a[i].m[j]`, a row, or `a[i].m`: no object */\n      if(r<0) return 0;                              /* assigned",
+   "new": "    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,1);   /* `a[i].m[j]`, a row, or `a[i].m`: no object */\n      if(r<0) return 0;                              /* assigned"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X13 twin: an element's member array's supplied subscript counted as two",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(sub_group_count(c,j+2)!=nd-(pad!=0)){",
+   "new": "  if(sub_group_count(c,j+2)!=nd-pad){"
   }
  ]
 }

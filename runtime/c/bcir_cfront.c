@@ -3922,7 +3922,9 @@ static int aos_member_array_x(CC *c, venv *v, uint32_t lin, field *af, uint32_t 
 static int aos_member_array(CC *c, venv *v, uint32_t lin, field *af, uint32_t *total){
   return aos_member_array_x(c,v,lin,af,total,0); }
 /* ... `pad` 1: a row of the member array, `a[i].m[j]` of a `T m[A][B]`, one subscript short -- its element `[0]`'s
- * index (`member_arr_index_x`), whose address is the row's value (CSUB-2d); 0 when the subscripts are all there. */
+ * index (`member_arr_index_x`), whose address is the row's value (CSUB-2d); 0 when the subscripts are all there.
+ * `pad` 2: a row, or the whole of a one-dimensional member array of scalars, `a[i].m` -- its value, `&a[i].m[0]`
+ * (CSUB-2c). */
 static int aos_member_array_x(CC *c, venv *v, uint32_t lin, field *af, uint32_t *total, int pad){
   if(v->sidx<0 || !is(c,".")) return 0;
   if(!index_member_ok(c,v)) return -1;                 /* an element that is a pointer (CF-IDXARROW) */
@@ -3935,14 +3937,18 @@ static int aos_member_array_x(CC *c, venv *v, uint32_t lin, field *af, uint32_t 
     if(fi<0) return 0;
     m=S->f[fi];
     if(farr(&m) && tok_is(tat(c,j+2),"[")) break;
+    if(pad==2 && farr(&m) && !tok_is(tat(c,j+2),".")) break;   /* `a[i].m`, the member array itself */
     if(m.sidx<0 || !tok_is(tat(c,j+2),".")) return 0;  /* a scalar member: `a[i].f` (aos_elem_field) */
     off+=m.byte_off; vol|=m.is_volatile; S=&c->s[m.sidx]; j+=2;
   }
   m.byte_off+=off; if(vol) m.is_volatile=1;           /* the member array at its offset in the element */
   int nd=m.nadims>0?m.nadims:1;
-  if(pad && (nd<2 || sub_group_count(c,j+2)!=nd-1)) return 0;   /* no row: the element's paths take it */
+  if(pad && sub_group_count(c,j+2)!=nd-1) return 0;  /* no row: the element's paths take it */
+  if(pad==1 && nd<2) return 0;
+  if(pad && nd==1 && (m.elem_sidx>=0 || m.elem_ptr)) return 0;   /* a member array of structs or pointers as a
+                                                       * value: the element's paths, and their reasons */
   if(m.elem_sidx>=0 || m.elem_ptr || nd>3){ fail(c,"a subscript of an array-of-structs member array is not supported"); return -1; }
-  if(sub_group_count(c,j+2)!=nd-pad){ fail(c,"partial indexing of a struct member array is not yet supported"); return -1; }
+  if(sub_group_count(c,j+2)!=nd-(pad!=0)){ fail(c,"partial indexing of a struct member array is not yet supported"); return -1; }
   if(m.size<=0 || ES->size%m.size){ fail(c,"an array-of-structs member array whose element does not divide the struct"); return -1; }
   c->i=j+2;                                            /* `.s.m` */
   uint32_t lm=member_arr_index_x(c,&m,pad);
@@ -4193,7 +4199,7 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       if(psidx>=0 && (is(c,".")||is(c,"->"))){       /* `...->p[i].f`: a member of an element of a pointer to
                                                       * structs, strided by the element as `a[i].f` is */
         venv e=ptr_elem_base(c,ptr,psidx,&pfld);
-        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,1);   /* `...->p[i].m[j]`, a row (CSUB-2d) */
+        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,2);   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */
           if(r<0) return 0;
           if(r>0) return c->row_rid=addr_member_elem(c,&e,&af,tot); }
         { field af; uint32_t tot; int r=aos_member_array(c,&e,ix,&af,&tot);   /* `...->p[i].m[j]` */
@@ -5224,7 +5230,7 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
     uint32_t lin=index_chain(c,v);
     if(c->failed) return 0;
     if(v->sidx>=0 && (is(c,".")||is(c,"->"))){    /* a[i].field on a DIRECT array-of-structs (strided load) */
-      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,1);   /* `a[i].m[j]`, a row (CSUB-2d) */
+      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,2);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */
         if(r<0) return 0;
         if(r>0) return c->row_rid=addr_member_elem(c,v,&af,tot); }
       { field af; uint32_t tot; int r=aos_member_array(c,v,lin,&af,&tot);   /* a[i].m[j] (CF-SMALL) */
@@ -7185,7 +7191,7 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
     uint32_t idx=index_chain(c,v);                   /* an element that is a pointer, `pp[i][j].f`, which a flat
                                                       * index read as `pp[i*1+j]` (CF-IDXARROW) */
     if(c->failed) return 0;
-    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,1);   /* `a[i].m[j]`, a row: no object */
+    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,2);   /* `a[i].m[j]`, a row, or `a[i].m`: no object */
       if(r<0) return 0;                              /* assigned -- the read paths take it (CSUB-2d) */
       if(r>0){ c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; } }
     { field af; uint32_t tot; int r=aos_member_array(c,v,idx,&af,&tot);   /* `a[i].m[j]` =/OP= (CF-SMALL) */

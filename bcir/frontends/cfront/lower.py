@@ -1881,7 +1881,8 @@ class _FuncLowerer:
         elif tref.typeof_expr is not None:  # `typeof(expr)` -> the operand's static type
             # of a row, the array it is, which the value model does not declare (CSUB-2d; `_type_of`
             # gives a row its element, which `_Generic` decays to); the twin's `typeof_row`
-            if self._row_of(tref.typeof_expr):
+            te = tref.typeof_expr
+            if self._row_of(te) or (isinstance(te, cast.Member) and self._scalar_row(te)):
                 raise CLowerError(ROW_VALUE)
             base = self._type_of(tref.typeof_expr)
         elif tref.aggregate:  # a pointer may name a struct never defined (an opaque `struct fwd *`)
@@ -2408,6 +2409,10 @@ class _FuncLowerer:
                 # `*(1 + p)`: the pointer on the right -- dereferenced as the value it is, below
             # `*q[j]`: the element is a pointer, loaded, and dereferenced (the twin's general deref of
             # a pointer rvalue); `_addr` knows no subscripted base
+            if isinstance(operand, cast.Member) and self._scalar_row(operand):
+                # `*a[i].m` of an element's member array: its first element, through the pointer its value is
+                rid = self._rvalue(operand)
+                return _LV("mem", rid, self.rtypes[rid].of, byte_off=0)
             if isinstance(operand, cast.Index):
                 # `*m[k]` of a row of scalars: its first element, through the pointer the row's value is
                 # (`&m[k][0]`), as the twin's general deref of a pointer rvalue takes it (CSUB-2d)
@@ -2460,12 +2465,36 @@ class _FuncLowerer:
             return False
         return t is not None and t.kind == "array"
 
+    def _elem_member_array(self, node) -> bool:
+        """`node` is a member of an array element reached by `.` hops, `a[i].m`, `p[k].s.m`, `f->q[k].m`, whose
+        subscripted base is a name or a pointer member (the element's own storage, or what a loaded pointer holds) --
+        not a member array of an aggregate, `h->arr[k].m`, which neither rail takes. Typed only, nothing lowered."""
+        if not (isinstance(node, cast.Member) and not node.arrow and self._aos_rooted(node)):
+            return False
+        n = node
+        while isinstance(n, cast.Member):
+            n = n.base
+        base = n.base if isinstance(n, cast.Index) else None
+        if isinstance(base, cast.Name):
+            return True
+        if isinstance(base, cast.Member):
+            try:
+                t = self._static_type(base)
+            except CLowerError:
+                return False
+            return t is not None and t.kind == "pointer"
+        return False
+
     def _scalar_row(self, node) -> bool:
         """`node`, a subscript, designates a row of scalars -- an array one subscript short of a multi-dimensional
         array's or a pointer to an array's element, whose element is a scalar (CSUB-2d): its type as `sizeof` measures
         it (`_sizeof_type`) is an array of one dimension of scalars. A row of rows, of structs or of pointers stays
-        refused (`ROW_VALUE`, or `_array_value`'s reason). An array that no subscript designates is no row."""
-        if not isinstance(node, cast.Index):
+        refused (`ROW_VALUE`, or `_array_value`'s reason). An array that no subscript designates is no row -- except
+        an array member of an array element, `a[i].m`, `p[k].w`, `f->q[k].t`, whose value is `&a[i].m[0]` too (CSUB-2c;
+        the twin's `aos_member_array_x` with `pad` 2)."""
+        if isinstance(node, cast.Member) and not self._elem_member_array(node):
+            return False
+        if not isinstance(node, (cast.Index, cast.Member)):
             return False
         try:
             t = self._sizeof_type(node)
@@ -3495,7 +3524,7 @@ class _FuncLowerer:
             # `(T *)0`, `(op_t)0`: a null pointer constant converts to the pointer (C11 6.3.2.3p3), so its temp is
             # typed as one -- an `int` temp cast to a pointer of another width is a cast GCC rejects (CF-RTFP)
             return self._cast_value(self._null_pointer(v, ct), ct)
-        if isinstance(node, cast.Index) and self._scalar_row(node):
+        if isinstance(node, (cast.Index, cast.Member)) and self._scalar_row(node):
             # a row of scalars used as a value -- `m[k]` of a `T m[A][B]`, `rows[k]` of a `T (*rows)[N]`, `p->calls[k]`,
             # `s.m[k]`: it decays to a pointer to its first element (C11 6.3.2.1p3), which is `&m[k][0]`, the
             # address both rails lower alike (CSUB-2d; the twin's `row_value`)

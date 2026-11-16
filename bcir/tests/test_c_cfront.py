@@ -327,6 +327,8 @@ _PTRVALUE = [
     #   pointer tested, copied and passed to a row-pointer parameter, through values, elements and loaded pointers (CSUB-2d)
     "cfront_csub2_rows.c",  # a row of a multi-dimensional array used as a value -- passed, assigned, chosen, stepped,
     #   compared, dereferenced -- of statics, globals, VLAs, parameters, members and row pointers; volatile addresses (CSUB-2d)
+    "cfront_csub2_elemarrays.c",  # an array member of an array element used as a value -- a channel table's names
+    #   compared, a cast table's types checked through a loaded pointer, stepped, chosen, sized (CSUB-2c)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -9218,8 +9220,9 @@ def test_postfix_after_parentheses_runs_as_the_original_on_both_rails():
 
 
 # CF-NESTMEM, CF-PAREN: what both rails still refuse, each for the reason the form witnesses -- a member of an
-# array element that is no scalar (a bitfield, a function pointer, an array used as a value) and a member
-# array of a member-array element, whatever the nesting; and a parenthesized DECLARATOR, which neither rail
+# array element that is no scalar (a bitfield, a function pointer; an array used as a value lowers since CSUB-2c,
+# `g[1].m.arr`, a lowered form of `_CSUB2A_LOWERED`) and a member array of a member-array element, whatever the
+# nesting; and a parenthesized DECLARATOR, which neither rail
 # spells: the twin's CF-PAREN rewrite must leave a declaration's parentheses -- after its type, a `*`, a
 # declarator comma, in a for-init or a statement expression, `T (*p)[N]` -- as they are.
 # (the unit, the oracle's refusal, the twin's)
@@ -9234,12 +9237,6 @@ _PAREN_NEST_REFUSED = (
         "struct hold { uint32_t k; uint32_t (*fn)(uint32_t); }; struct seg { struct hold h; };\n"
         "uint32_t f(uint32_t s) { struct seg g[2] = {0}; g[1].h.fn = 0; return s; }",
         "array-of-structs non-scalar element field ('.fn')",
-        "array-of-structs non-scalar element field",
-    ),
-    (
-        "struct in { uint8_t arr[4]; }; struct seg { struct in m; };\n"
-        "uint32_t f(uint32_t s) { struct seg g[2] = {0}; uint8_t *p = g[1].m.arr; return p[0] + s; }",
-        "array-of-structs non-scalar element field ('.arr')",
         "array-of-structs non-scalar element field",
     ),
     (
@@ -13397,6 +13394,110 @@ def test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_
             )
         if exe is not None:
             _linkable_c11_runs_as_the_original(d, "cfront_csub2_rows.c", "csub2_rows")
+
+
+_CSUB2A_HEAD = (
+    "#include <stdint.h>\n#include <stddef.h>\n"
+    "struct ch { uint32_t rank; char name[8]; uint16_t w[3]; };\n"
+    "struct qc { uint32_t n; char type[6]; };\n"
+    "struct fn { uint32_t nq; struct qc *qcasts; struct qc q2[2]; };\n"
+    "struct holder { struct ch arr[2]; };\n"
+    "static uint32_t len(const char *s) { uint32_t n = 0; while (s[n]) n++; return n; }\n"
+    "static uint32_t sum3(const uint16_t *s) { return s[0] + s[2]; }\n"
+)
+# CSUB-2c: an array member of scalars of an array element used as a value is the pointer to its first element,
+# `&a[i].m[0]` -- of a block static's element, of a pointer parameter's and through a loaded pointer member; passed,
+# assigned, chosen, compared, subtracted, stepped, dereferenced and sized
+_CSUB2A_LOWERED = (
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; chs[1].name[0] = 0x61; return len(chs[k % 3u].name); }",
+    "uint32_t f(struct fn *f, uint32_t k) { return len(f->qcasts[k].type) + (uint32_t)sizeof f->qcasts[k].type; }",
+    "uint32_t f(struct ch *p, uint32_t k) { return sum3(p[k].w) + len(p[k].name); }",
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; char *n = chs[k % 3u].name; n[1] = 0;"
+    " return (uint32_t)(n - chs[0].name); }",
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; return *chs[k % 3u].name + *(chs[1].w + 2); }",
+    "uint32_t f(struct fn *f, uint32_t k) { const char *t = (k & 1u) ? f->qcasts[k].type : f->qcasts[0].type;"
+    " return len(t); }",
+    "uint32_t f(struct ch *p, uint32_t k) { return (uint32_t)(p[k].name == p[0].name) + (uint32_t)(p[k].w - p[0].w); }",
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; return (uint32_t)sizeof chs[k % 3u].name"
+    " + (uint32_t)sizeof(chs[0].w); }",
+    # a member array a `.` hop reaches, of a local's element (CF-NESTMEM had pinned it refused)
+    "struct in { uint8_t arr[4]; }; struct seg { struct in m; };\n"
+    "uint32_t f(uint32_t s) { struct seg g[2] = {0}; uint8_t *p = g[1].m.arr; return p[0] + s; }",
+)
+# ... and the forms refused, for one reason each: the member array's address, its type by `typeof`, a member array of
+# structs, pointers or two dimensions as a value, a store to it, and one of an element of a member array
+_CSUB2A_REFUSED = (
+    (
+        "uint32_t f(uint32_t k) { static struct ch chs[3]; return (uint32_t)(uintptr_t)&chs[k % 3u].name; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "uint32_t f(uint32_t k) { static struct ch chs[3]; __typeof__(chs[k % 3u].name) t; (void)t; return 0; }",
+        ROW_VALUE,
+    ),
+    (
+        "struct cs { uint32_t n; struct ch sub[2]; };\n"
+        "uint32_t f(uint32_t k) { static struct cs a[2]; struct ch *q = a[k & 1u].sub; return q[0].rank; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct cp { uint32_t n; char *ptrs[2]; };\n"
+        "uint32_t f(uint32_t k) { static struct cp a[2]; char **q = a[k & 1u].ptrs; return q[0] == 0; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct cm { uint32_t n; uint16_t m[2][3]; };\n"
+        "uint32_t f(uint32_t k) { static struct cm a[2]; return sum3((const uint16_t *)a[k & 1u].m); }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "uint32_t f(struct holder *h, uint32_t k) { return len(h->arr[k & 1u].name); }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "uint32_t f(struct fn *f, uint32_t k) { return len(f->q2[k & 1u].type); }",
+        "array-of-structs non-scalar element field",
+    ),
+)
+
+
+def test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2c. An array member of scalars of an array element used as a value -- `bcir_channel.c`'s
+    `strcmp(channels[i].name, channels[best].name)`, `bcir_verify.c`'s `fixed_string(f->qcasts[k].type, ...)` -- is the
+    pointer to its first element on both rails, to one digest: `&a[i].m[0]`, lowered as that form lowers (the oracle's
+    `_scalar_row`, the twin's `aos_member_array_x` with `pad` 2). Both had refused it as `array-of-structs non-scalar
+    element field`. Its address, its type by `typeof`, a member array of structs, pointers or two dimensions, and one of
+    an element of a member array stay refused alike. `cfront_csub2_elemarrays.c` runs as the original on each rail's
+    emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2A_LOWERED):
+            src = _CSUB2A_HEAD + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_CSUB2A_REFUSED):
+            src = _CSUB2A_HEAD + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_elemarrays.c", "csub2_elemarrays")
 
 
 def test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails():
