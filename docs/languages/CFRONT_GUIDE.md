@@ -550,6 +550,11 @@ _mm_sfence();                      //                   store (release) fence ->
   `s.m[k]`, `a[i].m[j]` -- the pointer to its first element, `&m[k][0]`: passed, assigned, chosen, stepped, compared,
   sized and dereferenced (`*m[k]`, `*(m[k] + i)`); of locals, statics, globals, VLAs, parameters, members and the row a
   pointer-to-array member points at (CSUB-2d).
+- An array member of scalars of an array element used as a value -- `strcmp(chs[i].name, chs[j].name)`,
+  `f(p[k].w)`, `fixed(f->qcasts[k].type, ...)` -- the pointer to its first element, `&a[i].m[0]`: passed, assigned,
+  chosen, stepped, compared, sized and dereferenced; of a named array's element, a pointer parameter's and through a
+  loaded pointer member (CSUB-2c). Its address, `typeof` of it, a member array of structs, pointers or two dimensions,
+  and one of an element of a member array (`h->arr[k].m`) stay refused.
 
 ## Known limits
 

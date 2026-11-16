@@ -289,6 +289,23 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-16 — CSUB-2c, third slice: an array member of an element used as a value.**
+  - An array member of scalars of an array element used as a value is the pointer to its first element on both rails,
+    `&a[i].m[0]` (the oracle's `_elem_member_array` and `_scalar_row`, the twin's `aos_member_array_x` with `pad` 2):
+    `channels[best].name` and `f->qcasts[k].type`, the first refusal of `bcir_channel.c` and `bcir_verify.c`. Passed,
+    assigned, chosen, stepped, compared, sized and dereferenced, of a named array's element, a pointer parameter's and
+    through a loaded pointer member. Its address, `typeof` of it, member arrays of structs, pointers or two dimensions,
+    and one of an element of a member array stay refused alike.
+  - **Evidence.** `cfront_csub2_elemarrays.c` (in `_ABI`) runs as the original under Clang and GCC on each rail's
+    emit. A cross-rail test holds 9 lowered forms to one digest and to a strict build of both emits, and 7 refused ones
+    to one reason each; each rail's linkable artifact, built as C11, returns what the original does. Two pins move:
+    CF-NESTMEM's `g[1].m.arr`, which both rails had refused, is a lowered form there, and the round-trip set is
+    pinned at 126 (the new fixture re-parses from the emit).
+  - **Standing faults.** `cfront-csub2.json` gains 13 (CS2X1–CS2X13), each swept RED; seven CS2W faults the slice's
+    edits moved are re-anchored with the same mutation and swept RED again.
+  - **The ratchet.** 31 of 58, unchanged: `bcir_channel.c` and `bcir_verify.c` move on to `memcmp` and `memchr`
+    (CSUB-5).
+
 - **2026-11-15 — CSUB-2d, second slice: a row used as a value.**
   - A row of scalars used as a value is the pointer to its first element on both rails, `&m[k][0]`, lowered as that
     form lowers (the oracle's `_scalar_row`, the twin's `row_value` and `member_row_value`): `f->calls[k]`,
