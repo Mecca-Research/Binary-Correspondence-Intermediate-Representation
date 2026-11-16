@@ -289,6 +289,37 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-16 — CSUB-2e, second slice: volatile objects stepped, and reached through a pointer sum.**
+  - A step of a volatile scalar is one read and one write on both rails. The oracle takes it in `_incdec_value`. The
+    twin takes it on its deref, element, member, element-field, loaded-pointer, named-value and statement paths,
+    and refuses a narrowing prefix step at each, by one predicate (`step_dev`) where the slot is reached by name. The quarantine units' `return (*c)++;` was the form both
+    stopped at first.
+  - A narrowing prefix step, a bitfield of a device region, and an assignment through a pointer to volatile storage
+    used as a value are refused alike.
+  - Defects at the base, each closed:
+    - The twin typed a pointer sum of a pointer to volatile storage a `T *`, so every access through it lost its
+      volatile, a miscompile.
+    - The oracle read a named volatile object twice for its postfix value.
+    - The twin's `gv++;` claimed neither device access.
+    - The twin loaded a pointer member of a volatile struct's element into an integer temp.
+  - **Evidence.** `cfront_csub2_volatile.c` (in `_ABI`) runs as the original under Clang and GCC on each rail's emit.
+    A cross-rail test holds 33 lowered forms to one digest and to a strict build of both emits, and 14 refused ones
+    to one reason each; each rail's linkable artifact, built as C11, returns what the original does. CF-SPLIT2's
+    device test keeps the assignments used as values and a narrowing prefix step; its three steps through a loaded
+    pointer, which both rails had refused, are lowered forms of the new test. The round-trip set is pinned at 127 (the
+    new fixture re-parses from the emit).
+  - **A witness the digest lacked.** The cross-rail digest holds no claim's volatile bit, and a strict build accepts
+    the explicit cast of a byte copy. So a store the twin did not mark volatile, emitted as `memcpy((char *)c, ...)`
+    of a `volatile T *`, passed both. The test now holds both rails' emits to the same number of volatile accesses.
+    The marks on a named object's write (`gv++;`) and on an element's store (`c[k]`, emitted through its typed
+    pointer) change only that bit, which nothing reads yet. They have no standing fault, and adding the bit to the
+    digest is tracked.
+  - **Standing faults.** `cfront-csub2.json` gains 25 (CS2V1–CS2V25), each swept RED. CS2C21 is re-anchored with its
+    mutation. `cfront-splits.json`'s S4, whose guard the slice retires, injects into the narrowing prefix step's
+    refusal instead. Both are swept RED.
+  - **The ratchet.** 31 of 58, unchanged: `bcir_quarantine.c` and `bcir_quarantine_recover.c` move on to `FILE`
+    (CSUB-5).
+
 - **2026-11-16 — CSUB-2c, third slice: an array member of an element used as a value.**
   - An array member of scalars of an array element used as a value is the pointer to its first element on both rails,
     `&a[i].m[0]` (the oracle's `_elem_member_array` and `_scalar_row`, the twin's `aos_member_array_x` with `pad` 2):

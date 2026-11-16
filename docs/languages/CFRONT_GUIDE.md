@@ -617,9 +617,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   is a new-line (translation phase 1) and a lone `\r` white space, so a CRLF unit lowers to its LF twin's digest, and a
   `\x1c` or `\x1e` in code is `unexpected character` and a NEL or U+2028 `NONASCII` on both (CF-PPSPLITS). A call
   carries at most 16 arguments on both rails (CF-CALLARGS).
-- An increment, or an assignment used as a value, of a device object -- a `volatile` object, or any member of a
-  struct that holds volatile storage reached through a pointer: its value would be a second device access. Both
-  rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.
+- An assignment used as a value of a device object -- a `volatile` object, or any member of a struct that holds
+  volatile storage reached through a pointer -- and a prefix step of one that narrows (`++*c` of a
+  `volatile uint8_t *`): its value would be a second device access. A bitfield of a device region stepped. Both rails
+  refuse them. The statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower, and so do the other steps
+  (`(*c)++`, `++dev->count`, `ticks++`), each one read and one write (CSUB-2e).
 - A `static` table of function pointers in a block (`static op_t t[2] = {f, g};`): refused on both rails as no integer
   constant expression; a file-scope table holds the same designators. Arithmetic on a function pointer (`fp + 1`,
   `fp++`), which C does not define, lowers today and is a recorded follow-up; `i[p]` (the pointer as the index) is
