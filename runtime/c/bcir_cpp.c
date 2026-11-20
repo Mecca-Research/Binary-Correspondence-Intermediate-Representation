@@ -1492,6 +1492,7 @@ static void strip_comments(const char *s, char *o, size_t ocap) {
       o[w++]=c; i++;                                  /* a string/char literal: copy verbatim */
       while(s[i] && w+2<ocap){ char ch=s[i];
         if(ch=='\\' && s[i+1]){ o[w++]=ch; o[w++]=s[i+1]; i+=2; continue; }
+        if(ch=='\n') break;                          /* an open one ends at its line (CF-STRIPQUOTE) */
         o[w++]=ch; i++; if(ch==c) break; }
       continue; }
     if(c=='/' && s[i+1]=='/'){ i+=2; while(s[i] && s[i]!='\n') i++; o[w++]=' '; continue; }
@@ -1507,17 +1508,27 @@ static void strip_comments(const char *s, char *o, size_t ocap) {
   o[w]=0;
 }
 
-/* The logical line at *pp into `line` (cap bytes): its backslash-newlines spliced, a CRLF end of line read as a
- * new-line (translation phase 1), *pp past its new-line. Returns its length; *too_long when it outgrew `line`. */
+/* Translation phases 1 and 2 over a whole text, in place, before phase 3 (`strip_comments`), as the oracle's
+ * `_logical_lines` runs them: each CRLF read as a new-line, then each backslash-newline deleted, one pass each, so a
+ * `\\\r\n` splices and a CRLF file ends its directives as an LF file does (CF-PPSPLITS). The twin had stripped first
+ * and spliced each line as it read it, so a `//` comment a backslash continues ended at its new-line and the line
+ * after it was code -- a function the oracle and Clang read as part of the comment lowered on the twin alone -- and
+ * a splice inside a block comment kept its new-line, one line more for every `__LINE__` after it (CF-STRIPQUOTE). */
+static void splice_lines(char *s) {
+  size_t r=0, w=0;
+  for(; s[r]; r++){ if(s[r]=='\r' && s[r+1]=='\n') continue; s[w++]=s[r]; }
+  s[w]=0;
+  for(r=0, w=0; s[r]; ){ if(s[r]=='\\' && s[r+1]=='\n'){ r+=2; continue; } s[w++]=s[r++]; }
+  s[w]=0;
+}
+
+/* The line at *pp into `line` (cap bytes), *pp past its new-line: the text is spliced already (`splice_lines`), so a
+ * line is a logical line. A backslash-newline that splicing makes (two backslashes before two new-lines: the second
+ * backslash and the first new-line deleted) is not spliced again, as on the oracle. Returns its length; *too_long
+ * when it outgrew `line`. */
 static int read_logical(const char **pp, char *line, int cap, int *too_long) {
   const char *p = *pp; int L = 0; *too_long = 0;
   while(*p&&*p!='\n'){
-    if(*p=='\\'&&p[1]=='\n'){p+=2;continue;}
-    if(*p=='\\'&&p[1]=='\r'&&p[2]=='\n'){p+=3;continue;}   /* a CRLF end of line is a new-line (translation
-                                                           * phase 1): spliced as one, ended as one -- `#if K\r`
-                                                           * was malformed here and lowered on the oracle, and a
-                                                           * `\\\r\n` splice was none (CF-PPSPLITS) */
-    if(*p=='\r'&&p[1]=='\n'){p++;continue;}
     if(L<cap-2)line[L++]=*p;else *too_long=1;
     p++;
   }
@@ -1656,7 +1667,8 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
           } else {
             if(memchr(hd,0,hn)){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,"#include %s contains NUL",nm);return 1;}
             if(state->include_depth>=64){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,"#include nesting too deep");return 1;}
-            strip_comments((char *)hd,(char *)hd,hn+1u);    /* phase 3 for the header (in-place safe) */
+            splice_lines((char *)hd);                       /* phases 1 and 2 for the header, then 3 (in place) */
+            strip_comments((char *)hd,(char *)hd,hn+1u);
             state->include_depth++;
             int rc=cpp_process(state,(char *)hd,nm,dirs,ndirs,out,outcap,w,err,errcap);
             state->include_depth--;
@@ -1863,7 +1875,9 @@ int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
     }
     stripped=(char *)bcir_host_arena_allocate(&state->scratch,scratch_size,1u);
     if(!stripped){if(err&&errcap)snprintf(err,errcap,"oom");goto cleanup;}
-    strip_comments(src, stripped, scratch_size);
+    memcpy(stripped, src, sl); stripped[sl]=0;       /* phases 1 and 2, then 3, in place, as the oracle runs them */
+    splice_lines(stripped);
+    strip_comments(stripped, stripped, scratch_size);
     rc=cpp_process(state,stripped, (srcname && srcname[0]) ? srcname : "<source>",
                    dirs, ndirs, out, outcap, &w, err, errcap);
   }

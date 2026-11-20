@@ -611,9 +611,10 @@ static void fail(CC *c,const char *m);
 #define BCIR_LONG_ID "an identifier longer than " BCIR_STR(BCIR_CIR_IDENT_MAX) " characters is not supported"
 #define BCIR_LONG_FLT "a floating constant longer than " BCIR_STR(BCIR_CIR_IDENT_MAX) " characters is not supported"
 /* A floating constant whose C23 separator stands beside no two digits of its part (`digit_seps_ok`; the oracle's
- * `clex.FLOAT_INVALID`), and a literal with no closing quote, refused where they are lexed in the oracle's words: the
- * twin had read an open character constant as `unsupported character constant`, and an open string to the end of the
- * unit, refused later as a bare `;` (CF-DIGITSEP). */
+ * `clex.FLOAT_INVALID`), and a literal with no closing quote before its line ends, refused where they are lexed in the
+ * oracle's words: the twin had read an open character constant as `unsupported character constant`, and an open
+ * string to the end of the unit, refused later as a bare `;` (CF-DIGITSEP); and each lexer had read an open one on to
+ * the next quote, lines on, where the preprocessor's token ends at its line (CF-STRIPQUOTE). */
 #define BCIR_BAD_FLT "invalid floating constant"
 #define BCIR_OPEN_CHR "unterminated character constant"
 #define BCIR_OPEN_STR "unterminated string literal"
@@ -637,7 +638,7 @@ static void lex(CC *c, const char *src) {
       if (p[0]=='u'&&p[1]=='8'&&(p[2]=='"'||p[2]=='\'')) qp=p+2;
       else if (p[1]=='"'||p[1]=='\'') qp=p+1;
       if (qp){ char q=*qp; t->s=p; const char *r=qp+1;
-        while(*r&&*r!=q){ if(*r=='\\'&&r[1]) r+=2; else r++; }
+        while(*r&&*r!=q&&*r!='\n'){ if(*r=='\\'&&r[1]) r+=2; else r++; }   /* a literal ends at its line */
         if(*r!=q){ fail(c,q=='"'?BCIR_OPEN_STR:BCIR_OPEN_CHR); break; }
         r++; t->n=(int)(r-p); p=r;
         if (q=='"'){ t->k=T_STR; }
@@ -689,11 +690,11 @@ static void lex(CC *c, const char *src) {
       t->v = L.v>(unsigned long long)LLONG_MAX ? -(long long)(~L.v)-1 : (long long)L.v;   /* its 64 bits */
       c->nt++;continue;}
     if (*p=='"'){t->k=T_STR;t->s=p;p++;                /* string literal (escapes consumed as a unit) */
-                 while(*p&&*p!='"'){ if(*p=='\\'&&p[1]) p+=2; else p++; }
+                 while(*p&&*p!='"'&&*p!='\n'){ if(*p=='\\'&&p[1]) p+=2; else p++; }   /* to its line's end */
                  if(*p!='"'){ fail(c,BCIR_OPEN_STR); break; }
                  p++; t->n=(int)(p-t->s); c->nt++; continue;}
     if (*p=='\''){t->k=T_INT;t->s=p;p++;               /* character constant -> a folded int const */
-                  while(*p&&*p!='\''){ if(*p=='\\'&&p[1]) p+=2; else p++; }
+                  while(*p&&*p!='\''&&*p!='\n'){ if(*p=='\\'&&p[1]) p+=2; else p++; }   /* likewise */
                   if(*p!='\''){ fail(c,BCIR_OPEN_CHR); break; }
                   p++; t->n=(int)(p-t->s);
                   { const char *why=char_value(cc_abi(c),t->s,t->n,&t->v); if(why){ fail(c,why); break; } }

@@ -289,6 +289,28 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — An open quote ends at its line, and the twin splices before it strips (CF-STRIPQUOTE).**
+  - Both comment strippers (`cpp._strip_comments`, the twin's `strip_comments`) ran a literal whose quote never
+    closes on to the next quote anywhere after it. So the `'` of `don't` in a `#if 0` group kept a later `// it's
+    fine` from being stripped, and the unit was refused on both rails where Clang and GCC take it. An open literal
+    now ends at its line, as theirs does (C 6.4p3 leaves it undefined). Each lexer's scan stops there too, so a
+    lexer's literal is the preprocessor's token: both had read an open one on to the next quote, lines on.
+  - Found on the way: the twin stripped comments before it spliced lines, the reverse of translation phases 2
+    and 3, which the oracle runs in order. So a `//` comment a backslash continues ended at its new-line on the twin,
+    and a function on the next line, which the oracle and Clang read as part of the comment, lowered on the twin
+    alone. The same held in a header. The twin now splices the whole text first (`splice_lines`, the oracle's
+    `replace("\r\n", "\n").replace("\\\n", "")` pass for pass) and reads each line once: a backslash-newline that
+    splicing makes is not spliced again, as on the oracle. The two rails now number lines alike after a splice.
+  - Left for its own slice: `__LINE__` after a spliced line is one less than Clang's for every splice above it, on
+    both rails.
+  - **Evidence.** `test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails`: each unit Clang
+    compiles lowers alike to one function and runs as Clang's C23 build of it, a header's continued comment
+    included; each unit Clang refuses is refused alike.
+  - **Standing faults.** `cfront-stripquote.json`, 12, each swept RED. Four first survived: their witnesses held an
+    odd count of quotes, so a lexer pairing them across lines still left the last one open. The witnesses now hold two
+    open quotes each. `cfront-ppsplits.json`'s PS16 and PS17 follow the CRLF rule from the line reader into
+    `splice_lines` and are swept RED again.
+
 - **2026-11-20 — C23's digit separators, read by one grammar on every rail (CF-DIGITSEP).**
   - C23 admits a `'` into a pp-number only as `pp-number ' digit` or `pp-number ' nondigit` (6.4.8), and into a
     constant only between two digits of its part (6.4.4.1, 6.4.4.2). Four scanners had read it four ways:

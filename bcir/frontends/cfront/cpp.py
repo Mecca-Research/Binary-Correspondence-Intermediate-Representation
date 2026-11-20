@@ -1005,7 +1005,10 @@ def _strip_comments(text: str) -> str:
     6.4.8) are copied whole, so a C23 digit separator (`1'000`, `0xca'fe`) -- a `'` inside a pp-number -- is not
     mistaken for a char-literal quote, and the quote after an identifier is one: a `'` flanked by hex digits had been
     taken for a separator in `u8'a'` (and `case'a'`), the constant's closing quote then opening a literal that ran
-    past the next comment, which survived as tokens (CF-CONSTEXPR2; the twin's `strip_comments`)."""
+    past the next comment, which survived as tokens (CF-CONSTEXPR2; the twin's `strip_comments`). A literal whose
+    quote does not close ends at its line, as Clang and GCC end one (C 6.4p3 leaves it undefined): it had run on to the
+    next quote anywhere after it, so the `'` of `don't` in a `#if 0` group kept a later `// it's` comment from being
+    stripped, and the unit was refused (CF-STRIPQUOTE). The text is spliced first (phase 2), as the twin's is."""
     out: list[str] = []
     i, n = 0, len(text)
     while i < n:
@@ -1035,6 +1038,9 @@ def _strip_comments(text: str) -> str:
                     out.append(text[i + 1])
                     i += 2
                     continue
+                # an open one ends at its line, as Clang's and GCC's does (CF-STRIPQUOTE)
+                if ch == "\n":
+                    break
                 out.append(ch)
                 i += 1
                 if ch == c:  # the closing quote

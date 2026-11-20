@@ -258,9 +258,9 @@ def tokenize(src: str) -> list[Tok]:
                 q = i + len(pfx)
                 quote = src[q]
                 j = q + 1
-                while j < n and src[j] != quote:
+                while j < n and src[j] != quote and src[j] != "\n":
                     j += 2 if (src[j] == "\\" and j + 1 < n) else 1
-                if j >= n:  # an open one, in the plain one's words (CF-DIGITSEP; the twin's lexer)
+                if j >= n or src[j] != quote:  # an open one, in the plain one's words (CF-DIGITSEP)
                     raise CLexError(_OPEN_STRING if quote == '"' else _OPEN_CHAR, pos=i)
                 toks.append(Tok("STRING" if quote == '"' else "CHAR", src[i : j + 1], i))
                 i = j + 1
@@ -304,18 +304,21 @@ def tokenize(src: str) -> list[Tok]:
             continue
         if c == '"':  # string literal
             j = i + 1
-            while j < n and src[j] != '"':
-                j += 2 if (src[j] == "\\" and j + 1 < n) else 1  # skip an escaped char as a unit
-            if j >= n:
+            # an escaped char skipped as a unit; a literal ends at its line (CF-STRIPQUOTE: as the preprocessor's
+            # token does -- it had run on to the next quote, lines on)
+            while j < n and src[j] != '"' and src[j] != "\n":
+                j += 2 if (src[j] == "\\" and j + 1 < n) else 1
+            if j >= n or src[j] != '"':
                 raise CLexError(_OPEN_STRING, pos=i)
             toks.append(Tok("STRING", src[i : j + 1], i))  # text includes the surrounding quotes
             i = j + 1
             continue
         if c == "'":  # character constant
             j = i + 1
-            while j < n and src[j] != "'":
-                j += 2 if (src[j] == "\\" and j + 1 < n) else 1  # skip an escaped char as a unit
-            if j >= n:
+            # (as a string literal's, CF-STRIPQUOTE)
+            while j < n and src[j] != "'" and src[j] != "\n":
+                j += 2 if (src[j] == "\\" and j + 1 < n) else 1
+            if j >= n or src[j] != "'":
                 raise CLexError(_OPEN_CHAR, pos=i)
             toks.append(Tok("CHAR", src[i : j + 1], i))  # text includes the surrounding quotes
             i = j + 1

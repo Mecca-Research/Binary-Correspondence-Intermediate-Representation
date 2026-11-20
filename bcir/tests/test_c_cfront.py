@@ -14260,6 +14260,86 @@ def test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail():
         assert run.returncode == 0, ("the twin's lexer", run.returncode)
 
 
+# The comment strippers' literals and the order of translation phases 2 and 3 (CF-STRIPQUOTE). Each unit Clang compiles
+# as C23 lowers alike on both rails, and each it refuses is refused alike, in one set of words.
+_STRIPQUOTE_FN = "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + 1u; }\n"
+_STRIPQUOTE_LOWERED = (
+    # an apostrophe in a skipped group, and a later comment holding one: the first had opened a literal that ran to the
+    # second, lines on, so the comment between them was never stripped
+    "#if 0\nwe don't build this\n#endif\n// it's fine\n" + _STRIPQUOTE_FN,
+    "#if 0\nit's\n#endif\n/* it's */\n" + _STRIPQUOTE_FN,
+    '#if 0\nan open "string\n#endif\n// a "quoted" word\n' + _STRIPQUOTE_FN,
+    # a comment inside a literal that closes is no comment, and a backslash-newline inside one splices it
+    "#include <stdint.h>\nuint32_t f(uint32_t x) {\n"
+    "  const char *s = \"a // b /* c */\"; char q = '/';\n  return x + (uint32_t)s[2] + (uint32_t)q; }\n",
+    '#include <stdint.h>\nuint32_t f(uint32_t x) { const char *s = "a\\\nb"; return x + (uint32_t)s[1]; }\n',
+)
+# a `//` comment a backslash continues, with LF and with CRLF ends of line: the twin had stripped before it spliced,
+# so the line after it was code there -- a function `g` the oracle and Clang read as part of the comment
+_STRIPQUOTE_CONTINUED = (
+    "// a comment continued \\\nuint32_t g(void) { return 7u; }\n" + _STRIPQUOTE_FN,
+    "// a comment continued \\\r\nuint32_t g(void) { return 7u; }\r\n" + _STRIPQUOTE_FN,
+)
+_STRIPQUOTE_REFUSED = (
+    # an open quote ends at its line in each lexer too, as the preprocessor's token does: each had read on to the next
+    # quote, lines on. Two open ones each, so a lexer reading on would pair them into one literal across the lines
+    (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { char c = 'a;\n  char d = 'b;\n  return x; }\n",
+        "unterminated character constant",
+    ),
+    (
+        '#include <stdint.h>\nconst char *p = "ab;\nconst char *q = "cd;\n'
+        "uint32_t f(uint32_t x) { return x; }\n",
+        "unterminated string literal",
+    ),
+    (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + L'a;\n}\nint k = 'b;\n",
+        "unterminated character constant",
+    ),
+    # a backslash-newline that splicing makes is not spliced again: two backslashes before two new-lines leave one
+    (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { return x; }\n\\\\\n\n",
+        "unexpected character '\\\\'",
+    ),
+)
+
+
+def test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails():
+    """CF-STRIPQUOTE. A literal whose quote does not close ends at its line on every rail, as Clang and GCC end one
+    (C 6.4p3 leaves it undefined). Both comment strippers had run it on to the next quote anywhere after it, so the `'`
+    of `don't` in a `#if 0` group kept a later `// it's fine` from being stripped, and the unit was refused where Clang
+    takes it; and both lexers had read an open one on to the next quote, lines on, where the preprocessor's token ends
+    at its line. The twin also stripped comments before it spliced lines, so a `//` comment a backslash continues
+    ended at its new-line: the function on the next line, which the oracle and Clang read as part of the comment,
+    lowered on the twin alone, from the unit and from a header alike. Now the twin splices the whole text first
+    (`splice_lines`), as the oracle does, and reads each line once."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for src in _STRIPQUOTE_LOWERED + _STRIPQUOTE_CONTINUED:
+        assert _clang_c23_accepts(src) in (True, None), src
+        summary = _lowers_alike(exe, src)
+        assert "funcs=1" in summary, (src, summary)
+        if _CC:
+            _summary, r, entry = _oracle(src)
+            assert _equiv(src, "\n".join(r.emitted.values()), entry) == "MATCH", src
+    for src, why in _STRIPQUOTE_REFUSED:
+        assert _clang_c23_accepts(src) in (False, None), src
+        _refused_alike(exe, src, why, phase="PARSE")
+    # ... and a header's text is spliced before its comments are stripped, as the unit's is
+    header = "// a header's comment continued \\\nuint32_t g(void) { return 7u; }\n#define HV 3u\n"
+    src = '#include <stdint.h>\n#include "h.h"\nuint32_t f(uint32_t x) { return x + HV; }\n'
+    summary, _r, _entry = _oracle(src, includes={"h.h": header})
+    assert "funcs=1" in summary, summary
+    if exe is None:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "h.h"), "w", encoding="utf-8") as fh:
+            fh.write(header)
+        path = os.path.join(d, "u.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        assert _c_run(exe, path)[0] == summary
+
+
 # CF-GARRAY: file-scope arrays and character tables pass through cfront as local ones do. Each function writes the
 # globals, so the driver runs the original and the emit from one saved state and compares what each returns and
 # leaves behind.
