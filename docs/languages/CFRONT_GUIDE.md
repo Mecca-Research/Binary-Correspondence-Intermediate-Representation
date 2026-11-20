@@ -563,8 +563,13 @@ _mm_sfence();                      //                   store (release) fence ->
 - An array member of scalars of an array element used as a value -- `strcmp(chs[i].name, chs[j].name)`,
   `f(p[k].w)`, `fixed(f->qcasts[k].type, ...)` -- the pointer to its first element, `&a[i].m[0]`: passed, assigned,
   chosen, stepped, compared, sized and dereferenced; of a named array's element, a pointer parameter's and through a
-  loaded pointer member (CSUB-2c). Its address, `typeof` of it, a member array of structs, pointers or two dimensions,
-  and one of an element of a member array (`h->arr[k].m`) stay refused.
+  loaded pointer member (CSUB-2c). Its type by `typeof` is the member's array (CF-TYPEOFARR). Its address, a member
+  array of structs, pointers or two dimensions, and one of an element of a member array (`h->arr[k].m`) stay refused.
+- `typeof`, `__typeof__` and `typeof_unqual` of an array object: the array it is (C23 6.7.3.6p4). The operand can be
+  a local, a global, or a member array of a value, through a pointer or of an element. It can also be a string
+  literal or a compound literal, of one to three dimensions. It works as a declaration (`typeof(a) b`, with an
+  initializer too, and `typeof(a) t[2]`, two of them) and as a type name (`sizeof(typeof(a))`). A qualifier may be
+  written before `typeof` or after it, and `typeof_unqual` drops the element's qualifiers (CF-TYPEOFARR).
 
 ## Known limits
 
@@ -727,8 +732,14 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   a parameter or a member`) or as a block object (CSUB-2d).
 - A prototype whose return type is qualified at its top level (`const uint32_t g(void);`): both emits declare it
   without the qualifier, which Clang refuses beside the source (CSUB-2).
-- `typeof` of an array object (`__typeof__(a) b`): the twin declares one element of it, the oracle the array, so
-  `sizeof b` differs between the rails. Spell the array type instead.
+- `typeof` of an expression where no function's scope types it -- a member's type, a global's, a typedef's or a
+  function's return type: refused on both rails (`typeof of an expression in a member or a file-scope declaration is
+  not supported`). `typeof` of a type name works there. Also refused alike (CF-TYPEOFARR):
+  - `typeof` of an array of no constant size, a VLA or an `extern T a[]` (`typeof of an array of unknown or variable
+    length is not supported`), or of more than three dimensions;
+  - a pointer to a typeof'd array (`typeof(a) *p`, `a pointer to a typeof'd array is not supported`);
+  - `volatile` on a typeof'd pointer, before `typeof` or after it -- the volatile pointer object `T *volatile` is,
+    refused as that is (`a volatile-qualified pointer is not supported`).
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 

@@ -36,6 +36,7 @@ from .lower import (
     QUAL_LEVELS,
     ROW_PTR_ELEM,
     ROW_PTR_PLACE,
+    TYPEOF_SCOPE,
     OFFSETOF_BITFIELD,
     OFFSETOF_DESIGNATOR,
     OFFSETOF_INCOMPLETE,
@@ -618,6 +619,8 @@ class _Parser:
             base = cast.TypeRef(base=tag, aggregate=kind)
         else:
             base = self._type_spec()
+            if base.typeof_var or base.typeof_expr is not None:  # no scope to type it in: refused
+                raise CParseError(TYPEOF_SCOPE, pos=self.peek().pos)  # as the twin refuses it
         # `typedef T *(*NAME)(PARAMS);`: a pointer return (CF-FPRET)
         base = self._fp_return_stars(base)
         if self._row_ptr_declarator_at(self._skip_stars(0)):  # `typedef T (*NAME)[N];` (CSUB-2d)
@@ -1188,25 +1191,43 @@ class _Parser:
             elif (
                 w in _TYPEOF_KW and not words and not aggregate
             ):  # typeof(type-name) / typeof(variable)
+                unqual = w == "typeof_unqual"
                 self.nxt()
                 self.eat("PUNCT", "(")
                 if self._is_decl_start():  # typeof ( type-name ), incl. `typeof(int*)`
                     inner = self._type_spec()
                     ip, ipq = self._stars()
                     self.eat("PUNCT", ")")
+                    self._trailing_specs(quals)
+                    # `volatile typeof(T *)`: the pointer's own qualifier, refused as `T *volatile` is
+                    if "volatile" in quals and (ip or inner.ptr):
+                        raise CParseError(VOLATILE_PTR, pos=self.peek().pos)
+                    iquals = inner.quals
+                    if unqual and not (ip or inner.ptr):  # a pointer's qualifiers are its pointee's
+                        iquals = ()
                     return cast.TypeRef(
                         base=inner.base,
-                        ptr=ip,
+                        ptr=ip + inner.ptr,
                         array=inner.array,
                         aggregate=inner.aggregate,
-                        quals=tuple(quals) + inner.quals,
+                        quals=tuple(quals) + iquals,
                         ptr_quals=ipq,
+                        # `typeof(typeof(a))`: the inner operand, which rebuilding the type had dropped
+                        # ("unknown type ''"), where the twin reads it (CF-TYPEOFARR)
+                        typeof_var=inner.typeof_var,
+                        typeof_expr=inner.typeof_expr,
+                        typeof_unqual=unqual or inner.typeof_unqual,
                     )
                 expr = self._expr()  # typeof ( expression ) -- a general operand
                 self.eat("PUNCT", ")")
+                self._trailing_specs(quals)
                 if isinstance(expr, cast.Name):  # a bare in-scope variable keeps the fast path
-                    return cast.TypeRef(base="", typeof_var=expr.ident, quals=tuple(quals))
-                return cast.TypeRef(base="", typeof_expr=expr, quals=tuple(quals))
+                    return cast.TypeRef(
+                        base="", typeof_var=expr.ident, quals=tuple(quals), typeof_unqual=unqual
+                    )
+                return cast.TypeRef(
+                    base="", typeof_expr=expr, quals=tuple(quals), typeof_unqual=unqual
+                )
             elif (
                 w in ("va_list", "__builtin_va_list") and not words and not aggregate
             ):  # variadic cursor type
@@ -1232,12 +1253,7 @@ class _Parser:
         # declaration specifiers come in any order (C11 6.7p1): a qualifier or storage class after a
         # struct/union tag or a typedef name (`struct s static x`, `uint32_t_alias volatile y`) is the
         # same specifier it is before one -- the scalar keyword run above already took those it met
-        while self.at("IDENT") and self.peek().text in _TRAILING_SPEC:
-            w = self.nxt().text
-            if w in ("const", "volatile"):
-                quals.append(w)
-            else:
-                self.storage.add(w)
+        self._trailing_specs(quals)
         if td is not None:  # merge the alias with any leading quals
             # a qualifier of a pointer typedef qualifies the pointer, not what it points to (C11 6.7.8p3: a
             # typedef is the type it names): `const str_t p` of `typedef char *str_t` is `char *const p`, and a
@@ -1432,6 +1448,7 @@ class _Parser:
                         quals=base.quals,
                         typeof_var=base.typeof_var,
                         typeof_expr=base.typeof_expr,
+                        typeof_unqual=base.typeof_unqual,
                         bit_width=base.bit_width,
                         row_ptr=True,
                     ), nm
@@ -1493,6 +1510,7 @@ class _Parser:
             quals=base.quals,
             typeof_var=base.typeof_var,
             typeof_expr=base.typeof_expr,
+            typeof_unqual=base.typeof_unqual,
             bit_width=base.bit_width,
             ptr_quals=_join_levels(base, ptr, pq),
         ), name
@@ -1604,6 +1622,18 @@ class _Parser:
             if w in scope:
                 return scope[w]
         return self.enums.get(w)
+
+    def _trailing_specs(self, quals: list) -> None:
+        """The specifiers after a type's name -- a struct tag, a typedef name, a `typeof(...)`: a qualifier or
+        storage class there is the one before it (C11 6.7p1), so `typeof(x) volatile y` is `volatile typeof(x) y`.
+        One scan for each: the `typeof` branch had returned before the scan the others make, so the unit was a
+        parse error where the twin lowered it (CF-TYPEOFARR)."""
+        while self.at("IDENT") and self.peek().text in _TRAILING_SPEC:
+            w = self.nxt().text
+            if w in ("const", "volatile"):
+                quals.append(w)
+            else:
+                self.storage.add(w)
 
     def _typedef_visible(self, w: str) -> bool:
         """Whether `w` names a typedef where it is read: a name the function declares in a block scope enclosing this

@@ -938,8 +938,8 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W6 oracle: `typeof` of a row typed as its element",
    "path": "bcir/frontends/cfront/lower.py",
-   "old": "            if self._row_of(te) or (isinstance(te, cast.Member) and self._scalar_row(te)):\n                raise CLowerError(ROW_VALUE)",
-   "new": "            if (isinstance(te, cast.Member) and self._scalar_row(te)):\n                raise CLowerError(ROW_VALUE)"
+   "old": "            if self._row_of(te):\n                raise CLowerError(ROW_VALUE)",
+   "new": "            if False:\n                raise CLowerError(ROW_VALUE)"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
@@ -1157,13 +1157,6 @@
    "path": "bcir/frontends/cfront/lower.py",
    "old": "            if isinstance(operand, cast.Member) and self._scalar_row(operand):",
    "new": "            if False and isinstance(operand, cast.Member) and self._scalar_row(operand):"
-  },
-  {
-   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
-   "label": "CS2X7 oracle: `typeof` of an element's member array typed as its element",
-   "path": "bcir/frontends/cfront/lower.py",
-   "old": "            if self._row_of(te) or (isinstance(te, cast.Member) and self._scalar_row(te)):\n                raise CLowerError(ROW_VALUE)",
-   "new": "            if self._row_of(te):\n                raise CLowerError(ROW_VALUE)"
   },
   {
    "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",

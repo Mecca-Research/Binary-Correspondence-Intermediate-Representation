@@ -25,6 +25,9 @@ class TypeRef:
     typeof_expr: object = (
         None  # `typeof(expr)` — the unevaluated operand; lowering infers its static type
     )
+    typeof_unqual: bool = (
+        False  # C23 `typeof_unqual`: the operand's type without its qualifiers (6.7.3.6p5)
+    )
     vla: object = None  # a 1-D variable-length-array dim `T a[n]` — the runtime size EXPRESSION
     #   (None == a normal/constant array); lowering snapshots it for masked bounds
     vla_dims: tuple = ()  # a MULTI-dim VLA `T a[m][n]` — per-dim (int literal | size expr), at least

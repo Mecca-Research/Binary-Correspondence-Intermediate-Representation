@@ -378,7 +378,9 @@ The count is now **30 of 58**: `bcir_handoff.c` compiles R1–R18 clean.
     (`&a[i]`, `&s->x`, `&s->q[i]`, `&s->a[i].v`) a `T *`, which loses the volatile access a store through it makes.
     Each is a `volatile T *` now, as `&x` was.
 - **Found and left, tracked:** `typeof` of an array object (`__typeof__(a) b` of `uint16_t a[3]`) declares one element
-  of it on the twin and the array on the oracle, so `sizeof b` differs. No runtime unit uses `typeof`.
+  of it on the twin and the array on the oracle, so `sizeof b` differs. No runtime unit uses `typeof`. (Closed
+  2026-11-20 by CF-TYPEOFARR: both rails declare the array, and `DEVELOPMENT_HISTORY.md` records the six other
+  `typeof` defects that slice found.)
 
 The count is now **31 of 58**: `bcir_ed25519.c` compiles R1–R18 clean. `bcir_channel.c` and `bcir_verify.c` move on
 to an array member of an element used as a value (`channels[best].name`, `f->qcasts[k].type`), CSUB-2c's next form;
@@ -395,7 +397,8 @@ to an array member of an element used as a value (`channels[best].name`, `f->qca
     member) and takes it in `_scalar_row`; the value, `*` and `typeof` sites read it as they read a row.
   - The twin takes the member array itself, `a[i].m`, in `aos_member_array_x` with `pad` 2, at the read, the
     loaded-pointer and the assignment-target sites.
-- **Refused alike, for one reason each, as before:** its address, `&a[i].m`, a pointer to an array; `typeof` of it; a
+- **Refused alike, for one reason each, as before:** its address, `&a[i].m`, a pointer to an array; `typeof` of it
+  (until CF-TYPEOFARR, 2026-11-20: the member's array on both rails since); a
   member array of structs, of pointers or of two dimensions used as a value; and an array member of an element of a
   member array, `h->arr[k].m` and `f->q2[k].t`.
 

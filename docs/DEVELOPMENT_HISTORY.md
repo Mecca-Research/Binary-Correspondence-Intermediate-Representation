@@ -289,6 +289,62 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — `typeof` of an array object is the array on both rails, and six more `typeof` defects (CF-TYPEOFARR).**
+  - The tracked split: `__typeof__(a) b` of `uint16_t a[3]` declared one element of `a` on the twin and the array on
+    the oracle. So `sizeof b` read 2 where C reads 6, and `b[2]` was refused. Probing the rest of `typeof` found it in
+    every array form on the twin, and six more defects:
+    - **The twin, miscompiles.** `typeof(p->v)` of a member array declared an uninitialized pointer, stored through.
+      `typeof("ab") s = "xy"` returned another value than Clang's build. `typeof_unqual` of a `const` global array
+      declared an uninitialized pointer.
+    - **The twin, a crash.** Every `typeof` of an expression at file scope, in a global, a typedef, a struct member
+      or a return type, dereferenced no function. After a function, it lowered into that function's graph and rolled
+      it back. The oracle refused these as `unknown scalar type ''` or `unknown type ''`.
+    - **The oracle.** A global's or a member's array was laid out nested, unlike a declared one of the same type: one
+      digest for `typeof(g) h` and another for `uint8_t h[2][4]`. `typeof(typeof(a))` dropped its operand. A
+      specifier after `typeof` (`typeof(x) volatile y`) was a parse error, where the twin lowered it.
+    - **Both rails.** `typeof_unqual` kept `volatile` and `_Atomic`. `volatile typeof(a) b` of an array dropped the
+      qualifier, so its device accesses were plain ones. `volatile typeof(p) q` of a pointer, which C makes the volatile
+      pointer object `T *volatile`, was read as a pointer to volatile on the oracle and dropped on the twin. A pointer
+      to a typeof'd array and `typeof` of an array of unknown or variable length lowered to an emit that did not
+      build, or split.
+  - **The twin** types the operand with the static designator walk `sizeof` uses (`typeof_array`, over `sz_unary`).
+    It never lowers it, and hands the dimensions on as an array typedef's are (`td_nd`). A row is marked in the walk
+    (`szt.row`) and refused as before. Any other operand keeps its old path, the cursor and the failure state restored,
+    so the walk's refusals are never `sizeof`'s words in a `typeof`. File scope is a flag of its own (`fscope`, set at
+    each top-level item, cleared where a function's parameters open), and so is a struct body's depth (`sbody`).
+  - **The oracle** lays a typeof'd array out as a declared one, flat with its `shape`, under the declarator's
+    dimensions (`_typeof_array`, `_array_dims`, `_inferred_array`). It refuses a member's, a global's and a typedef's
+    `typeof` of an expression (`TYPEOF_SCOPE`), carries a nested `typeof`'s operand, and reads the specifiers after one
+    (`_trailing_specs`, the one scan a struct tag and a typedef name use too).
+  - **Both rails** now:
+    - give `typeof_unqual` the unqualified type, an array's element's too;
+    - keep a qualifier written before or after `typeof` on an array's elements;
+    - refuse a typeof'd pointer's `volatile` as `T *volatile` is refused (`VOLATILE_PTR`; the twin through
+      `td_ptr_qual`, as a pointer typedef's);
+    - refuse, in one set of words, a pointer to a typeof'd array, an array of unknown or variable length, and more than
+      three dimensions (`TYPEOF_ARR_PTR`, `TYPEOF_UNSIZED`, `TYPEOF_DIMS`).
+
+    A local array past three dimensions is refused in the oracle's words on the twin too.
+  - `typeof(chs[k].name)`, an array member of an element, is the member's array on both rails. The CSUB-2c test had
+    pinned it refused alike.
+  - **Evidence.** `test_typeof_of_an_array_object_is_the_array_on_both_rails`:
+    - 23 units lower alike, and each rail's emit runs as Clang's build of the source. The 20 without C23's keywords
+      also compile as C11 with a wrong pointer type an error.
+    - 8 pairs give one summary for the `typeof` form and its spelled-out form: a local, a 2-D global, `typeof(a) b[2]`,
+      a `volatile` before and after `typeof`, an array's `volatile`, and `typeof_unqual` of volatile and `_Atomic`
+      storage.
+    - 20 units Clang takes are refused alike, in one set of words.
+    - A function designator and a call of an undeclared function keep the twin's typing, never `sizeof`'s words.
+
+    The C front end's family passes, the CSUB-2c test with its moved unit.
+  - **Left as before.** `typeof` of a call, of `?:` or of a function designator is the split the guide records: the
+    oracle refuses it, the twin lowers it.
+  - **Standing faults.** `cfront-typeofarr.json`, 32, each swept RED.
+    - `cfront-csub2.json`'s CS2X7 is retired: the fault it injected, `typeof(a[i].m)` typed as the member's array, is
+      now the behaviour, and TO17 holds its inverse.
+    - CS2W6 and `cfront-gaps.json`'s O14 are re-anchored and swept RED again. O14 now holds the one scan of trailing
+      specifiers, which the `typeof` branch shares.
+
 - **2026-11-20 — PER refuses every longer spelling of a whole number or a length, on both rails (PER-MIN).**
   - Both PER rails read `a0 00 00 00 00 00 05`, an ALIGNED INTEGER (0..2^40), as 5. The encoder writes `00 05`.
     Probing the rest of clause 11 found the same second spelling, accepted alike by the oracle (`per.py`) and the twin

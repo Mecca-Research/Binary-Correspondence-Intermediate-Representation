@@ -21,7 +21,17 @@ import time
 from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
-from bcir.frontends.cfront.lower import ROW_ADDR, ROW_PTR_ELEM, ROW_PTR_PLACE, ROW_VALUE
+from bcir.frontends.cfront.lower import (
+    ROW_ADDR,
+    ROW_PTR_ELEM,
+    ROW_PTR_PLACE,
+    ROW_VALUE,
+    TYPEOF_ARR_PTR,
+    TYPEOF_DIMS,
+    TYPEOF_SCOPE,
+    TYPEOF_UNSIZED,
+    VOLATILE_PTR,
+)
 from bcir.model import Domain
 from bcir.toolchain import BuildFailed, host_link_args
 from bcir.verify import cfront_structural_digest
@@ -13443,17 +13453,16 @@ _CSUB2A_LOWERED = (
     # a member array a `.` hop reaches, of a local's element (CF-NESTMEM had pinned it refused)
     "struct in { uint8_t arr[4]; }; struct seg { struct in m; };\n"
     "uint32_t f(uint32_t s) { struct seg g[2] = {0}; uint8_t *p = g[1].m.arr; return p[0] + s; }",
+    # its type by `typeof`: the member's array (CF-TYPEOFARR; both rails had refused it as a row)
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; __typeof__(chs[k % 3u].name) t = {1};"
+    " return (uint32_t)sizeof t + (uint32_t)t[0]; }",
 )
-# ... and the forms refused, for one reason each: the member array's address, its type by `typeof`, a member array of
-# structs, pointers or two dimensions as a value, a store to it, and one of an element of a member array
+# ... and the forms refused, for one reason each: the member array's address, a member array of structs, pointers or
+# two dimensions as a value, a store to it, and one of an element of a member array
 _CSUB2A_REFUSED = (
     (
         "uint32_t f(uint32_t k) { static struct ch chs[3]; return (uint32_t)(uintptr_t)&chs[k % 3u].name; }",
         "array-of-structs non-scalar element field",
-    ),
-    (
-        "uint32_t f(uint32_t k) { static struct ch chs[3]; __typeof__(chs[k % 3u].name) t; (void)t; return 0; }",
-        ROW_VALUE,
     ),
     (
         "struct cs { uint32_t n; struct ch sub[2]; };\n"
@@ -13486,8 +13495,8 @@ def test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_o
     `strcmp(channels[i].name, channels[best].name)`, `bcir_verify.c`'s `fixed_string(f->qcasts[k].type, ...)` -- is the
     pointer to its first element on both rails, to one digest: `&a[i].m[0]`, lowered as that form lowers (the oracle's
     `_scalar_row`, the twin's `aos_member_array_x` with `pad` 2). Both had refused it as `array-of-structs non-scalar
-    element field`. Its address, its type by `typeof`, a member array of structs, pointers or two dimensions, and one of
-    an element of a member array stay refused alike. `cfront_csub2_elemarrays.c` runs as the original on each rail's
+    element field`. Its type by `typeof` is the member's array on both rails (CF-TYPEOFARR). Its address, a member array
+    of structs, pointers or two dimensions, and one of an element of a member array stay refused alike. `cfront_csub2_elemarrays.c` runs as the original on each rail's
     emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
     exe = _build_frontend(_session_build_dir()) if _CC else None
     with tempfile.TemporaryDirectory() as d:
@@ -14629,6 +14638,238 @@ def test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more()
     # a chain of 2 000 macros, past the old table: its hide sets grow to 2 000 elements (2 001 000 charged in all)
     chain = "".join(f"#define C{k} C{k + 1}\n" for k in range(1, 2000)) + "#define C2000 7u\n"
     _lowers_alike(exe, chain + "unsigned f(unsigned x) { return x + C1; }\n")
+
+
+# CF-TYPEOFARR: `typeof` of an array object is the array it is, on both rails, each as Clang builds it. The twin had
+# declared one element of it (`sizeof b` read 2 where C reads 6, `b[2]` refused, an uninitialized pointer stored through
+# for a member array); now it types the operand with `sizeof`'s static walk and hands the dimensions on as an array
+# typedef's (`typeof_array`), and the oracle lays a global's or a member's nested arrays out as a declared one
+# (`_typeof_array`). Each unit lowers alike, and each rail's emit runs as Clang's build of the source.
+_TYPEOF_H = "#include <stdint.h>\n"
+_TYPEOF_LOWERED = tuple(
+    _TYPEOF_H + body
+    for body in (
+        # a local, its size and its elements
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b; b[0] = 7; b[2] = 9;"
+        " return (uint32_t)sizeof b + b[0] + b[2] + a[1]; }\n",
+        # C23's keyword, with an initializer
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; typeof(a) b = {4, 5, 6}; return (uint32_t)sizeof b + b[1]; }\n",
+        # a global of two dimensions, a local of two
+        "static uint8_t g[2][4];\n"
+        "uint32_t f(void){ __typeof__(g) h; h[1][3] = 5; return (uint32_t)sizeof h + h[1][3] + g[0][0]; }\n",
+        "uint32_t f(uint32_t k){ int32_t m[2][3] = {{1,2,3},{4,5,6}}; __typeof__(m) n = {{7}}; n[1][2] = (int32_t)k;"
+        " return (uint32_t)(sizeof n + sizeof n[0]) + (uint32_t)n[1][2] + (uint32_t)n[0][0] + (uint32_t)m[1][0]; }\n",
+        # a member array through a pointer (the twin's was an uninitialized pointer), of one and two dimensions
+        "struct s { uint16_t v[4]; };\n"
+        "uint32_t f(struct s *p){ __typeof__(p->v) w = {1, 2, 3, 4}; w[3] = 2; return (uint32_t)sizeof w + w[3] + w[0]; }\n",
+        "struct s { uint16_t v[2][3]; };\n"
+        "uint32_t f(struct s *p){ __typeof__(p->v) w; w[1][2] = 5; return (uint32_t)sizeof w + w[1][2] + p->v[0][0]; }\n",
+        # a member array of an element, and through a pointer parameter's element
+        "struct ch { char name[8]; uint16_t w; };\n"
+        "uint32_t f(struct ch *p, uint32_t k){ __typeof__(p[k & 1u].name) t = {2}; __typeof__(p->name) u = {3};"
+        " return (uint32_t)sizeof t + (uint32_t)t[0] + (uint32_t)sizeof u + (uint32_t)u[0]; }\n",
+        # as a type name, and its own dimensions after the declarator's
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; return (uint32_t)sizeof(__typeof__(a)) + a[0]; }\n",
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; return (uint32_t)sizeof(__typeof__(a)[2]) + a[0]; }\n",
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b[2] = {{4}}; b[1][2] = 4;"
+        " return (uint32_t)sizeof b + b[1][2] + b[0][0]; }\n",
+        # a const global, a string literal (the twin's emit had returned another value), a compound literal
+        "static const uint16_t tab[5] = {1,2,3,4,5};\n"
+        "uint32_t f(void){ __typeof__(tab) c = {9}; return (uint32_t)sizeof c + c[0] + tab[4]; }\n",
+        'uint32_t f(void){ __typeof__("ab") s = "xy"; return (uint32_t)sizeof s + (uint32_t)s[1]; }\n',
+        "uint32_t f(void){ __typeof__((uint16_t[3]){1, 2, 3}) c = {7}; return (uint32_t)sizeof c + c[0]; }\n",
+        # arrays of structs, of pointers, of volatile storage
+        "struct p { uint16_t x, y; };\n"
+        "uint32_t f(void){ struct p ps[2] = {{1,2},{3,4}}; __typeof__(ps) qs; qs[1].y = 8;"
+        " return (uint32_t)sizeof qs + qs[1].y + ps[0].x; }\n",
+        "uint32_t f(uint32_t k){ uint16_t v = 1, w = 2; uint16_t *ap[2] = {&v, &w}; __typeof__(ap) bp = {&w, &v};"
+        " return (uint32_t)sizeof bp + *bp[k & 1u] + *ap[0]; }\n",
+        "uint32_t f(void){ volatile uint32_t va[2] = {1, 2}; __typeof__(va) vb = {3, 4}; return (uint32_t)sizeof vb + vb[1]; }\n",
+        # a typeof'd array's own typeof, a typedef'd array's, and a typeof of a typeof (the oracle's had dropped it)
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b = {4}; __typeof__(b) c = {5};"
+        " return (uint32_t)sizeof c + c[0] + b[0]; }\n",
+        "typedef uint16_t A3[3];\n"
+        "uint32_t f(void){ A3 a = {1,2,3}; __typeof__(a) b = {4}; return (uint32_t)sizeof b + b[0] + a[2]; }\n",
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(__typeof__(a)) b = {4}; return (uint32_t)sizeof b + b[0]; }\n",
+        # qualifiers: before `typeof` and after it, on an array's elements; `typeof_unqual` of volatile storage
+        "uint32_t f(void){ uint32_t a[2] = {1, 2}; volatile __typeof__(a) b = {3, 4}; return b[1] + a[0]; }\n",
+        "uint32_t f(void){ uint32_t a[2] = {1, 2}; __typeof__(a) volatile b = {3, 4}; return b[1] + a[0]; }\n",
+        "uint32_t f(void){ volatile uint32_t va[2] = {1, 2}; typeof_unqual(va) wb = {3, 4}; wb[0]++; return wb[0] + va[1]; }\n",
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; typeof_unqual(a) b; b[0] = 1; return (uint32_t)sizeof b + b[0]; }\n",
+    )
+)
+# ... each beside its form spelled out, to one summary on both rails: a typeof'd array is the array it names, its
+# qualifiers as written
+_TYPEOF_SPELLED = tuple(
+    (_TYPEOF_H + a, _TYPEOF_H + b)
+    for a, b in (
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b; b[2] = 9; return (uint32_t)sizeof b + b[2]; }\n",
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; uint16_t b[3]; b[2] = 9; return (uint32_t)sizeof b + b[2]; }\n",
+        ),
+        (
+            "static uint8_t g[2][4];\n"
+            "uint32_t f(void){ __typeof__(g) h; h[1][3] = 5; return (uint32_t)sizeof h + h[1][3]; }\n",
+            "static uint8_t g[2][4];\n"
+            "uint32_t f(void){ uint8_t h[2][4]; h[1][3] = 5; return (uint32_t)sizeof h + h[1][3]; }\n",
+        ),
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b[2]; b[1][2] = 4; return (uint32_t)sizeof b + b[1][2]; }\n",
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; uint16_t b[2][3]; b[1][2] = 4; return (uint32_t)sizeof b + b[1][2]; }\n",
+        ),
+        (
+            "uint32_t f(void){ uint32_t x = 1; volatile __typeof__(x) y = x; y = 3; return y; }\n",
+            "uint32_t f(void){ uint32_t x = 1; volatile uint32_t y = x; y = 3; return y; }\n",
+        ),
+        (
+            "uint32_t f(void){ uint32_t x = 1; __typeof__(x) volatile y = x; y = 3; return y; }\n",
+            "uint32_t f(void){ uint32_t x = 1; volatile uint32_t y = x; y = 3; return y; }\n",
+        ),
+        (
+            "uint32_t f(void){ uint32_t a[2] = {1, 2}; volatile __typeof__(a) b = {3, 4}; return b[1]; }\n",
+            "uint32_t f(void){ uint32_t a[2] = {1, 2}; volatile uint32_t b[2] = {3, 4}; return b[1]; }\n",
+        ),
+        (
+            "uint32_t f(void){ volatile uint32_t v = 1; typeof_unqual(v) w = v; w++; return w; }\n",
+            "uint32_t f(void){ volatile uint32_t v = 1; uint32_t w = v; w++; return w; }\n",
+        ),
+        (
+            "uint32_t f(void){ _Atomic uint32_t v = 1; typeof_unqual(v) w = 2; w++; return w + v; }\n",
+            "uint32_t f(void){ _Atomic uint32_t v = 1; uint32_t w = 2; w++; return w + v; }\n",
+        ),
+    )
+)
+# ... and the forms refused alike, for one reason each, every one of which Clang takes
+_TYPEOF_REFUSED = tuple(
+    (_TYPEOF_H + body, why)
+    for body, why in (
+        # a pointer to the array, as a declarator, a cast and a type name's
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) *q = &a; return (uint32_t)sizeof *q; }\n",
+            TYPEOF_ARR_PTR,
+        ),
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; return (uint32_t)((__typeof__(a) *)0 == 0) + a[0]; }\n",
+            TYPEOF_ARR_PTR,
+        ),
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(__typeof__(a) *) q = &a; return (uint32_t)sizeof *q; }\n",
+            TYPEOF_ARR_PTR,
+        ),
+        # an array of no constant size: a VLA, an unsized `extern`
+        (
+            "uint32_t f(uint32_t n){ uint16_t a[n]; a[0] = 3; __typeof__(a) b; b[0] = 4; return b[0] + a[0]; }\n",
+            TYPEOF_UNSIZED,
+        ),
+        (
+            "extern uint16_t ext[];\nuint32_t f(void){ __typeof__(ext) *p = 0; return p == 0; }\n",
+            TYPEOF_UNSIZED,
+        ),
+        # more dimensions than a declarator holds
+        (
+            "static uint8_t g4[2][2][2][2];\nuint32_t f(void){ __typeof__(g4) h; (void)h; return 0; }\n",
+            TYPEOF_DIMS,
+        ),
+        (
+            "uint32_t f(void){ uint8_t m[2][2][2]; m[0][0][0] = 1; __typeof__(m) h[2]; (void)h; return m[0][0][0]; }\n",
+            "a multi-dimensional local array of more than 3 dims is not yet supported",
+        ),
+        # a row, of a local's array and of a member's, as before
+        (
+            "uint32_t f(uint32_t k){ uint16_t m[2][3] = {{1,2,3},{4,5,6}}; __typeof__(m[1]) r; r[0] = 1; return k; }\n",
+            ROW_VALUE,
+        ),
+        (
+            "struct s { uint16_t v[2][3]; };\n"
+            "uint32_t f(struct s *p){ __typeof__(p->v[1]) w; w[0] = 1; return (uint32_t)sizeof w; }\n",
+            ROW_VALUE,
+        ),
+        # an expression where no function's scope types it -- before a function and after one (the twin had
+        # crashed, and lowered into the previous function's graph), a member's, a typedef's, a return type's
+        ("uint16_t s;\n__typeof__(s) t;\nuint32_t f(void){ t = 2; return t; }\n", TYPEOF_SCOPE),
+        (
+            "uint32_t f0(void){ return 1; }\nuint16_t s;\n__typeof__(s + 1) t;\n"
+            "uint32_t f(void){ t = 2; return (uint32_t)t; }\n",
+            TYPEOF_SCOPE,
+        ),
+        (
+            "uint16_t g[4];\n__typeof__(g) h;\nuint32_t f(void){ h[3] = 2; return h[3]; }\n",
+            TYPEOF_SCOPE,
+        ),
+        (
+            "uint16_t s;\nstruct q { __typeof__(s + 1) m; };\nuint32_t f(void){ struct q v = {2}; return (uint32_t)v.m; }\n",
+            TYPEOF_SCOPE,
+        ),
+        (
+            "uint32_t f(void){ uint16_t x = 1; struct { __typeof__(x) m; } v = {2}; return v.m + x; }\n",
+            TYPEOF_SCOPE,
+        ),
+        (
+            "uint16_t s;\ntypedef __typeof__(s) T;\nuint32_t f(void){ T x = 1; return x; }\n",
+            TYPEOF_SCOPE,
+        ),
+        ("uint16_t s;\n__typeof__(s) g(void);\nuint32_t f(void){ return 1; }\n", TYPEOF_SCOPE),
+        # a volatile pointer object, as its spelled form `T *volatile` is refused: the qualifier before `typeof`
+        # and after it, of an expression's pointer and a type name's
+        ("uint32_t f(uint32_t *p){ volatile __typeof__(p) q = p; return *q; }\n", VOLATILE_PTR),
+        ("uint32_t f(uint32_t *p){ __typeof__(p) volatile q = p; return *q; }\n", VOLATILE_PTR),
+        (
+            "uint32_t f(uint32_t *p){ volatile __typeof__(uint32_t *) q = p; return *q; }\n",
+            VOLATILE_PTR,
+        ),
+        (
+            "uint32_t f(uint32_t *p){ __typeof__(uint32_t *) volatile q = p; return *q; }\n",
+            VOLATILE_PTR,
+        ),
+    )
+)
+
+
+def test_typeof_of_an_array_object_is_the_array_on_both_rails():
+    """CF-TYPEOFARR. `typeof` of an array object is the array it is (C23 6.7.3.6p4), on both rails:
+    - the twin had declared one element of it -- `sizeof b` 2 where C reads 6, `b[2]` refused, and a member array an
+      uninitialized pointer stored through;
+    - the oracle laid a global's and a member's nested arrays out apart from a declared array of the same type.
+
+    Each unit of `_TYPEOF_LOWERED` lowers alike, each rail's emit runs as Clang's build of the source and compiles as
+    C11 with a wrong pointer type an error; each of `_TYPEOF_SPELLED` has the summary of its form spelled out. Each of
+    `_TYPEOF_REFUSED`, which Clang takes, is refused alike in one set of words: a pointer to the array; an array of no
+    constant size; more dimensions than a declarator holds; a row; an expression where no function's scope types it,
+    which the twin had crashed on (it dereferenced no function) or lowered into the previous function's graph; and a
+    volatile pointer object, which the twin had dropped and the oracle read as a pointer to volatile."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_TYPEOF_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"t{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            if " typeof(" not in src and "typeof_unqual" not in src:  # C23's keywords are no C11's
+                _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for typeof_src, spelled in _TYPEOF_SPELLED:
+        assert _lowers_alike(exe, typeof_src) == _lowers_alike(exe, spelled), (typeof_src, spelled)
+    for src, why in _TYPEOF_REFUSED:
+        assert _clang_c23_accepts(src) in (True, None), src
+        _refused_alike(exe, src, why, phase="PARSE")
+    # an operand `sizeof`'s walk refuses -- a function designator, a call of an undeclared function -- keeps the twin's
+    # own typing, as before: never refused in `sizeof`'s words. (Both are a split the guide records: the oracle refuses
+    # `typeof` of a call or a function designator as not yet supported.)
+    if exe is not None:
+        for body in (
+            "static uint32_t g(uint32_t x){ return x + 1u; }\n"
+            "uint32_t f(uint32_t k){ __typeof__(g) *fp = g; return fp(k); }\n",
+            "uint32_t f(uint32_t k){ __typeof__(nofn(k)) v = 3; return v + k; }\n",
+        ):
+            _rc, line = _twin_line(exe, _TYPEOF_H + body)
+            assert line.startswith("funcs=") and "sizeof" not in line, (body, line)
 
 
 # CF-GARRAY: file-scope arrays and character tables pass through cfront as local ones do. Each function writes the

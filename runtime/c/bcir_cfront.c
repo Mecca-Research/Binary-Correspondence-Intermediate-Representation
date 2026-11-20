@@ -328,7 +328,11 @@ typedef struct {
                       * ("input too large"), as the oracle's lexer does at the same count, rather than silently
                       * truncating the token stream and mis-compiling a partial unit (Bug B correctness gap). */
   int td_nd, td_dims[3];   /* the array dims of the typedef the last p_type_base resolved (0: none), for the
-                            * declarator that consumes the type to append after its own */
+                            * declarator that consumes the type to append after its own -- or of the array object a
+                            * `typeof` names (`typeof_array`), which hands them on the same way */
+  int fscope;              /* a file-scope declaration is being read: a global, a typedef, a function's return type
+                            * (cleared where its parameters open), whose `typeof` of an expression no scope types */
+  int sbody;               /* the struct or union bodies being read (`p_struct_body`), whose members' types likewise */
   irange *iw_rng; int iw_nrng, iw_caprng;   /* the initializer walk's stored ranges and union members: one */
   iunion *iw_un; int iw_nun, iw_capun;      /* walk's records sit above the enclosing walk's (a compound
                                              * literal inside an initializer), and end with it */
@@ -1014,6 +1018,7 @@ static int p_cast_type(CC *c, bcir_ctype *ty, int *si);       /* fwd: a type nam
 static int fp_name_dims(CC *c, bcir_ctype *ty, long long *dims, int *n, int cap);   /* fwd: its dimensions (CF-RTFP) */
 static venv *lookup(CC *c, const tok *t);                     /* fwd: typeof(variable) resolves its type */
 static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx);   /* fwd: typeof(expression) -- speculative lower */
+static int typeof_array(CC *c, bcir_ctype *ty, int *sidx);    /* fwd: typeof of an array object -- the array */
 static int res_sig(CC *c, uint32_t rid);   /* fwd: the function type a function-pointer value points at */
 /* Does a cast's type-name start at the cursor -- `( type-name )` rather than `( expression )`? The oracle's
  * `_is_cast`: the answer for a cast and a compound literal. Each of the five sites that asks kept its own
@@ -1077,6 +1082,18 @@ static int td_ptr_qual(CC *c, bcir_ctype *ty, int cst, int vol){
 #define CC_ROW_PTR_ELEM "a pointer to an array is supported only as a pointer to one row of at most 65535 scalars"
 #define CC_ROW_PTR_PLACE "a pointer to an array is supported only as a parameter or a member"
 #define CC_ROW_VALUE "partial indexing of a multi-dimensional array (a row used as a value) is not yet supported"
+/* `typeof` of an expression where no function's scope types it: a member's type, a global's, a typedef's, a function's
+ * return type. The oracle resolves those without the function's names (`_resolve_member_type`, its `_typedef`), and the
+ * twin's speculative lowering had none to lower into: it dereferenced no function at the start of a unit, and lowered
+ * into the previous function's graph after one (CF-TYPEOFARR). */
+#define CC_TYPEOF_SCOPE "typeof of an expression in a member or a file-scope declaration is not supported"
+/* `typeof` of an array whose size is no constant: a VLA, or `extern T a[];` -- its type has no size an object could
+ * take, and neither rail can spell the VLA it would declare (the oracle's `TYPEOF_UNSIZED`) */
+#define CC_TYPEOF_UNSIZED "typeof of an array of unknown or variable length is not supported"
+/* a pointer to the array a `typeof` names (`typeof(a) *p`, `(typeof(a) *)q`): a pointer to an array, which no
+ * declaration the value model writes can spell -- as a typedef'd array's (`a pointer to a typedef'd array`) */
+#define CC_TYPEOF_ARR_PTR "a pointer to a typeof'd array is not supported"
+#define CC_TYPEOF_DIMS "typeof of an array of more than 3 dimensions is not supported"   /* `TYPEOF_DIMS` */
 #define CC_ROW_ADDR "the address of a row of a multi-dimensional array is not supported"
 /* `( * name ) [` at token `k`: a pointer-to-array declarator, which a function pointer's `( * name ) (` shares its
  * first four tokens with (the oracle's `_row_ptr_declarator_at`). */
@@ -1129,17 +1146,36 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"const")){ty->is_const=1;c->i++;continue;}   /* spelled by a prototype's pointer parameter */
     if(is(c,"inline")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
+      int unq=is(c,"typeof_unqual"), arr=0;
+      int ov=ty->is_volatile, oc=ty->is_const, oa=ty->is_atomic;     /* `volatile typeof(x)`: qualifiers written
+                                                       * before it, which typing the operand had overwritten */
       c->i++; if(!eat(c,"(")) return 1;
       int is_type = starts_decl_type(c);
       if(is_type){ bcir_ctype inner; int isi;                            /* typeof( type-name ), incl. typeof(int*) */
         if(p_type(c,&inner,&isi)) return 1; *ty=inner; *sidx=isi; }
       else {                                                            /* typeof( expression ) operand */
+        if(c->fscope || c->sbody){ fail(c,CC_TYPEOF_SCOPE); return 1; }   /* no function's scope types it */
+        arr=typeof_array(c,ty,sidx);                                    /* an array object: the array it is */
+        if(arr<0) return 1;
+        if(!arr){
         venv *v = (isk(c,T_ID) && tok_is(tat(c,c->i+1),")")) ? lookup(c,pk(c)) : NULL;
         if(v){ c->i++; *ty=v->type; *sidx=v->sidx; }                    /* a bare in-scope variable -- exact type */
         else { if(p_typeof_expr(c,ty,sidx)) return 1;                    /* any other operand -- speculative lower */
-          if(c->typeof_row){ fail(c,CC_ROW_VALUE); return 1; } } }       /* of a row: the array it is, which the
+          if(c->typeof_row){ fail(c,CC_ROW_VALUE); return 1; } } } }     /* of a row: the array it is, which the
                                                        * value model does not declare (CSUB-2d) */
       if(!eat(c,")")) return 1;
+      if(c->td_nd && ptr_follows(c)){                                   /* `typeof(a) *p`: a pointer to an array */
+        fail(c, arr ? CC_TYPEOF_ARR_PTR : "a pointer to a typedef'd array is not supported"); return 1; }
+      if(unq && ty->kind!=2){ ty->is_const=0; ty->is_volatile=0; ty->is_atomic=0; }   /* C23 6.7.3.6p5: the
+                                                       * unqualified, non-atomic type -- an array's are its element's
+                                                       * (6.7.3p10); a pointer's own qualifiers the model does not hold */
+      td_ptr=ty->kind==2 || ty->kind==3;              /* a pointer's qualifiers, before `typeof` or after it, are
+                                                       * its own, as a pointer typedef's are (CF-QUALS): `volatile
+                                                       * typeof(p)` is `T *volatile`, refused as spelled -- the twin had
+                                                       * dropped it, and the oracle read a pointer to volatile */
+      if(td_ptr){ if(td_ptr_qual(c,ty,oc,ov)) return 1; }
+      else { if(ov) ty->is_volatile=1; if(oc) ty->is_const=1; }   /* the oracle's `tref.quals` */
+      if(oa) ty->is_atomic=1;
       seen=1; break; }
     if(is(c,"signed")){ty->signd=1;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}   /* `signed` alone ==
                                                           * `signed int`; a following base (char/long/...) overrides */
@@ -1464,7 +1500,13 @@ static long long ce_dim(CC *c,int probe);   /* fwd: an array dimension, an integ
  * gets a synthesized internal tag so a typedef can alias it. */
 static int static_assert_at(CC *c);   /* fwd: a static assertion at the cursor (CSUB-1) */
 static void p_static_assert(CC *c);
+static int p_struct_body_in(CC *c);
+/* A struct or union body, its depth counted for `typeof` (`CC_TYPEOF_SCOPE`): a member's type is resolved by the
+ * oracle without the function's names, so a member's `typeof` of an expression is refused on both rails. */
 static int p_struct_body(CC *c) {
+  c->sbody++; int r=p_struct_body_in(c); c->sbody--; return r;
+}
+static int p_struct_body_in(CC *c) {
   int is_union = is(c,"union");
   c->i++; int packed=0,aligned=0; attrs(c,&packed,&aligned);
   int my=-1;
@@ -5320,6 +5362,8 @@ typedef struct {
   int addr;           /* `&` levels over the whole: a pointer to it */
   int bf;             /* a bit-field member -- never an operand of `sizeof` (C11 6.5.3.4p1) */
   uint32_t vla;       /* the rid of a stack VLA the operand names bare: its size is a runtime value */
+  int row;            /* the array is a row: one a subscript or `*` made of an array or a pointer to one, which
+                       * `typeof` refuses as the oracle does (`ROW_VALUE`; a member array is none) */
 } szt;
 
 static uint32_t p_unary(CC *c);   /* fwd: an operand the walk does not type is lowered speculatively */
@@ -5382,12 +5426,13 @@ static int sz_member(CC *c, szt *t){
 static int szt_elem(szt *t){
   if(t->addr){ t->addr--; return 1; }
   if(t->bf) return 0;
-  if(t->nd){ for(int d=1; d<t->nd; d++) t->dims[d-1]=t->dims[d]; t->nd--; return 1; }
+  if(t->nd){ for(int d=1; d<t->nd; d++) t->dims[d-1]=t->dims[d]; t->nd--; t->row=t->nd>0; return 1; }
   bcir_ctype *e=&t->ty;
   if(e->kind!=2) return 0;
   int depth=e->ptr_depth?e->ptr_depth:1;
   if(depth>1){ e->ptr_depth=(uint8_t)(depth-1); e->nadims=0; memset(e->adims,0,sizeof e->adims); return 1; }
   for(int d=1; d<e->nadims && d<3; d++) t->dims[t->nd++]=e->adims[d];
+  t->row=t->nd>0;                                 /* `*rows` of a `T (*rows)[N]`: the row it points at */
   e->nadims=0; memset(e->adims,0,sizeof e->adims); e->ptr_depth=0;
   if(e->ptr_to_struct){ e->ptr_to_struct=0; e->kind=1; } else e->kind=0;
   return 1;
@@ -5579,6 +5624,31 @@ static int sz_unary(CC *c, szt *t){
   else if(is(c,"&")){ c->i++; r=sz_unary(c,t); if(r==1 && t->bf) r=0; if(r==1){ t->addr++; t->vla=0; } }
   else r=sz_postfix(c,t);
   LEAVE_REC(c); return r;
+}
+/* `typeof` of an array object (C23 6.7.3.6p4: the operand's type, never converted): `typeof(a) b` of `uint16_t a[3]`
+ * declares the array `a` is, as the oracle's `_resolve_type` does -- the twin had declared one element of it, so
+ * `sizeof b` read 2 where C reads 6, and `b[2]` was refused. The operand is typed by the static designator walk
+ * `sizeof` types its operand with (`sz_unary`), never lowered: a local, a parameter's array, a global, a member
+ * array of a value or through a pointer, a string literal, a compound literal. Its element's type goes into `ty`, its
+ * dimensions on as an array typedef's do (`td_nd`), so each declarator appends them after its own -- `typeof(a) t[2]`
+ * is two of them -- and `sizeof(typeof(a))` reads them as a type name's. 1 for an array (the cursor at its `)`), -1
+ * refused; 0 for any other operand, or one the walk does not type, which the caller types as before, the cursor and
+ * the failure state as they were (the walk's refusals are `sizeof`'s, not `typeof`'s). A row is refused as the
+ * speculative lowering refuses it (`typeof_row`), and an array of no constant size as the oracle does. */
+static int typeof_array(CC *c, bcir_ctype *ty, int *sidx){
+  int at=c->i, f0=c->failed; szt t; memset(&t,0,sizeof t); t.si=-1;
+  int r=sz_unary(c,&t);
+  if(r!=1 || !t.nd || t.addr || t.bf || !is(c,")")){                 /* not an array: the caller's path */
+    c->i=at; if(!f0 && c->failed){ c->failed=0; c->err[0]=0; }
+    return 0;
+  }
+  if(t.row){ fail(c,CC_ROW_VALUE); return -1; }
+  for(int d=0; d<t.nd; d++)                                           /* a VLA's dimensions are 0 here too */
+    if(t.dims[d]<=0 || t.dims[d]>INT_MAX){ fail(c,CC_TYPEOF_UNSIZED); return -1; }
+  if(t.nd>3){ fail(c,CC_TYPEOF_DIMS); return -1; }                   /* the declarator's dims hold three */
+  *ty=t.ty; *sidx=t.si;
+  c->td_nd=t.nd; for(int d=0; d<3; d++) c->td_dims[d]= d<t.nd ? (int)t.dims[d] : 0;
+  return 1;
 }
 /* The size of a value the speculative lowering produced: a pointer or a decayed array is the ABI's pointer, a
  * struct or union its laid-out size, a scalar its width. */
@@ -9195,7 +9265,8 @@ static void p_stmt_inner(CC *c) {
         if(is(c,",")){ c->i++; continue; }
         break;
       }
-      if(la_nd>3){ fail(c,"local array of more than 3 dimensions"); return; }   /* adims caps at 3 */
+      if(la_nd>3){ fail(c,"a multi-dimensional local array of more than 3 dims is not yet supported"); return; }   /* adims
+                                                     * caps at 3; the oracle's words (a `typeof(m)` too, CF-TYPEOFARR) */
       if(la_nd>1){ for(int z=0;z<3;z++) ty.adims[z]=la_dims[z]; ty.nadims=la_nd; }   /* multi-dim flatten */
       int sized_inf=0;                        /* a brace initializer sized the inferred `[]` below */
       int inferred = (la_nd>=1 && la_dims[0]==0);   /* an inferred-size `[]` (or `[][B]`) array: the count
@@ -9716,6 +9787,7 @@ static int p_func(CC *c, bcir_func *fn) {
   fn->static_fn=(uint8_t)(c->saw_static!=0);       /* source `static` on the definition (linkable emit) */
   tok nm=adv(c); fits(c,fn->name,sizeof fn->name,"%.*s",nm.n,nm.s);
   if(!eat(c,"("))return 1;
+  c->fscope=0;                                     /* the parameters and the body are the function's own scope */
   int unnamed=0;                                   /* a parameter left unnamed: a prototype's (`T g(T *, T);`) */
   if(!is(c,")")) for(;;){
     if(is(c,"void")&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==')'){c->i++;break;}
@@ -11904,6 +11976,7 @@ static int compile_target_mode(bcir_cfront_context *context, const char *src, co
     return cfront_failure(context,out,"input too large"); }
   str_unparen(c);                          /* `= ("abc")` is `= "abc"` (CF-PARENSTR) */
   while(!isk(c,T_END)&&!c->failed){       /* no fixed function ceiling -- the unit list grows */
+    c->fscope=1;                            /* a file-scope item: its `typeof` of an expression no scope types */
     c->nenv=0;                              /* file scope binds no block-scope name: a function's parameters, left in
                                              * `env` after its body, must not hide an enumerator a later file-scope
                                              * declaration reads (`visible_enum`, CF-ENUMSCOPE) */

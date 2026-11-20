@@ -936,6 +936,19 @@ ROW_VALUE = (
 # ... and its address, `&m[k]`, a pointer to an array, which the value model does not spell (CSUB-2d; the twin's
 # `CC_ROW_ADDR`). A row of scalars used as a value is `&m[k][0]` on both rails (`_scalar_row`)
 ROW_ADDR = "the address of a row of a multi-dimensional array is not supported"
+# `typeof` of an expression where no function's scope types it -- a member's type, a global's, a typedef's, a
+# function's return type -- which `_resolve_member_type` and the parser's `_typedef` resolve without the function's
+# names: they had raised "unknown scalar type ''" and "unknown type ''", and the twin had crashed (CF-TYPEOFARR;
+# the twin's CC_TYPEOF_SCOPE)
+TYPEOF_SCOPE = "typeof of an expression in a member or a file-scope declaration is not supported"
+# `typeof` of an array of no constant size -- a VLA, an `extern T a[];` -- whose type no object takes and no
+# declaration the emit writes can spell (the twin's CC_TYPEOF_UNSIZED)
+TYPEOF_UNSIZED = "typeof of an array of unknown or variable length is not supported"
+# a pointer to the array a `typeof` names (`typeof(a) *p`): no declaration the value model writes spells one, as a
+# typedef'd array's (the twin's CC_TYPEOF_ARR_PTR)
+TYPEOF_ARR_PTR = "a pointer to a typeof'd array is not supported"
+# ... and of one of more than three dimensions, which the twin's declarators hold no more than (CC_TYPEOF_DIMS)
+TYPEOF_DIMS = "typeof of an array of more than 3 dimensions is not supported"
 SUBSCRIPT_NOT = "subscripted value is not an array or a pointer to an object"
 DOT_NOT = "member access on an object that is not a struct or union"
 ARROW_NOT = "member access `->` through a value that is not a pointer to a struct or union"
@@ -1881,10 +1894,23 @@ class _FuncLowerer:
         elif tref.typeof_expr is not None:  # `typeof(expr)` -> the operand's static type
             # of a row, the array it is, which the value model does not declare (CSUB-2d; `_type_of`
             # gives a row its element, which `_Generic` decays to); the twin's `typeof_row`
+            # (an array member of an element, `a[i].m`, which `_scalar_row` reads as a row where it is a value, is
+            # the member's own array here, as the twin's walk types it: CF-TYPEOFARR)
             te = tref.typeof_expr
-            if self._row_of(te) or (isinstance(te, cast.Member) and self._scalar_row(te)):
+            if self._row_of(te):
                 raise CLowerError(ROW_VALUE)
             base = self._type_of(tref.typeof_expr)
+        if tref.typeof_var or tref.typeof_expr is not None:
+            if base.kind == "array":  # the array the operand is, as a declared one is laid out
+                return self._typeof_array(base, tref)
+            # C23 6.7.3.6p5: `typeof_unqual` drops the qualifiers -- a pointer's own the model does not
+            # hold, and its pointee's stay
+            if tref.typeof_unqual and base.kind != "pointer":
+                base = unqualified(base)
+            # `volatile typeof(p)` is `T *volatile`, refused as it is spelled -- not the pointer to volatile
+            # it had read as (the twin's `td_ptr_qual`)
+            if "volatile" in tref.quals and base.kind == "pointer":
+                raise CLowerError(VOLATILE_PTR)
         elif tref.aggregate:  # a pointer may name a struct never defined (an opaque `struct fwd *`)
             base = _aggregate(self.aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
         elif tref.base == "va_list":  # the <stdarg.h> variadic cursor (opaque)
@@ -1905,6 +1931,38 @@ class _FuncLowerer:
         for dim in reversed(tref.array):
             t = array(t, dim)
         return t
+
+    def _typeof_array(self, ct: CType, tref: cast.TypeRef) -> CType:
+        """`typeof` of an array object (C23 6.7.3.6p4): the array it is, under the declarator's own dimensions
+        (`typeof(a) t[2]` is two of them, the outer ones), as a declared array is laid out -- one dimension
+        plain, more as the flat `array(leaf, total)` with its `shape` that `_inferred_array` declares a local
+        as. A global's or a member's nested arrays had stood for the same type with another resource shape,
+        where the twin, reading the dimensions as an array typedef's, matches the declared form
+        (CF-TYPEOFARR). An array of no constant size, and a pointer to the array, are refused, as the twin
+        refuses them; `typeof_unqual` takes the element's unqualified type (an array's qualifiers are its
+        element's, 6.7.3p10)."""
+        leaf, dims = _array_dims(ct)
+        if any(d in (0, None) for d in dims):
+            raise CLowerError(TYPEOF_UNSIZED)
+        if len(dims) > 3:
+            raise CLowerError(TYPEOF_DIMS)
+        if tref.ptr:
+            raise CLowerError(TYPEOF_ARR_PTR)
+        if tref.typeof_unqual and leaf.kind != "pointer":
+            leaf = unqualified(leaf)
+        # `volatile typeof(a) b`: its elements are device storage, as the non-array path qualifies its base
+        # (the twin keeps them)
+        if "volatile" in tref.quals:
+            leaf = with_volatile(leaf)
+        if "_Atomic" in tref.quals:
+            leaf = _atomic_type(leaf, self.abi)
+        dims = tuple(tref.array) + dims
+        total = 1
+        for d in dims:
+            total *= d
+        if len(dims) == 1:
+            return array(leaf, total)
+        return replace(array(leaf, total), shape=dims)
 
     def _resource(self, rid: int, ct: CType, name: str) -> None:
         mmio = ct.touches_mmio  # a volatile object / pointer-to-volatile
@@ -4503,6 +4561,15 @@ class _FuncLowerer:
                 "a multi-dimensional local array of more than 3 dims is not yet supported"
             )
         elem = self._resolve_type(replace(tref, array=()))
+        if elem.kind == "array" and (tref.typeof_var or tref.typeof_expr is not None):
+            # `typeof(a) t[2]`: the typeof'd array's dimensions follow the declarator's, as a typedef'd
+            # array's do (`_typeof_array`; the twin's `td_nd`)
+            elem, edims = _array_dims(elem)
+            dims = tuple(dims) + edims
+            if len(dims) > 3:
+                raise CLowerError(
+                    "a multi-dimensional local array of more than 3 dims is not yet supported"
+                )
         inferred = dims[0] in (0, None)
         dims = ((1,) if inferred else (dims[0],)) + tuple(dims[1:])
         total = 1
@@ -5593,6 +5660,11 @@ class _FuncLowerer:
                     raise CLowerError("an array of unknown size needs an initializer")
             else:
                 ct = self._resolve_type(st.type)
+                # `typeof(m) h[2]` of a 3-D `m`: past the dims a declarator holds, as the twin's
+                if len(ct.shape) > 3:
+                    raise CLowerError(
+                        "a multi-dimensional local array of more than 3 dims is not yet supported"
+                    )
             if st.static_storage:  # static storage: its constant image, in the decl (CF-STATICTAB)
                 rid = self._static_storage(ct, st.name, None)
                 if st.thread_storage:  # each thread's own object (CF-TLS)
@@ -6190,8 +6262,22 @@ def _fp_shaped(fct: CType, tref: cast.TypeRef, abi) -> CType:
     return t
 
 
+def _array_dims(ct: CType) -> "tuple[CType, tuple]":
+    """An array type's element that is no array and its dimensions, outermost first, whether it is nested
+    (`array(array(T, B), A)`, a global's or a member's) or flat with a `shape` (a declared local's)."""
+    dims: tuple = ()
+    while ct.kind == "array":
+        if len(ct.shape) > 1:
+            return ct.of, dims + tuple(ct.shape)
+        dims += (ct.count,)
+        ct = ct.of
+    return ct, dims
+
+
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
     abi = abi or HOST
+    if tref.typeof_var or tref.typeof_expr is not None:  # no function's names to type it with
+        raise CLowerError(TYPEOF_SCOPE)  # (it had read "unknown scalar type ''")
     if (
         tref.funcptr
     ):  # a function-pointer member (dispatch table), a pointer to one, an array of them
