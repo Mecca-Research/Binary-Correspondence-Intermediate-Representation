@@ -14340,6 +14340,128 @@ def test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_r
         assert _c_run(exe, path)[0] == summary
 
 
+# `__LINE__` after a backslash-newline splice (CF-SPLICELINE): each probe is the line Clang and GCC give it, on both
+# rails, the unit read with LF and with CRLF ends of line. Both rails had numbered logical lines, one less than Clang's
+# for every splice above. Each probe stands where the two compilers agree: a probe after a spliced line, a `__LINE__`
+# before a splice on its line, and a macro named before the splice (Clang and GCC part over one named after it, and over
+# a `__LINE__` after it, which both rails refuse: `cpp.LINE_ON_SPLICED`).
+_SPLICELINE_UNIT = (
+    "#define A(x) __LINE__\n"
+    "int p0 = __LINE__;\n"
+    "int a = 1 + \\\n 2;\n"
+    "int p1 = __LINE__;\n"
+    "#define M(x) \\\n  ((x) + 1)\n"
+    "int p2 = __LINE__;\n"
+    "/* a block \\\n comment */\nint p3 = __LINE__;\n"
+    'const char *s = "a\\\nb";\nint p4 = __LINE__;\n'
+    # a continuation that holds `__LINE__` inside a comment expands none: the line is not refused
+    "// a comment continued \\\nint hidden = __LINE__;\n"
+    "int p5 = __LINE__;\n"
+    "int p6 = __LINE__ + \\\n1;\n"
+    "int p7 = A(1 \\\n);\n"
+    "#line 100\n"
+    "int x = \\\n 3;\n"
+    "int p8 = __LINE__;\n"
+)
+_SPLICELINE_PROBE = re.compile(r"\bint (p\d+|hline)\s*=\s*([^;]*);")
+
+
+def test_line_after_a_spliced_line_is_clangs_on_both_rails():
+    """CF-SPLICELINE. A backslash-newline deletes a new-line (translation phase 2), and both rails had numbered the
+    logical lines that left: every `__LINE__` after a spliced line was one less than Clang's and GCC's for each splice
+    above it -- after any multi-line `#define`, an assertion's line was wrong. Each rail now puts the new-lines a
+    logical line's splices deleted back where it ends (`cpp._splice`, the twin's `splice_lines`), so each line keeps
+    its physical number, in a header too and with CRLF ends of line; a function that returns `__LINE__` runs as
+    Clang's build of it. A `__LINE__` that stands after a splice on its own line, which the compilers give the
+    physical line it stands on, is refused alike in a text line and in a `#if`, as `LINE_IN_CONTINUED_ARGS` is."""
+
+    def probes(text: str) -> dict:
+        return {
+            m.group(1): "".join(_cpp._tokens(m.group(2))) for m in _SPLICELINE_PROBE.finditer(text)
+        }
+
+    clang = shutil.which("clang")
+    for eol in ("\n", "\r\n"):
+        src = _SPLICELINE_UNIT.replace("\n", eol)
+        got = probes(_cpp.preprocess(src))
+        assert len(got) == 9, got
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "u.c")
+            with open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write(src)
+            if clang is not None:
+                run = subprocess.run(
+                    [clang, "-std=c23", "-E", "-P", path], capture_output=True, text=True
+                )
+                assert run.returncode == 0 and probes(run.stdout) == got, (
+                    repr(eol),
+                    probes(run.stdout),
+                    got,
+                )
+            if _CC:
+                run = subprocess.run(
+                    [_build_bcir_cc(d), "-E", path], capture_output=True, text=True
+                )
+                assert run.returncode == 0 and probes(run.stdout) == got, (
+                    repr(eol),
+                    run.stdout + run.stderr,
+                )
+    # ... in a header too, which is spliced as the unit is
+    header = "#define HM(x) \\\n  ((x) + 1)\nstatic const int hline = __LINE__;\n"
+    unit = '#include "h.h"\nint p9 = __LINE__;\n'
+    got = probes(_cpp.preprocess(unit, includes={"h.h": header}))
+    assert got == {"hline": "3", "p9": "2"}, got
+    with tempfile.TemporaryDirectory() as d:
+        for name, text in (("h.h", header), ("u.c", unit)):
+            with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        if clang is not None:
+            run = subprocess.run(
+                [clang, "-std=c23", "-E", "-P", os.path.join(d, "u.c")],
+                capture_output=True,
+                text=True,
+            )
+            assert run.returncode == 0 and probes(run.stdout) == got, run.stdout
+        if _CC:
+            run = subprocess.run(
+                [_build_bcir_cc(d), "-E", os.path.join(d, "u.c")], capture_output=True, text=True
+            )
+            assert run.returncode == 0 and probes(run.stdout) == got, run.stdout + run.stderr
+    # a function that returns its line lowers alike with the line Clang gives it (`_equiv`'s harness sets lines before
+    # the source, which moves the original's own `__LINE__`, so the value is held where the preprocessor gives it)
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    src = "#include <stdint.h>\n#define K(x) \\\n  ((x) * 2u)\nuint32_t f(uint32_t x) { return K(x) + __LINE__; }\n"
+    assert "+4;" in _cpp.preprocess(src).replace(" ", ""), _cpp.preprocess(src)[-80:]
+    _lowers_alike(exe, src)
+    refused = (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + \\\n__LINE__; }\n",
+        "#if 1 + \\\n__LINE__ > 0\n#endif\nint z;\n",
+        # a splice that ends the text, and a line after an invocation its arguments' new-lines continued
+        "int z = 1 + \\\n__LINE__;",
+        "#define B(x) (x)\nint q = B(1\n);\nint z = 1 + \\\n__LINE__;\n",
+    )
+    for src in refused:
+        _refused_alike(exe, src, "__LINE__ on a line a backslash continues")
+    # ... and a header's line, whose splices are its own
+    header = "int hz = 1 + \\\n__LINE__;\n"
+    unit = '#include "h.h"\nint z;\n'
+    assert (
+        _oracle_refusal(unit, includes={"h.h": header})
+        == "__LINE__ on a line a backslash continues"
+    )
+    if exe is None:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        for name, text in (("h.h", header), ("u.c", unit)):
+            with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        run = subprocess.run([exe, os.path.join(d, "u.c")], capture_output=True, text=True)
+    assert (run.returncode, run.stdout.strip()) == (
+        1,
+        "CPP-ERR __LINE__ on a line a backslash continues",
+    ), run.stdout
+
+
 # CF-GARRAY: file-scope arrays and character tables pass through cfront as local ones do. Each function writes the
 # globals, so the driver runs the original and the emit from one saved state and compares what each returns and
 # leaves behind.

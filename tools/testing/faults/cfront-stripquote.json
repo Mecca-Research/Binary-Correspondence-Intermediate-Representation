@@ -25,14 +25,14 @@
    "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
    "label": "SQ3 twin: the unit stripped before it is spliced",
    "path": "runtime/c/bcir_cpp.c",
-   "old": "    splice_lines(stripped);\n",
+   "old": "    if(splice_lines(state, stripped, &flags)){if(err&&errcap)snprintf(err,errcap,\"oom\");goto cleanup;}\n",
    "new": ""
   },
   {
    "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
    "label": "SQ4 twin: a header stripped before it is spliced",
    "path": "runtime/c/bcir_cpp.c",
-   "old": "            splice_lines((char *)hd);                       /* phases 1 and 2 for the header, then 3 (in place) */\n",
+   "old": "            if(splice_lines(state,(char *)hd,&hflags)){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,\"oom\");return 1;}\n",
    "new": ""
   },
   {
@@ -46,8 +46,8 @@
    "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
    "label": "SQ6 twin: a CRLF end of line no new-line before splicing",
    "path": "runtime/c/bcir_cpp.c",
-   "old": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n') continue; s[w++]=s[r]; }",
-   "new": "  for(; s[r]; r++){ s[w++]=s[r]; }"
+   "old": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n') continue; if(s[r]=='\\n') nl++; s[w++]=s[r]; }",
+   "new": "  for(; s[r]; r++){ if(s[r]=='\\n') nl++; s[w++]=s[r]; }"
   },
   {
    "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",

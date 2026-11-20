@@ -289,6 +289,25 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — `__LINE__` after a spliced line is Clang's on both rails (CF-SPLICELINE).**
+  - A backslash-newline deletes a new-line (translation phase 2), and both rails numbered the logical lines that
+    were left. So every `__LINE__` after a spliced line was one less than Clang's and GCC's for each splice above
+    it, and after any multi-line `#define` an assertion's line was wrong. Each rail now puts the new-lines a
+    logical line's splices deleted back where it ends (`cpp._splice`, the twin's `splice_lines`), so each line
+    keeps its physical number, in a header and with CRLF ends of line too.
+  - On a spliced line itself, Clang and GCC give a `__LINE__` that stands after the splice the physical line it
+    stands on, which neither rail tracks per token. Both rails refuse it (`__LINE__ on a line a backslash
+    continues`), as `LINE_IN_CONTINUED_ARGS` refuses a token on an invocation's continued line. The test: the
+    continuation holds the text `__LINE__`, and `__LINE__` is expanded there. A `__LINE__` before the splice, or one
+    reached through a macro named before it, is the line the logical line starts on, as both compilers give it where
+    they agree; they part over a macro named after the splice (Clang gives the logical line's start).
+  - **Evidence.** `test_line_after_a_spliced_line_is_clangs_on_both_rails`: nine probes after each kind of splice,
+    with LF and with CRLF, and a header's probes, are token-equal to `clang -std=c23 -E -P` on both rails. A function
+    returning its line lowers alike with Clang's value. The refusal holds in a text line, a `#if`, a splice that
+    ends the text, a line after a joined invocation and a header.
+  - **Standing faults.** `cfront-spliceline.json`, 12, each swept RED. PS14, PS16, PS17 (`cfront-ppsplits.json`)
+    and SQ3, SQ4, SQ6 (`cfront-stripquote.json`) are re-anchored to the new splicing code and swept RED again.
+
 - **2026-11-20 — An open quote ends at its line, and the twin splices before it strips (CF-STRIPQUOTE).**
   - Both comment strippers (`cpp._strip_comments`, the twin's `strip_comments`) ran a literal whose quote never
     closes on to the next quote anywhere after it. So the `'` of `don't` in a `#if 0` group kept a later `// it's

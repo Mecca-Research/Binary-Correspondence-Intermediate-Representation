@@ -144,6 +144,11 @@ class CPPError(Exception):
 UNTERMINATED_ARGS = "unterminated macro argument list"
 DIRECTIVE_IN_ARGS = "preprocessing directive inside macro arguments"
 LINE_IN_CONTINUED_ARGS = "__LINE__ on a continued line of a macro invocation"
+#: ... and the one each refuses `__LINE__` for on a line a backslash-newline continues, where the continuation holds it
+#: (`_splice`): Clang and GCC give a `__LINE__` after the splice the line it stands on, which neither rail tracks per
+#: token (CF-SPLICELINE; the twin's `PP_LINE_ON_SPLICED`). One before the splice, or reached through a macro named
+#: there, is the line the logical line starts on, as both compilers read it where they agree.
+LINE_ON_SPLICED = "__LINE__ on a line a backslash continues"
 
 
 class _Incomplete(Exception):
@@ -329,6 +334,7 @@ class Preprocessor:
         self._depth = 0
         self._cur_file = "<source>"  # __FILE__: the file currently being processed
         self._cur_line = 0  # __LINE__: its presumed line number
+        self._cur_spliced = False  # whether the current line's continuation holds `__LINE__` (`_splice`)
         self._presumed = 0  # presumed line of the *next* line (#line sets it)
         self._incstack: list = []  # active #include sites: (including_file, line), outer-first
         self.linemap: list = []  # per output line: (file, line, include-stack snapshot)
@@ -342,7 +348,7 @@ class Preprocessor:
             raise CPPError("the source holds a NUL byte")
         out: list[str] = []
         self._incstack, self.linemap = [], []
-        self._run(self._logical_lines(text), out, name)
+        self._run(*self._logical_lines(text), out, name)
         return "\n".join(out) + "\n"
 
     def _out(self, out: list, text: str) -> None:
@@ -385,7 +391,7 @@ class Preprocessor:
         # a NEL or a U+2028, where `str.splitlines` ends one and the twin's reader does not: `return x\x1c + 1u;`
         # lowered here with the character gone and was refused there, and a NEL in code vanished before the reader
         # that refuses a character past ASCII saw it (CF-PPSPLITS).
-        spliced = text.replace("\r\n", "\n").replace("\\\n", "")
+        spliced, flagged = _splice(text.replace("\r\n", "\n"))
         lines = _strip_comments(spliced).split("\n")
         if (
             lines and lines[-1] == ""
@@ -396,9 +402,9 @@ class Preprocessor:
         for line in lines:
             if len(line.encode("utf-8")) > _MAX_LINE:
                 raise CPPError("preprocessor line too long")
-        return lines
+        return lines, flagged
 
-    def _run(self, lines: list[str], out: list[str], name: str) -> None:
+    def _run(self, lines: list[str], flagged: frozenset, out: list[str], name: str) -> None:
         # conditional stack: each entry is [currently_active, any_branch_taken, parent_active]
         cond: list[list[bool]] = []
 
@@ -414,6 +420,7 @@ class Preprocessor:
             i = 0
             while i < len(lines):
                 raw = lines[i]
+                self._cur_spliced = i in flagged
                 i += 1
                 self._cur_line = self._presumed
                 self._presumed += 1
@@ -609,7 +616,7 @@ class Preprocessor:
         self._depth += 1
         self._incstack.append((name, self._cur_line))  # the #include site, for the diagnostic frame
         try:
-            self._run(self._logical_lines(text), out, target)
+            self._run(*self._logical_lines(text), out, target)
         finally:
             self._incstack.pop()
             self._depth -= 1
@@ -647,6 +654,8 @@ class Preprocessor:
     def _dynamic_value(self, t: str) -> str:
         """The expansion of a dynamic predefined macro at the current source position."""
         if t == "__LINE__":
+            if self._cur_spliced:
+                raise CPPError(LINE_ON_SPLICED)
             return str(self._cur_line)
         esc = self._cur_file.replace("\\", "\\\\").replace('"', '\\"')  # __FILE__: a string literal
         return f'"{esc}"'
@@ -996,6 +1005,32 @@ def _balanced(toks: list, k: int) -> tuple[list, int]:
 _DIGITS = frozenset("0123456789")
 _IDSTART = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
 _IDCHARS = _IDSTART | _DIGITS
+
+
+def _splice(text: str) -> tuple[str, frozenset]:
+    """Translation phase 2, the line count kept: each backslash-newline deleted -- each physical line but the last
+    that ends with a backslash loses it and joins the next, as `str.replace("\\\n", "")` deletes them, one pass left
+    to right -- and the new-lines it deleted put back where the logical line ends, so each line after it keeps its
+    physical number. `__LINE__` after a spliced line had been one less for every splice above it, on both rails
+    (CF-SPLICELINE; the twin's `splice_lines`). Also the (0-based) lines whose continuation holds the text
+    `__LINE__`, which a `__LINE__` expanded there is refused on (`LINE_ON_SPLICED`)."""
+    phys = text.split("\n")
+    out: list[str] = []
+    flagged: set[int] = set()
+    k = 0
+    while k < len(phys):
+        start, parts, holds = len(out), [], False
+        while k < len(phys) - 1 and phys[k].endswith("\\"):
+            parts.append(phys[k][:-1])
+            k += 1
+            holds = holds or "__LINE__" in phys[k]
+        parts.append(phys[k])
+        k += 1
+        out.append("".join(parts))
+        out.extend([""] * (len(parts) - 1))
+        if holds:
+            flagged.add(start)
+    return "\n".join(out), frozenset(flagged)
 
 
 def _strip_comments(text: str) -> str:

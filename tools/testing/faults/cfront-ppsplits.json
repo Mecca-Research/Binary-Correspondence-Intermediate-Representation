@@ -108,8 +108,8 @@
       "label": "PS14 the oracle maps no CRLF end of line to a new-line: a `\\\\\\r\\n` splice is none there, as it was",
       "path": "bcir/frontends/cfront/cpp.py",
       "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
-      "old": "        spliced = text.replace(\"\\r\\n\", \"\\n\").replace(\"\\\\\\n\", \"\")\n",
-      "new": "        spliced = text.replace(\"\\\\\\n\", \"\")\n"
+      "old": "        spliced, flagged = _splice(text.replace(\"\\r\\n\", \"\\n\"))\n",
+      "new": "        spliced, flagged = _splice(text)\n"
     },
     {
       "label": "PS15 the oracle reads a space and a tab alone between a `#` and its name: `#\\finclude` a null directive, as it was",
@@ -122,15 +122,15 @@
       "label": "PS16 the twin's splicing reads no `\\\\\\r\\n` as a splice, as its line reader did",
       "path": "runtime/c/bcir_cpp.c",
       "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
-      "old": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n') continue; s[w++]=s[r]; }",
-      "new": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n' && !(r && s[r-1]=='\\\\')) continue; s[w++]=s[r]; }"
+      "old": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n') continue; if(s[r]=='\\n') nl++; s[w++]=s[r]; }",
+      "new": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n' && !(r && s[r-1]=='\\\\')) continue; if(s[r]=='\\n') nl++; s[w++]=s[r]; }"
     },
     {
       "label": "PS17 the twin's splicing keeps a CRLF's `\\r` in the line, as it did: the longest line is one byte too long",
       "path": "runtime/c/bcir_cpp.c",
       "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
-      "old": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n') continue; s[w++]=s[r]; }",
-      "new": "  for(; s[r]; r++){ s[w++]=s[r]; }"
+      "old": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n') continue; if(s[r]=='\\n') nl++; s[w++]=s[r]; }",
+      "new": "  for(; s[r]; r++){ if(s[r]=='\\n') nl++; s[w++]=s[r]; }"
     },
     {
       "label": "PS18 a lone carriage return is no white space on the twin: `#if K ==\\r2u` is malformed there",

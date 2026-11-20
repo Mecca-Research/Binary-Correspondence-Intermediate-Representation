@@ -56,6 +56,7 @@ typedef struct CppState {
   char constant_error[96];   /* the text of a malformed `#if` constant's refusal (`lit`), which limit_error names */
   const char *current_file;
   int current_line;
+  int line_spliced;          /* the current line's continuation holds `__LINE__` (`splice_lines`, PP_LINE_ON_SPLICED) */
   int include_depth;
   int long_size, pointer_size, long_double, msvc, flt_eval;   /* the rest of the target the standard headers the
                                                 * preprocessor supplies read (`bcir_cpp_context_set_target`) */
@@ -253,6 +254,10 @@ static int next_is(const char *s, int *i, char c) {
 #define PP_UNTERMINATED_ARGS "unterminated macro argument list"
 #define PP_DIRECTIVE_IN_ARGS "preprocessing directive inside macro arguments"
 #define PP_LINE_IN_CONTINUED "__LINE__ on a continued line of a macro invocation"
+/* ... and `__LINE__` on a line a backslash-newline continues, where the continuation holds it: Clang and GCC give one
+ * after the splice the line it stands on, which the twin does not track per token (CF-SPLICELINE; the oracle's
+ * `cpp.LINE_ON_SPLICED`) */
+#define PP_LINE_ON_SPLICED "__LINE__ on a line a backslash continues"
 
 /* --- macro expansion (expand a line until stable) ------------------------ */
 static void app(CppState *state, char *o, size_t cap, size_t *w, const char *s) {
@@ -842,6 +847,7 @@ static int ppx_rescan(CppState *st, size_t base, int top, int depth) {
     {
       PPTok v = t;
       if (ppx_is(st, &t, "__LINE__")) {
+        if (st->line_spliced) { cpp_limit(st, PP_LINE_ON_SPLICED); return 0; }
         char num[16]; int n = snprintf(num, sizeof num, "%d", st->current_line);
         if (!ppx_spell_text(st, num, (size_t)n, &v)) return 0;
       } else {
@@ -1514,12 +1520,36 @@ static void strip_comments(const char *s, char *o, size_t ocap) {
  * and spliced each line as it read it, so a `//` comment a backslash continues ended at its new-line and the line
  * after it was code -- a function the oracle and Clang read as part of the comment lowered on the twin alone -- and
  * a splice inside a block comment kept its new-line, one line more for every `__LINE__` after it (CF-STRIPQUOTE). */
-static void splice_lines(char *s) {
-  size_t r=0, w=0;
-  for(; s[r]; r++){ if(s[r]=='\r' && s[r+1]=='\n') continue; s[w++]=s[r]; }
+/* Phase 2 keeps the line count: the new-lines a logical line's splices deleted are put back where it ends, so each
+ * line after it keeps its physical number -- `__LINE__` after a spliced line had been one less for every splice
+ * above it, on both rails (CF-SPLICELINE; the oracle's `_splice`). It never writes past what it has read: a splice
+ * takes two bytes and gives one back. *flags gets a bit for each (0-based) line whose continuation holds the text
+ * `__LINE__`, allocated only where one does (`PP_LINE_ON_SPLICED`). 1 on an exhausted allocator, else 0. */
+static int splice_lines(CppState *st, char *s, unsigned char **flags) {
+  size_t r=0, w=0, nl=0;
+  *flags=NULL;
+  for(; s[r]; r++){ if(s[r]=='\r' && s[r+1]=='\n') continue; if(s[r]=='\n') nl++; s[w++]=s[r]; }
   s[w]=0;
-  for(r=0, w=0; s[r]; ){ if(s[r]=='\\' && s[r+1]=='\n'){ r+=2; continue; } s[w++]=s[r++]; }
+  size_t pending=0, line=0, start=0; int holds=0;
+  for(r=0, w=0; s[r]; ){
+    if(s[r]=='\\' && s[r+1]=='\n'){
+      r+=2; pending++;
+      for(size_t q=r; s[q] && s[q]!='\n' && !holds; q++) holds = !strncmp(s+q,"__LINE__",8);
+      continue; }
+    if(s[r]=='\n'){
+      for(size_t k=0; k<=pending; k++) s[w++]='\n';
+      line += pending+1;
+      if(holds){
+        if(!*flags && !(*flags=(unsigned char *)bcir_host_allocate_zeroed(&st->allocator,nl/8u+1u))) return 1;
+        (*flags)[start>>3] |= (unsigned char)(1u<<(start&7u)); }
+      start=line; pending=0; holds=0; r++; continue; }
+    s[w++]=s[r++];
+  }
+  if(holds){                                     /* a splice ends the text: no line after it to number */
+    if(!*flags && !(*flags=(unsigned char *)bcir_host_allocate_zeroed(&st->allocator,nl/8u+1u))) return 1;
+    (*flags)[start>>3] |= (unsigned char)(1u<<(start&7u)); }
   s[w]=0;
+  return 0;
 }
 
 /* The line at *pp into `line` (cap bytes), *pp past its new-line: the text is spliced already (`splice_lines`), so a
@@ -1589,17 +1619,18 @@ static int expand_source_line(CppState *state, char *line, const char **pp, cons
     *pp = q; *extra += taken;
   }
 }
-static int cpp_process(CppState *state, const char *src, const char *curfile,
+static int cpp_process(CppState *state, const char *src, const unsigned char *spliced, const char *curfile,
                        const char *const *dirs, int ndirs,
                        char *out, size_t outcap, size_t *w, char *err, size_t errcap) {
   /* a conditional stack: active flag + taken flag (parent == all enclosing frames active) */
   struct { int active, taken, parent, seen_else; } cs[64]; int ncs=0;
-  const char *p=src; char line[8192]; long long presumed=1;
+  const char *p=src; char line[8192]; long long presumed=1; size_t pl=0;   /* pl: the line's index in src */
   char filebuf[1024]; const char *curf=curfile;    /* #line may repoint the current file at filebuf */
   while(*p){
     if(state->limit_error){if(err&&errcap)snprintf(err,errcap,"%s",state->limit_error);return 1;}
     int line_too_long=0;
     read_logical(&p,line,(int)sizeof line,&line_too_long);
+    state->line_spliced = spliced && ((spliced[pl>>3]>>(pl&7u))&1u); pl++;
     if(line_too_long){if(err&&errcap)snprintf(err,errcap,"preprocessor line too long");return 1;}
     if(presumed<1||presumed>INT_MAX){if(err&&errcap)snprintf(err,errcap,"presumed line number is out of range");return 1;}
     state->current_file=curf; state->current_line=(int)presumed; presumed++;
@@ -1659,7 +1690,7 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
             if(builtin_header(state,nm)){           /* a standard header the preprocessor supplies (CSUB-1) */
               if(state->include_depth>=64){if(err&&errcap)snprintf(err,errcap,"#include nesting too deep");return 1;}
               state->include_depth++;
-              int rc=cpp_process(state,state->builtin_text,nm,dirs,ndirs,out,outcap,w,err,errcap);
+              int rc=cpp_process(state,state->builtin_text,NULL,nm,dirs,ndirs,out,outcap,w,err,errcap);
               state->include_depth--;
               if(rc)return rc;
             }
@@ -1667,11 +1698,13 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
           } else {
             if(memchr(hd,0,hn)){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,"#include %s contains NUL",nm);return 1;}
             if(state->include_depth>=64){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,"#include nesting too deep");return 1;}
-            splice_lines((char *)hd);                       /* phases 1 and 2 for the header, then 3 (in place) */
+            unsigned char *hflags=NULL;                     /* phases 1 and 2 for the header, then 3 (in place) */
+            if(splice_lines(state,(char *)hd,&hflags)){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,"oom");return 1;}
             strip_comments((char *)hd,(char *)hd,hn+1u);
             state->include_depth++;
-            int rc=cpp_process(state,(char *)hd,nm,dirs,ndirs,out,outcap,w,err,errcap);
+            int rc=cpp_process(state,(char *)hd,hflags,nm,dirs,ndirs,out,outcap,w,err,errcap);
             state->include_depth--;
+            bcir_host_deallocate(&state->allocator,hflags);
             bcir_host_deallocate(&state->allocator,hd);if(rc)return rc;
           }
         }
@@ -1732,6 +1765,7 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
       if(expand_source_line(state,line,&p,&ex,&extra,err,errcap)) return 1;
       app(state,out,outcap,w,ex); app(state,out,outcap,w,"\n");
       for(int k=0;k<extra;k++){ presumed++; app(state,out,outcap,w,"\n"); }   /* each line it took keeps its place */
+      pl+=(size_t)extra;
     }
   }
   if(state->limit_error){if(err&&errcap)snprintf(err,errcap,"%s",state->limit_error);return 1;}
@@ -1836,6 +1870,7 @@ int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
                             char *out, size_t outcap, char *err, size_t errcap) {
   CppState *state;
   int rc = 1;
+  unsigned char *flags = NULL;   /* the lines whose continuation holds `__LINE__` (`splice_lines`) */
   if(err&&errcap)err[0]=0;
   if(out&&outcap)out[0]=0;
   if(!context || !context->state){
@@ -1876,13 +1911,14 @@ int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
     stripped=(char *)bcir_host_arena_allocate(&state->scratch,scratch_size,1u);
     if(!stripped){if(err&&errcap)snprintf(err,errcap,"oom");goto cleanup;}
     memcpy(stripped, src, sl); stripped[sl]=0;       /* phases 1 and 2, then 3, in place, as the oracle runs them */
-    splice_lines(stripped);
+    if(splice_lines(state, stripped, &flags)){if(err&&errcap)snprintf(err,errcap,"oom");goto cleanup;}
     strip_comments(stripped, stripped, scratch_size);
-    rc=cpp_process(state,stripped, (srcname && srcname[0]) ? srcname : "<source>",
+    rc=cpp_process(state,stripped, flags, (srcname && srcname[0]) ? srcname : "<source>",
                    dirs, ndirs, out, outcap, &w, err, errcap);
   }
   if(!rc&&state->limit_error){if(err&&errcap)snprintf(err,errcap,"%s",state->limit_error);rc=1;}
 cleanup:
+  bcir_host_deallocate(&state->allocator, flags);
   bcir_host_arena_reset(&state->scratch);
   return rc;
 }

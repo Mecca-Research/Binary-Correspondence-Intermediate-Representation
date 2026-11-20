@@ -486,7 +486,11 @@ _mm_sfence();                      //                   store (release) fence ->
   blank lines keep the next line's number. An invocation left open at the end of the unit (`unterminated macro
   argument list`), a directive inside its arguments (`preprocessing directive inside macro arguments`, 6.10.3p11)
   and `__LINE__` on one of its continued lines (`__LINE__ on a continued line of a macro invocation`: neither rail
-  tracks a line per token) are refused on both rails (CSUB-1).
+  tracks a line per token) are refused on both rails (CSUB-1). A backslash-newline keeps the line count: each line
+  after a spliced one has its physical number, as Clang gives it (CF-SPLICELINE). A `__LINE__` expanded on a line a
+  backslash continues, where the continuation holds it, is refused alike (`__LINE__ on a line a backslash
+  continues`: Clang and GCC give one after the splice its own line); one before the splice, or reached through a
+  macro named there, is the line the logical line starts on.
 - The freestanding headers, built in per target when no `-I` directory supplies one: `<stdint.h>` (the least and
   max-width types; the limits and C23 widths of these and the exact-width types; `SIZE_MAX`, `PTRDIFF_MIN`/`MAX`,
   `INTPTR_*`, `UINTPTR_*`, `WCHAR_*`, `WINT_*` and `SIG_ATOMIC_*`; and the `INTn_C`/`UINTn_C`/`INTMAX_C`/`UINTMAX_C`
