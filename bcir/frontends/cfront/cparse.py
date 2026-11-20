@@ -52,6 +52,14 @@ from .lower import (
 )
 
 
+def _name_rooted(node) -> bool:
+    """`node` is a name and its `[..]` `.m` `->m` selectors, `v`, `a[i]`, `p->in` -- the operand the twin's CF-PAREN
+    pass takes in `(&P)->m` (`up_operand_end`)."""
+    while isinstance(node, (cast.Member, cast.Index)):
+        node = node.base
+    return isinstance(node, cast.Name)
+
+
 class CParseError(Exception):
     """A parse error. `pos` is the source byte offset of the offending token (for the caret); `fixit`
     is an optional suggested edit (e.g. inserting a missing `;`)."""
@@ -2244,7 +2252,23 @@ class _Parser:
                     node = cast.Member(node, field, arrow=False)
             elif self.at("OP", "->"):
                 self.nxt()
-                node = cast.Member(node, self.eat("IDENT").text, arrow=True)
+                field = self.eat("IDENT").text
+                if isinstance(node, cast.Unary) and node.op == "&" and _name_rooted(node.operand):
+                    # `(&v)->m` is `v.m` (C11 6.5.2.3p4, 6.5.3.2p3), as a macro writes it over an object
+                    # (`bcir_kplan.c`'s `MS_OP(&v, i)`): the object's own member, the spelling the twin's CF-PAREN
+                    # pass rewrites the tokens to, of a name-rooted operand alike (CSUB-2e)
+                    node = cast.Member(node.operand, field, arrow=False)
+                elif (
+                    isinstance(node, cast.Unary)
+                    and node.op == "&"
+                    and isinstance(node.operand, cast.Unary)
+                    and node.operand.op == "*"
+                    and _name_rooted(node.operand.operand)
+                ):
+                    # `(&*p)->m` is `p->m`: `&*E` is `E` (6.5.3.2p3), as the twin's CF-PAREN pass reads it
+                    node = cast.Member(node.operand.operand, field, arrow=True)
+                else:
+                    node = cast.Member(node, field, arrow=True)
             elif (
                 self.at("PUNCT", "(") and isinstance(node, cast.Name) and node.ident == "va_arg"
             ):  # va_arg(ap, T) -- 2nd operand is a type-name

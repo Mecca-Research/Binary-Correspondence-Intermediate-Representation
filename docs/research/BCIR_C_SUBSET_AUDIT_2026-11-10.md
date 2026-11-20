@@ -436,6 +436,19 @@ The count stays **31 of 58**. Both quarantine units move on to `<stdio.h>`'s `FI
   (`p->q->arr[1]++`, of a device struct too).
 - Both rails refuse the rest.
 
+**CSUB-2e, third slice: a member through an object's own address (2026-11-20).**
+- **`(&v)->m` is `v.m` on both rails** (C11 6.5.2.3p4, 6.5.3.2p3), and `(&*p)->m` is `p->m`. That covers a local, an
+  element, a global's element, a member, a device member and macros (`bcir_kplan.c`'s `MS_OP(&v, i)`), at any depth
+  of parentheses. The oracle folds the parse (`_name_rooted`), and the twin's CF-PAREN pass folds the tokens
+  (`unparen_body`). Both had refused it.
+- **On the twin, a parenthesized operand of `&` or `*`** -- `&(x)`, `&((x).m[1])`, `*(p)` -- is the operand, as the
+  oracle's parse never kept the parentheses. The twin had refused `&(x)` (`unsupported address-of`) and read
+  `(*(p)).n` as a struct converted to a scalar. An inner run of `(` now closes with its own closers, so `(&(x))->n`
+  and `(++(y))` lower, where the twin had refused the whole run.
+- `(&*&*p)->m` and `(&**q)->m` stay refused on both rails, in different words.
+
+The count is **32 of 58**: `bcir_kplan.c` compiles clean.
+
 **Next:** a pointer to an array as a block object, and the remaining lvalue forms (CSUB-2e). Five of the last stand,
 all on plain structs as on elements:
 - `->` through a dereferenced `T **`, `(*q)->v`;

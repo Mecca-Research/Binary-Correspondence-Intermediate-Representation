@@ -549,6 +549,10 @@ _mm_sfence();                      //                   store (release) fence ->
 - An element of a pointer to structs reached through a loaded pointer -- `&set->slots[j]`, `s->slots[j].id++`,
   `x = (s->slots[j].id += v)`, `&s->slots[j].id`, `s->rows[j].buf[1] = v` -- its address a pointer to the struct
   (CSUB-2e).
+- A member through an object's own address, `(&v)->m` -- as a macro writes it over an object, `bcir_kplan.c`'s
+  `MS_OP(&v, i)` -- which is `v.m`, of a local, an element, a global's element, a member or a device member; and
+  `(&*p)->m`, which is `p->m`. A parenthesized operand of `&` or `*`, `&(x)`, `&(s.m[1])`, `*(p)`, is the operand
+  itself, at any depth of parentheses (CSUB-2e).
 - A struct or union member of an array element -- `set->slots[j].name = name`, `width(d->notes[i].span)`, `return
   t[i].sp;`, `&t[i].sp` -- the aggregate value, read, stored, copied, passed, returned and addressed (CSUB-2c).
 - A pointer-to-array member `T (*m)[N]` -- `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]` -- a pointer to a row of N

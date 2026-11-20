@@ -289,6 +289,26 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — CSUB-2e, third slice: a member through an object's own address, `(&v)->m`.**
+  - `(&v)->m` is `v.m` on both rails (C11 6.5.2.3p4, 6.5.3.2p3), and `(&*p)->m` is `p->m` (`&*E` is `E`). Both had
+    refused it, and `bcir_kplan.c`'s `MS_OP(&v, i)` had stopped the ratchet at `parse error: )`.
+    - The oracle folds the parse (`_name_rooted`, in the `->` branch).
+    - The twin's CF-PAREN pass folds the tokens (`unparen_body`): `(&P)->m` becomes `P.m`, and `(&*Q)->m` becomes
+      `Q->m`.
+    - A global array of structs carries its element's type, as a local array does, so `g + i` is a `struct P *`.
+  - On the twin, a parenthesized operand of `&` or `*` -- `&(x)`, `&((x).m[1])`, `*(p)` -- is the operand. The oracle's
+    parse never kept the parentheses. The twin had refused `&(x)` (`unsupported address-of`), and read `(*(p)).n` as
+    a struct converted to a scalar.
+  - An inner run of `(` now closes with its own closers. The twin had counted the enclosing run's too, and so refused
+    `(&(x))->n` and `(++(y))` whole.
+  - `(&*&*p)->m` and `(&**q)->m` stay refused on both rails, in different words.
+  - **Evidence.** `test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails`:
+    - 14 units lower alike. Each rail's emit runs as Clang's build of the source and compiles as C11 strictly.
+    - 5 spelled forms each have their plain form's summary.
+  - The ratchet stands at 32 of 58: `bcir_kplan.c` compiles clean, and the record promotes it.
+  - **Standing faults.** `cfront-ampmember.json`, 8, each swept RED. `cfront-splits.json`'s T5 and
+    `cfront-unary.json`'s UT11 are re-anchored, and swept RED again.
+
 - **2026-11-20 — `typeof` of an array object is the array on both rails, and six more `typeof` defects (CF-TYPEOFARR).**
   - The tracked split: `__typeof__(a) b` of `uint16_t a[3]` declared one element of `a` on the twin and the array on
     the oracle. So `sizeof b` read 2 where C reads 6, and `b[2]` was refused. Probing the rest of `typeof` found it in

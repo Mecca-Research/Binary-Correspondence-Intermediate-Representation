@@ -14640,6 +14640,92 @@ def test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more()
     _lowers_alike(exe, chain + "unsigned f(unsigned x) { return x + C1; }\n")
 
 
+# CSUB-2e: an address folded into a member access, `(&v)->m` -- as `bcir_kplan.c`'s `MS_OP(&v, i)` writes it over an
+# object -- is the object's own member, `v.m`, on both rails (C11 6.5.2.3p4, 6.5.3.2p3), and `(&*p)->m` is `p->m` (`&*E`
+# is `E`). The twin's CF-PAREN pass folds the tokens (`unparen_body`), the oracle its parse (`_name_rooted`); both had
+# refused them. On the way the twin takes `&(x)` and `*(p)`, a parenthesized operand of `&` and `*`, which the oracle's
+# parentheses never kept, and an inner run's own closers (`(&(x))`, `(++(y))`), which it had refused as a whole.
+_AMP_H = "#include <stdint.h>\nstruct v { uint32_t n; uint32_t data[4]; };\n"
+_AMP_LOWERED = tuple(
+    _AMP_H + body
+    for body in (
+        "uint32_t f(uint32_t k){ struct v x = {2, {1,2,3,4}}; (&x)->data[k & 3u] = 9u;"
+        " return (&x)->data[k & 3u] + (&x)->n; }\n",
+        "uint32_t f(uint32_t k){ struct v a[3] = {{1, {0}}, {3, {0}}, {5, {0}}}; return (&a[k % 3u])->n + (&a[0])->n; }\n",
+        "static struct v g[2] = {{1, {2}}, {3, {4}}};\n"
+        "uint32_t f(uint32_t k){ struct v *p = g + (k & 1u); return p->n + (&g[1])->data[0]; }\n",
+        "struct in { uint32_t a, b; };\nstruct w { uint32_t n; struct in i; };\n"
+        "uint32_t f(uint32_t k){ struct w x = {1, {2, 3}}; (&x.i)->b = k; return (&x.i)->a + (&x.i)->b; }\n",
+        "#define MS_OP(s, i) ((s)->data[(i)])\n"
+        "uint32_t f(uint32_t k){ struct v x = {2, {1,2,3,4}}; return MS_OP(&x, k & 3u) + 1u; }\n",
+        "uint32_t f(uint32_t k){ struct v x = {k, {0}}; return ((&x))->n + ((&(x)))->n + (&(x))->n; }\n",
+        "struct d { volatile uint32_t r; uint32_t n; };\n"
+        "uint32_t f(uint32_t k){ struct d x = {1, 2}; (&x)->r = k; return (&x)->r + (&x)->n; }\n",
+        "uint32_t f(struct v *p){ (&*p)->n = 4u; return (&*p)->n + (&p[0])->n + (&*(p))->data[1] + (&(p[0]))->n; }\n",
+        "uint32_t f(uint32_t k){ struct v x = {k, {1, 2}}; uint32_t *p = &(x.n); uint32_t *q = &((x).data[1]);"
+        " return *p + *q + (&(x.data[1]) == &x.data[1]); }\n",
+        "uint32_t f(uint32_t k){ uint32_t y = k; uint32_t *p = &(y), *q = &((y)); return *p + *q; }\n",
+        "uint32_t f(uint32_t k){ uint32_t y = k; return (++(y)) + (--((y))) + (y++); }\n",
+        "static uint32_t g(uint32_t a, uint32_t b){ return a - b; }\n"
+        "uint32_t f(uint32_t k){ uint32_t y = k; return g(1u, (y)) + g((y), 2u) + g(((y)), ((k))); }\n",
+        "uint32_t f(struct v *p){ (*(p)).n = 2u; return (*(p)).n + (*((p))).data[0]; }\n",
+        "uint32_t f(uint32_t *p, uint32_t k, uint32_t m){ *(p) = 3u; return *(p) + *((p)) * 2u + k * (m) + (k) * ((m)); }\n",
+    )
+)
+# ... each spelled form with its plain one's summary on both rails
+_AMP_SPELLED = tuple(
+    (_AMP_H + a, _AMP_H + b)
+    for a, b in (
+        (
+            "uint32_t f(uint32_t k){ struct v x = {2, {1,2,3,4}}; return (&x)->data[k & 3u] + (&x)->n; }\n",
+            "uint32_t f(uint32_t k){ struct v x = {2, {1,2,3,4}}; return x.data[k & 3u] + x.n; }\n",
+        ),
+        (
+            "uint32_t f(struct v *p){ return (&*p)->n; }\n",
+            "uint32_t f(struct v *p){ return p->n; }\n",
+        ),
+        (
+            "uint32_t f(uint32_t k){ uint32_t y = k; uint32_t *p = &(y); return *p; }\n",
+            "uint32_t f(uint32_t k){ uint32_t y = k; uint32_t *p = &y; return *p; }\n",
+        ),
+        (
+            "uint32_t f(struct v *p){ return (*(p)).n; }\n",
+            "uint32_t f(struct v *p){ return p->n; }\n",
+        ),
+        (
+            "uint32_t f(uint32_t k, uint32_t m){ return k * (m) + (k & (m)); }\n",
+            "uint32_t f(uint32_t k, uint32_t m){ return k * m + (k & m); }\n",
+        ),
+    )
+)
+
+
+def test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails():
+    """CSUB-2e. `(&v)->m` is `v.m` and `(&*p)->m` is `p->m` on both rails -- `bcir_kplan.c`'s `MS_OP(&v, i)`, which
+    had stopped it at `parse error: )`, now compiles clean (the ratchet's 32nd unit). Of a local, an element, a global's
+    element, a member, a device member, through a pointer, under a macro and under parentheses; and `&(x)`, `*(p)` and
+    an inner run's own closers on the twin, as the oracle reads them. Each unit lowers alike, each rail's emit runs as
+    Clang's build of the source and compiles as C11 strictly, and each spelled form has its plain one's summary."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_AMP_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"a{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for spelled, plain in _AMP_SPELLED:
+        assert _lowers_alike(exe, spelled) == _lowers_alike(exe, plain), (spelled, plain)
+
+
 # CF-TYPEOFARR: `typeof` of an array object is the array it is, on both rails, each as Clang builds it. The twin had
 # declared one element of it (`sizeof b` read 2 where C reads 6, `b[2]` refused, an uninitialized pointer stored through
 # for a member array); now it types the operand with `sizeof`'s static walk and hands the dimensions on as an array

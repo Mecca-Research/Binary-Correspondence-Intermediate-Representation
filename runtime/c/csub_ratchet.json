@@ -123,10 +123,7 @@
       "verdict": "clean"
     },
     "bcir_kplan.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: )",
-      "construct": "a member read through a local's address, `(&v)->data`, which a macro writes",
-      "rung": "CSUB-2"
+      "verdict": "clean"
     },
     "bcir_llama.c": {
       "verdict": "clean"

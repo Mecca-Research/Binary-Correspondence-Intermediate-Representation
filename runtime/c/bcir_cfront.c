@@ -3496,10 +3496,12 @@ static void up_hide(CC *c, const upframe *f, int nf, const tok *t, const tok *pv
 /* One pass over the body at `start` (just past its `{`), compacting it in place; 1 when it rewrote something. Of a
  * run of `(`, only the one whose closers directly follow P can open P's parentheses: it is found once per run. */
 static int unparen_body(CC *c, int start){
-  static const tok lb={T_PUN,"[",1,0}, zero={T_INT,"0",1,0}, rb={T_PUN,"]",1,0}, arrow={T_PUN,"->",2,0};
+  static const tok lb={T_PUN,"[",1,0}, zero={T_INT,"0",1,0}, rb={T_PUN,"]",1,0}, arrow={T_PUN,"->",2,0},
+                   dot={T_PUN,".",1,0};
   upframe fr[UP_FRAMES]; int nf=1, deep=0, np=0, w=start, r=start, changed=0;
   struct { int pos, n, zero; } pend[UP_FRAMES];              /* scheduled closers: dropped, or `[0]` in their place */
-  int run_end=start, cand=-1, pe=-1, k=0, star=0, is_name=0;   /* the current run of `(` and its one candidate */
+  int run_end=start, cand=-1, pe=-1, k=0, star=0, amp=0, as=0, is_name=0;   /* the current run of `(` and its one
+                                                              * candidate; `as`: P is `&*Q` */
   memset(&fr[0],0,sizeof fr[0]); fr[0].blk=1; fr[0].start=1; fr[0].xpd=-1;
   c->nuph=0;
   while(r<c->nt && nf>0){
@@ -3520,15 +3522,31 @@ static int unparen_body(CC *c, int start){
       run_end=r; while(tok_is(tat(c,run_end),"(")) run_end++;
       int ps=run_end;                                      /* P's first token -- the run's last `(` when it opens */
       star=tok_is(tat(c,ps),"*");                          /* a compound literal's type name, `((T){...})[i]` */
-      if(!star && decl_type_tok(c,tat(c,ps))) ps--;
-      pe=up_operand_end(c,ps+star,!star,&is_name); k=0;
-      if(pe>0) while(tok_is(tat(c,pe+k),")")) k++;
+      amp=!star && tok_is(tat(c,ps),"&");                  /* `(&P)->m`: the object's own member (CSUB-2e) */
+      as=amp && tok_is(tat(c,ps+1),"*");                   /* `(&*Q)->m`: `&*Q` is `Q` (6.5.3.2p3) */
+      if(!star && !amp && decl_type_tok(c,tat(c,ps))) ps--;
+      pe=up_operand_end(c,ps+star+amp+as,!star && !amp,&is_name); k=0;
+      if(pe>0) while(k<ps-r && tok_is(tat(c,pe+k),")")) k++;   /* the run's own closers: in `(&(x))` the inner run's
+                                                       * one `(` closes with the first of `))`, the second the outer's */
       cand = pe>0 && k>=1 && k<=ps-r ? ps-k : -1; }
     if(r==cand && np<UP_FRAMES && !deep && up_paren_ok(c,w,start,f)){
       const tok *op=tat(c,pe+k); int n=k;
-      if(!star && (tok_is(op,"[")||tok_is(op,".")||tok_is(op,"->"))){   /* (^n P )^n OP  ->  P OP */
+      if(as && is_name && tok_is(op,"->")){               /* (^n & * Q )^n ->  ->  Q ->  : `&*Q` is `Q` */
+        pend[np].pos=pe; pend[np].n=n; pend[np].zero=0; np++; r+=n+2; changed=1; continue; }
+      if(amp && !as && is_name && tok_is(op,"->")){       /* (^n & P )^n ->  ->  P .  : `(&v)->m` is `v.m` (C11
+        * 6.5.2.3p4, 6.5.3.2p3), as a macro writes it over an object (`bcir_kplan.c`'s `MS_OP(&v, i)`) -- the oracle's
+        * `_postfix_tail` folds it alike (CSUB-2e) */
+        c->t[pe+n]=dot;
+        pend[np].pos=pe; pend[np].n=n; pend[np].zero=0; np++; r+=n+1; changed=1; continue; }
+      if(!amp && !star && (tok_is(op,"[")||tok_is(op,".")||tok_is(op,"->"))){   /* (^n P )^n OP  ->  P OP */
         pend[np].pos=pe; pend[np].n=n; pend[np].zero=0; np++; r+=n; changed=1; continue; }
-      if(!star && is_name && tok_is(op,"(") && !up_has_subscript(c,run_end,pe)){   /* (^n P )^n (  ->  P (  : a call
+      if(!amp && !star && is_name && w>start && (tok_is(&c->t[w-1],"&") || tok_is(&c->t[w-1],"*"))
+         && !tok_is(op,"(")){                              /* & (^n P )^n  ->  & P , and * likewise : the address of
+        * a parenthesized lvalue, `&(x)`, `&(p[0])`, and `*(p)` -- the oracle's `&x` and `*p`, its parentheses no
+        * node -- which the next pass folds into `(&P)->m` and `(*p).m` too (CSUB-2e). A name-rooted P binds
+        * tighter than either operator read as a binary one, and up_paren_ok keeps a declarator's `*(x)` */
+        pend[np].pos=pe; pend[np].n=n; pend[np].zero=0; np++; r+=n; changed=1; continue; }
+      if(!star && !amp && is_name && tok_is(op,"(") && !up_has_subscript(c,run_end,pe)){   /* (^n P )^n (  ->  P (  : a call
         * through a parenthesized callee, `(fp)(x)`, `(o->fn)(x)` -- the oracle's `fp(x)` / `o->fn(x)` (CF-SPLIT2);
         * `(ops[i])(x)` stays refused, as the oracle's parse refuses it */
         pend[np].pos=pe; pend[np].n=n; pend[np].zero=0; np++; r+=n; changed=1; continue; }
@@ -3536,9 +3554,9 @@ static int unparen_body(CC *c, int start){
         int z=tok_is(op,"[");
         if(!z) c->t[pe+n]=arrow;
         pend[np].pos=pe; pend[np].n=n; pend[np].zero=z; np++; r+=n+1; changed=1; continue; }
-      if(!star && is_name && (tok_is(op,"++")||tok_is(op,"--"))){   /* (^n P )^n ++  ->  (^n P ++ )^n */
+      if(!star && !amp && is_name && (tok_is(op,"++")||tok_is(op,"--"))){   /* (^n P )^n ++  ->  (^n P ++ )^n */
         tok s=c->t[pe+n]; memmove(&c->t[pe+1],&c->t[pe],(size_t)n*sizeof(tok)); c->t[pe]=s; changed=1; }
-      else if(!star && is_name && w>start && (tok_is(&c->t[w-1],"++")||tok_is(&c->t[w-1],"--"))
+      else if(!star && !amp && is_name && w>start && (tok_is(&c->t[w-1],"++")||tok_is(&c->t[w-1],"--"))
               && !tok_is(op,"(")){                         /* ++ (^n P )^n  ->  (^n ++ P )^n : a prefix step of a
         * parenthesized lvalue, `++(x)`, the expression the oracle reads (CF-STRUCTCOND): the step written at w-1
         * becomes the first `(`, and moves past the others to just before P, which the loop then reads */
@@ -7002,8 +7020,10 @@ static venv *use_global(CC *c,const tok *id){
       gr->is_signed=(uint8_t)(g->ty.signd?1:0); gr->is_float=(uint8_t)(g->ty.is_float?1:0);
       gr->is_complex=(uint8_t)(g->ty.is_complex?1:0); gr->is_bool=(uint8_t)(g->ty.is_bool?1:0);
       gr->is_plain_char=(uint8_t)(g->ty.is_plain_char?1:0); gr->bit_width=g->ty.bit_width; }
-    else if(kind==BCIR_RK_AGGREGATE)                  /* a struct or union: its type, as a local's -- a value of it
-                                                       * in a brace list, an initializer or a select (CF-STRUCTVAL) */
+    else if(kind==BCIR_RK_AGGREGATE || (g->is_arr && g->ty.kind==1))   /* a struct or union: its type, as a local's
+                                                       * -- a value of it in a brace list, an initializer or a select
+                                                       * (CF-STRUCTVAL); an array of them carries its element's, as a
+                                                       * local array does, so `g + i` is a `struct P *` (CSUB-2e) */
       fits(c,gr->agg,BCIR_CIR_AGG,"%s %s",g->ty.is_union?"union":"struct",g->ty.tag); }
   qglobal_add(c,rid,g);                               /* a `const` global: named through its unqualified type */
   env_add(c,id,rid,&g->ty,gsi);
