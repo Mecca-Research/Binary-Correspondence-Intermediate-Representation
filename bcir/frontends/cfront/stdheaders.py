@@ -43,6 +43,7 @@ NAMES = (
     "float.h",
     "iso646.h",
     "stdalign.h",
+    "stdckdint.h",
     "math.h",
 )
 
@@ -306,6 +307,17 @@ def _stdalign(abi: TargetABI) -> list[str]:
     ]
 
 
+def _stdckdint(abi: TargetABI) -> list[str]:
+    # C23's checked arithmetic (7.20) as Clang and GCC spell it: each macro the overflow builtin, true when the
+    # mathematical result does not fit `*R`, which takes it wrapped (CSUB-3)
+    return [
+        "#define __STDC_VERSION_STDCKDINT_H__ 202311L",
+        "#define ckd_add(R, A, B) __builtin_add_overflow((A), (B), (R))",
+        "#define ckd_sub(R, A, B) __builtin_sub_overflow((A), (B), (R))",
+        "#define ckd_mul(R, A, B) __builtin_mul_overflow((A), (B), (R))",
+    ]
+
+
 def _math(abi: TargetABI) -> list[str]:
     # the constants and the classification macros, spelled as glibc spells them: `isinf` its sign-returning builtin
     return [
@@ -330,6 +342,7 @@ _BUILDERS = {
     "float.h": _float,
     "iso646.h": _iso646,
     "stdalign.h": _stdalign,
+    "stdckdint.h": _stdckdint,
     "math.h": _math,
 }
 

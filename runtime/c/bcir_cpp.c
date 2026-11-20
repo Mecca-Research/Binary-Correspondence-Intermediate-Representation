@@ -1156,6 +1156,12 @@ static void h_stdalign(hbuf *b) {
   hput(b, "#define __alignas_is_defined 1"); hput(b, "#define __alignof_is_defined 1");
   hput(b, "#endif");
 }
+static void h_stdckdint(hbuf *b) {   /* C23's checked arithmetic (7.20) as Clang and GCC spell it (CSUB-3) */
+  hput(b, "#define __STDC_VERSION_STDCKDINT_H__ 202311L");
+  hput(b, "#define ckd_add(R, A, B) __builtin_add_overflow((A), (B), (R))");
+  hput(b, "#define ckd_sub(R, A, B) __builtin_sub_overflow((A), (B), (R))");
+  hput(b, "#define ckd_mul(R, A, B) __builtin_mul_overflow((A), (B), (R))");
+}
 static void h_math(hbuf *b) {
   hput(b, "#define NAN (__builtin_nanf(\"\"))"); hput(b, "#define INFINITY (__builtin_inff())");
   hput(b, "#define HUGE_VAL (__builtin_huge_val())"); hput(b, "#define HUGE_VALF (__builtin_huge_valf())");
@@ -1165,7 +1171,7 @@ static void h_math(hbuf *b) {
   hput(b, "#define isnormal(x) __builtin_isnormal(x)");
 }
 static const char *const builtin_names[] = {"stdint.h", "stddef.h", "stdbool.h", "limits.h", "float.h", "iso646.h",
-                                            "stdalign.h", "math.h", 0};
+                                            "stdalign.h", "stdckdint.h", "math.h", 0};
 static int builtin_known(const char *name) {
   for (int k = 0; builtin_names[k]; k++) if (!strcmp(builtin_names[k], name)) return 1;
   return 0;
@@ -1188,6 +1194,7 @@ static int builtin_header(CppState *st, const char *name) {
   else if (!strcmp(name, "float.h")) h_float(st, &b);
   else if (!strcmp(name, "iso646.h")) h_iso646(&b);
   else if (!strcmp(name, "stdalign.h")) h_stdalign(&b);
+  else if (!strcmp(name, "stdckdint.h")) h_stdckdint(&b);
   else h_math(&b);
   hput(&b, "#endif");
   if (b.full) { cpp_limit(st, "standard header text too large"); return 0; }

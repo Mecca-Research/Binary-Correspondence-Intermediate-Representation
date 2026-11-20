@@ -9919,6 +9919,8 @@ def _std_probes(abi) -> list:
                 continue
             if name == "offsetof":
                 probe = "offsetof(struct __probe, b[1])"
+            elif name.startswith("ckd_"):  # <stdckdint.h>'s three operands (CSUB-3)
+                probe = f"{name}(r, a, b)"
             else:
                 probe = f"{name}(1)" if m.group(2) else name
             out.append((h, name, probe))
@@ -15030,6 +15032,93 @@ def test_a_string_read_is_a_libc_edge_on_both_rails():
     )
     if exe is not None:
         assert _lowers_alike(exe, _STRREAD_OWN) == summary
+
+
+# CSUB-3: C23's checked arithmetic. Both rails read `<stdckdint.h>` as Clang and GCC write it -- `ckd_add(R, A, B)` the
+# overflow builtin `__builtin_add_overflow((A), (B), (R))`, and `ckd_sub`, `ckd_mul` alike -- and lower the builtin as
+# the integer builtins are lowered: verbatim, opaque to R18, a `bool`, true when the mathematical result does not fit
+# `*R`, which takes it wrapped. Neither rail had the header or the builtins.
+_CKD_HDR = (
+    "#include <stdint.h>\n#include <stdbool.h>\n#include <stdckdint.h>\n"
+    "struct acc { uint32_t total; int64_t s; };\nstatic uint16_t g16;\n"
+)
+_CKD_LOWERED = tuple(
+    _CKD_HDR + "uint32_t f(uint32_t k){ " + body + " }\n"
+    for body in (
+        "uint32_t r; bool o = ckd_add(&r, k, 4000000000u); return r + (uint32_t)o;",
+        "int32_t r; bool o = ckd_sub(&r, (int32_t)k, INT32_MAX); return (uint32_t)r + (o ? 7u : 0u);",
+        "uint8_t r; bool o = ckd_mul(&r, k, 3u); return (uint32_t)r * 2u + (uint32_t)o;",
+        "int64_t r; if (ckd_mul(&r, (int64_t)k, INT64_MAX / 3)) return 1u; return (uint32_t)(r >> 32);",
+        "uint64_t r; bool o = ckd_add(&r, (int32_t)k, -5); return (uint32_t)r + (uint32_t)o * 9u;",
+        "struct acc a = {k, 0}; bool o = ckd_add(&a.total, a.total, 0xF0000000u); return a.total + (uint32_t)o;",
+        "struct acc a = {k, 0}; struct acc *p = &a; bool o = ckd_mul(&p->s, (int64_t)k, -3);"
+        " return (uint32_t)p->s + (uint32_t)o;",
+        "bool o = ckd_add(&g16, k, 60000u); return (uint32_t)g16 + (uint32_t)o;",
+        "uint32_t r = 0, n = 0; for (uint32_t i = 0; i < 40u; i++) if (!ckd_mul(&r, k + 1u, i * 100000u)) n++;"
+        " return n + r;",
+        "int r; return __builtin_add_overflow((int)k, 1, &r) ? 0u : (uint32_t)r;",
+    )
+)
+_CKD_OPERANDS = (
+    "an overflow builtin takes two integers and a pointer to an integer, none of them a bool"
+)
+# ... and what the builtins' constraints refuse is refused alike, as Clang refuses it -- but a result through a
+# pointer to volatile storage, which Clang takes and both rails leave to a follow-on (a device access)
+_CKD_REFUSED = tuple(
+    (_CKD_HDR + "uint32_t f(uint32_t k){ " + body + " }\n", why)
+    for body, why in (
+        ("bool r; return ckd_add(&r, k, 1u);", _CKD_OPERANDS),
+        ("uint32_t r; return ckd_add(&r, 1.5, k);", _CKD_OPERANDS),
+        ("uint32_t r; return ckd_add(&r, k, true);", _CKD_OPERANDS),
+        ("uint32_t r, *p = &r; return ckd_add(&r, p, 1u);", _CKD_OPERANDS),
+        ("uint32_t *q = 0; return ckd_add(&q, k, 1u);", _CKD_OPERANDS),
+        ("uint32_t r; return __builtin_add_overflow(k, 1u);", _CKD_OPERANDS),
+        ("uint32_t r; return ckd_add(r, k, 1u);", _CKD_OPERANDS),
+        (
+            "_Atomic uint32_t r; return ckd_add(&r, k, 1u);",
+            "an overflow builtin's result through a pointer to volatile or atomic storage is a follow-on",
+        ),
+        (
+            "volatile uint32_t r; return ckd_add(&r, k, 1u);",
+            "an overflow builtin's result through a pointer to volatile or atomic storage is a follow-on",
+        ),
+    )
+)
+
+
+def test_checked_arithmetic_is_the_overflow_builtin_on_both_rails():
+    """CSUB-3. `<stdckdint.h>` is Clang's and GCC's on both rails, and `ckd_add`, `ckd_sub` and `ckd_mul` lower as the
+    overflow builtins they are: of signed, unsigned, narrow and wide operands and results, of mixed types, into a
+    local, a member, a member through a pointer and a global, in a condition and a loop, and the builtin by its own
+    name. Each unit lowers alike and R18 clean, each rail's emit runs as Clang's build of the source -- the wrapped
+    result and the overflow flag -- and compiles as C11 strictly. What the builtins' constraints refuse is refused
+    alike, as Clang refuses it; a result through a pointer to volatile storage, which Clang takes, is a follow-on."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_CKD_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            ops = {cl.op for fn in r.lowered.functions.values() for cl in fn.claims}
+            assert " ok=1 " in summary and ops & {
+                f"c.call.builtin:{k}_overflow" for k in ("add", "sub", "mul")
+            }, (
+                src,
+                summary,
+            )
+            if exe is None:
+                continue
+            path = os.path.join(d, f"k{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for src, why in _CKD_REFUSED:
+        assert _clang_c23_accepts(src) in (False, None) or "volatile" in src, src
+        _refused_alike(exe, src, why, phase="PARSE")
 
 
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through

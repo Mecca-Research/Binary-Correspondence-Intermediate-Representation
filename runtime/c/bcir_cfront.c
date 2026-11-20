@@ -4786,6 +4786,20 @@ void bcir_cfront_link_flags(const bcir_unit *u, char *buf, size_t cap) {
   if(cap){ if(w>=cap) w=cap-1; buf[w]=0; }
   #undef BCIR_MAX_LINK_FLAGS
 }
+/* The overflow builtins -- <stdckdint.h>'s `ckd_add`, `ckd_sub` and `ckd_mul` (C23 7.20), as Clang and GCC define them --
+ * emitted verbatim (no bcir_ twin, opaque to R18): a `bool`, true when the mathematical result of the two integer
+ * operands does not fit `*r`, which takes it wrapped (CSUB-3). The oracle's `_BUILTIN_CKD`, refused for its
+ * `CKD_OPERANDS` and `CKD_RESULT_FO`. */
+#define CC_CKD_OPERANDS "an overflow builtin takes two integers and a pointer to an integer, none of them a bool"
+#define CC_CKD_RESULT_FO "an overflow builtin's result through a pointer to volatile or atomic storage is a follow-on"
+static int ckd_builtin(const char *s, int n) {
+  static const char *M[]={"__builtin_add_overflow","__builtin_sub_overflow","__builtin_mul_overflow",0};
+  for(int i=0;M[i];i++) if((int)strlen(M[i])==n && !strncmp(M[i],s,(size_t)n)) return 1;
+  return 0;
+}
+static int ckd_int(const bcir_resource *r){   /* an integer operand, or an integer pointee: no bool, float or aggregate */
+  return r && !r->is_float && !r->is_bool && !r->is_complex && !r->agg[0] && !r->is_funcptr && !r->ptee_funcptr;
+}
 /* GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
  * Returns the result's SIGNED size: -4 a signed int (the bit-count family + abs), -8 a signed long
  * (labs/llabs), or a POSITIVE unsigned size for byte-swap (2/4/8). 0 == not a recognized builtin. */
@@ -4893,6 +4907,18 @@ static uint32_t p_call(CC *c, const tok *name) {
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
     return void_temp(c);               /* a void result -- never read */
+  }
+  if(ckd_builtin(name->s,name->n) && !unit_defines(c,name)){   /* `ckd_add(&r, a, b)` and its peers (CSUB-3) */
+    const bcir_resource *ra=na==3?res_of(c->fn,args[0]):NULL, *rb=na==3?res_of(c->fn,args[1]):NULL,
+                        *rr=na==3?res_of(c->fn,args[2]):NULL;
+    if(!ckd_int(ra) || ra->kind==BCIR_RK_POINTER || !ckd_int(rb) || rb->kind==BCIR_RK_POINTER || !ckd_int(rr)
+       || rr->kind!=BCIR_RK_POINTER || (rr->ptr_depth?rr->ptr_depth:1)!=1){ fail(c,CC_CKD_OPERANDS); return 0; }
+    if(rr->is_volatile || rr->is_atomic || rr->domain==BCIR_DOM_MMIO){ fail(c,CC_CKD_RESULT_FO); return 0; }
+    uint32_t t=tempi(c,1,0); if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* a `bool` */
+    char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.builtin:%.*s",name->n-10,name->s+10);   /* drop `__builtin_` */
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=3;for(int k=0;k<3;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+    return t;                          /* not added to fn->calls (opaque to R18) */
   }
   int bz = builtin_result(name->s,name->n);
   if(bz){                              /* a GCC/Clang integer builtin -> verbatim, typed, opaque to R18 */

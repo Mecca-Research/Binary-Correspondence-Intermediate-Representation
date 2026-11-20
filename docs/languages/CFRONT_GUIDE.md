@@ -557,6 +557,9 @@ _mm_sfence();                      //                   store (release) fence ->
   function pointers or through a `T **` (`r = (v[1] = x)`), a dereferenced `T **` (`*low = *high = &absent`), a
   function-pointer member -- stored, then reloaded, as a scalar is. A pointer's compound assignment as a value, `(t->p
   += 1)`, stays refused on both rails as a follow-on (CSUB-2e).
+- C23's checked arithmetic, `<stdckdint.h>`'s `ckd_add`, `ckd_sub` and `ckd_mul`, as the overflow builtins Clang and
+  GCC define them to be: a `bool`, true when the mathematical result does not fit `*r`, which takes it wrapped. A
+  result through a pointer to volatile storage is a follow-on (CSUB-3).
 - The `<string.h>` reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`
   (freestanding since C23) -- as libc edges beside `memcpy`, `memmove` and `memset`: called verbatim, opaque to R18,
   each typed by its declared result; the linkable artifact includes `<string.h>` for them (CSUB-5).

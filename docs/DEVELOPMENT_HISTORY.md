@@ -289,6 +289,21 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — CSUB-3a: `<stdckdint.h>` on both rails.**
+  - Both rails read `<stdckdint.h>` as Clang and GCC write it: `ckd_add(R, A, B)` is
+    `__builtin_add_overflow((A), (B), (R))`, and `ckd_sub` and `ckd_mul` alike. The standard-header test holds each
+    rail's expansion to the other's and to Clang's on every target.
+  - The three builtins lower as the integer builtins do: verbatim, opaque to R18, each a `bool`, true when the
+    mathematical result does not fit `*R`, which takes it wrapped. Neither rail had the header or the builtins.
+  - The builtins' constraints are refused alike, as Clang refuses them: a `bool`, floating or pointer operand, a
+    result that is no pointer to an integer, any other arity. A result through a pointer to `_Atomic` or volatile
+    storage is refused as a follow-on; Clang takes the volatile one.
+  - **Evidence.** `test_checked_arithmetic_is_the_overflow_builtin_on_both_rails`: 10 units lower alike and R18 clean.
+    Each rail's emit runs as Clang's build of the source -- the wrapped result and the flag -- and compiles as C11
+    strictly. 9 forms are refused alike, 8 of them as Clang refuses them.
+  - The ratchet stays at 38 of 58.
+  - **Standing faults.** `cfront-ckd.json`, 11, each swept RED.
+
 - **2026-11-20 — CSUB-5a: the `<string.h>` reads are libc edges on both rails.**
   - `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`, freestanding since C23
     (4p7), are called verbatim, opaque to R18 and never renamed, as `memcpy` is. Each is typed by its declared

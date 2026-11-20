@@ -384,6 +384,21 @@ _BUILTIN_OTHER = {
     "__builtin_bswap64": "uint64_t",
 }
 
+# The overflow builtins -- <stdckdint.h>'s `ckd_add`, `ckd_sub` and `ckd_mul` (C23 7.20), as Clang and GCC define them
+# -- emitted verbatim (no bcir_ twin, opaque to R18): a `bool`, true when the mathematical result of the two integer
+# operands does not fit `*r`, which takes it wrapped (CSUB-3). The twin's `ckd_builtin`.
+_BUILTIN_CKD = frozenset(
+    {"__builtin_add_overflow", "__builtin_sub_overflow", "__builtin_mul_overflow"}
+)
+#: their constraint, the builtins' own: two integer operands, and the result a pointer to an integer, none a `bool`
+CKD_OPERANDS = (
+    "an overflow builtin takes two integers and a pointer to an integer, none of them a bool"
+)
+#: ... and a result through a pointer to volatile or `_Atomic` storage, a device access or an atomic one
+CKD_RESULT_FO = (
+    "an overflow builtin's result through a pointer to volatile or atomic storage is a follow-on"
+)
+
 # ASM2 -- port-mapped I/O intrinsics. Each is a CALL expression (no new syntax), recognized at lowering
 # like `_LIBM`, and lowered to a typed, isolated, BARRIERED I/O-port edge (`c.portio.in.<w>:` /
 # `c.portio.out.<w>:`). Keyed by name: (direction, width-bytes, result-CType-name | None for the void
@@ -2052,6 +2067,33 @@ class _FuncLowerer:
         if v in self.zero_consts and ct.kind in ("pointer", "funcptr"):
             self.rtypes[v] = unqualified(ct)
         return v
+
+    def _ckd_call(self, callee: str, actuals: tuple) -> int:
+        """`__builtin_add_overflow(a, b, r)` and its `sub` and `mul` peers, <stdckdint.h>'s `ckd_add`, `ckd_sub` and
+        `ckd_mul` (C23 7.20): a `bool`, true when the mathematical result does not fit `*r`, which takes it wrapped.
+        Verbatim and opaque to R18, as the integer builtins are; the escape analysis reads it, a library routine, as
+        writing what `r` points at (CSUB-3). Its operands and result are the builtins' (`CKD_OPERANDS`)."""
+        if len(actuals) != 3:
+            raise CLowerError(CKD_OPERANDS)
+        a, b, r = (self.rtypes.get(v) for v in actuals)
+
+        def plain_int(ct) -> bool:
+            return ct is not None and ct.is_integer and ct.name not in ("_Bool", "bool")
+
+        if not (
+            plain_int(a)
+            and plain_int(b)
+            and r is not None
+            and r.kind == "pointer"
+            and plain_int(r.of)
+        ):
+            raise CLowerError(CKD_OPERANDS)
+        if r.of.volatile or r.of.atomic:
+            raise CLowerError(CKD_RESULT_FO)
+        t = self._temp(scalar("_Bool"), "ckd")
+        return self._emit(
+            f"c.call.builtin:{callee[len('__builtin_') :]}", Opcode.GEM_DISPATCH, actuals, (t,)
+        )
 
     def _null_pointer_args(self, actuals: tuple, params: tuple) -> None:
         """The actuals of a call to a callee whose parameter types are known -- a same-unit definition,
@@ -5398,6 +5440,8 @@ class _FuncLowerer:
                 "c.call.libm.void:free", Opcode.GEM_DISPATCH, actuals, (), lifetime=Lifetime("free")
             )
             return _VOID_RID
+        if node.callee in _BUILTIN_CKD and node.callee not in self.func_rets:
+            return self._ckd_call(node.callee, actuals)
         bt = _builtin_type(node.callee, self.abi)
         if bt is not None:  # a GCC/Clang integer builtin -> verbatim, typed, opaque
             t = self._temp(bt, "blt")  # the op carries the suffix (the `__builtin_` is re-added
