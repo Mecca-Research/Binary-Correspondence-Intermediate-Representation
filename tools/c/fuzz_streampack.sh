@@ -304,6 +304,12 @@ add_target encode "encoder" "" \
 add_target binrec "binrec" "-max_len=64" \
   "${C}/fuzz_binrec.c" "${C}/bcir_binrec.c"
 
+# bcir_etl.c is the C twin of bcir/etl's transducer, event descriptors and mini-ROP grammar (PORT-4) -- driver
+# packets and device text: every input parsed with the output capacities its first octet chooses, and run as the
+# finite-state machine its octets spell, each verdict held to its contract.
+add_target etl "event transducer" "-max_len=4096" \
+  "${C}/fuzz_etl.c" "${C}/bcir_etl.c"
+
 # bcir_asn1_streampack.c does not merely READ hostile octets, it WRITES a native artifact
 # derived from them. The harness therefore feeds every blessed output straight back into
 # the native decoder and the semantic verifier: a fast path that emitted a subtly

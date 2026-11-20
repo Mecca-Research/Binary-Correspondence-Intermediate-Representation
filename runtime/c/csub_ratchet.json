@@ -98,6 +98,15 @@
     "bcir_encode.c": {
       "verdict": "clean"
     },
+    "bcir_etl.c": {
+      "verdict": "clean"
+    },
+    "bcir_etl_tool.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'FILE'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
     "bcir_exec.c": {
       "verdict": "clean"
     },

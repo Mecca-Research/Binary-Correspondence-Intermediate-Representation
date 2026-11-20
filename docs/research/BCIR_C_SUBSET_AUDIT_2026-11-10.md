@@ -587,7 +587,8 @@ refuses some attribute forms in its own words, as before: one before a for-loop'
 block, one before a block `typedef`, one as a statement expression's last, and one after a `struct` keyword or
 body, which the oracle reads and the twin refuses.
 
-The count stays 38 of 58: no unit's first refusal was an attribute.
+The count stays 38 of 58: no unit's first refusal was an attribute. PORT-4 then added two units: `bcir_etl.c`, the
+event transducer, compiles clean (39 of 60), and `bcir_etl_tool.c`, a hosted CLI, waits on CSUB-5's `<stdio.h>`.
 
 ## 5. Subsystems
 

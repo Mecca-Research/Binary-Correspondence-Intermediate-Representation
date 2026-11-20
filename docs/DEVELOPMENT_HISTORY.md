@@ -289,6 +289,25 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — PORT-4: the event transducer in C.**
+  - Driver-packet ingestion had no executable transducer or grammar-to-claims parser in C (N4 of the native port
+    audit). `bcir_etl.c` ports the three oracle modules, freestanding: the finite-state transducer (`etl.fsm`), the
+    event descriptors (`etl.events`) and the mini-ROP grammar (`etl.parse`). Strings are (pointer, length) pairs,
+    every output goes to a buffer the caller sized, nothing allocates, and each refusal names the element, field or
+    offset the oracle's exception names. `bcir-etl` spells each verdict in the oracle's words.
+  - **Defects at the base and closed, on the oracle.** An unknown lane or stride raised a `KeyError`, a traceback and
+    no verdict; a count past the signed 64-bit wire domain was taken; a second `reads` replaced the first and kept the
+    resources it had named, read by no claim; an unknown statement was placed at the token after it. Each is a
+    `ParseError` at its own token now, on both rails.
+  - **Evidence.** `test_c_etl.py`: `bcir-etl` == the oracle over 601 programs (hand-written, generated, mutated), 312
+    machines and their runs, and 300 descriptors, and the corpora reach every verdict. `test_etl.c` holds every output
+    buffer one short and every NULL; `fuzz_etl.c` ran 16.6 million inputs under libFuzzer, ASan and UBSan with no
+    finding. `bcir_etl.c` compiles clean under `bcir-cc`, so the ratchet is 39 of 60 units (the tool, a hosted CLI,
+    waits on CSUB-5's `<stdio.h>`).
+  - **Standing faults.** `etl.json`, 23, each swept RED. A 24th, a run that accepts in a state both accepting and an
+    error, survived as an equivalent mutant: `bcir_fsm_compile` refuses such a state, as the oracle does, so no run
+    reaches it; the C line keeps the oracle's form. The inventory goes to 73 twinned modules (C 54).
+
 - **2026-11-20 — PORT-3: the timing laws R19 and R20 on the C verifier, and a statement's timing in C source.**
   - R19 (synchronous timing) and R20 (clock-domain crossing) had run on the oracle and the law rail only, over a
     claim's optional timing, which no C front end could give one. Neither rail took an attribute before a statement
