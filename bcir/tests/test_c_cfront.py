@@ -14851,6 +14851,94 @@ def test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails():
         _refused_alike(exe, src, why, phase="PARSE")
 
 
+# CSUB-2e: an object through a loaded pointer on the twin, as the oracle lowers it -- the address of a member of the
+# struct a loaded pointer reaches (`&s->t->arena`, `bcir_bpe.c`), of a scalar, nested, pointer or volatile member, of a
+# member array's element, and of a pointer element (`&s->pp[j]`); and a member array's element stored, compound-assigned,
+# assigned as a value and stepped (`s->t->arr[i]++`). The twin had refused each.
+_LOADED_HDR = (
+    "#include <stdint.h>\n"
+    "struct ar { uint8_t *base; uint32_t used; };\n"
+    "struct tk { struct ar arena; uint32_t n; uint32_t *p; uint32_t arr[3]; const char *name; uint16_t m[2][3];"
+    " _Atomic uint32_t aa[2]; };\n"
+    "struct st { struct tk *t; uint32_t k; uint32_t **pp; };\n"
+    "struct dv { volatile uint32_t r; uint32_t arr[2]; };\n"
+    "struct ds { struct dv *d; };\n"
+    "static uint32_t buf[4] = {1, 2, 3, 4};\n"
+    "static uint32_t used_of(struct ar *a){ return a->used + 1u; }\n"
+    "static uint32_t at(uint32_t *a){ return *a; }\n"
+)
+_LOADED_SETUP = (
+    'struct tk tk = {{0, 7u}, 3u, buf, {10u, 20u, 30u}, "ab", {{1, 2, 3}, {4, 5, 6}}, {5u, 6u}}; uint32_t *pv[2] = {buf, buf + 1};'
+    " struct st s0 = {&tk, 1u, pv}; struct st *s = &s0; "
+)
+_LOADED_LOWERED = tuple(
+    _LOADED_HDR + "uint32_t f(uint32_t k){ " + _LOADED_SETUP + body + " }\n"
+    for body in (
+        "return used_of(&s->t->arena) + k;",
+        "struct ar *a = &s->t->arena; a->used += k; return tk.arena.used;",
+        "return at(&s->t->n) + at(&s->t->arena.used) + k;",
+        "const char **q = &s->t->name; return (uint32_t)(*q)[1] + k;",
+        "uint32_t **q = &s->t->p; *q = buf + 2; return *tk.p + k;",
+        "uint32_t *e = &s->t->arr[1]; *e = k; return tk.arr[1] + at(&s->t->arr[2]);",
+        "uint32_t **q = &s->pp[1]; return **q + k;",
+        "uint16_t *e = &s->t->m[1][2]; return (uint32_t)*e + k;",
+        "s->t->arr[1]++; ++s->t->arr[2]; uint32_t r = s->t->arr[0]--; return r + tk.arr[0] + tk.arr[1] + tk.arr[2] + k;",
+        "s->t->arr[1] = k; s->t->arr[2] += k; s->t->arr[0] |= 1u; return tk.arr[0] + tk.arr[1] + tk.arr[2];",
+        "uint32_t r = (s->t->arr[1] = k); uint32_t q = (s->t->arr[2] += k); return r + q + tk.arr[2];",
+        "s->t->m[1][2] = (uint16_t)k; s->t->m[0][1] += 2u; return (uint32_t)tk.m[1][2] + tk.m[0][1];",
+        "s->t->aa[1]++; uint32_t r = (s->t->aa[0] += k); uint32_t q = s->t->aa[1]--; return r + q + s->t->aa[1];",
+        "uint32_t r = 0; for (s->t->arr[1] = 0; s->t->arr[1] < 3u; s->t->arr[1]++) r += s->t->arr[1]; return r + k;",
+        "struct dv dv = {0, {1u, 2u}}; struct ds d0 = {&dv}; struct ds *d = &d0; volatile uint32_t *r = &d->d->r; *r = k;"
+        " d->d->arr[1] = 3u; return dv.r + dv.arr[1];",
+    )
+)
+# ... and what stays the oracle's follow-on is refused for its reason: an assignment as a value into device storage
+# through a loaded pointer, whose reload would be a second access
+_LOADED_REFUSED = tuple(
+    (_LOADED_HDR + "uint32_t f(struct ds *d){ " + body + " }\n", why)
+    for body, why in (
+        (
+            "uint32_t r = (d->d->r = 5u); return r;",
+            "this lvalue form's assignment as a value is a follow-on",
+        ),
+        (
+            "uint32_t r = (d->d->arr[1] = 5u); return r;",
+            "this lvalue form's assignment as a value is a follow-on",
+        ),
+        (
+            "uint32_t r = (d->d->arr[1] += 5u); return r;",
+            "this lvalue form's compound assignment as a value is a follow-on",
+        ),
+    )
+)
+
+
+def test_an_object_through_a_loaded_pointer_lowers_alike_on_both_rails():
+    """CSUB-2e. Through a loaded pointer, both rails take the address of a struct, scalar, nested, pointer and volatile
+    member, of a member array's element (of two dimensions too) and of a pointer element, and store, compound-assign,
+    assign as a value and step a member array's element -- an `_Atomic` one as one atomic step -- in a for-step too. Each unit lowers alike, each rail's emit
+    runs as Clang's build of the source and compiles as C11 strictly; an assignment as a value into device storage is
+    refused alike, in the oracle's words."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_LOADED_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"l{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for src, why in _LOADED_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+
+
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through
 # a pointer (`t->p += 1`, `a[i] = 0`, `*pp += 1`), an `( E ) OP= v` the parentheses of which are redundant -- and so is an
 # unbraced statement after a condition, `else` or `do`. The twin had read a step through the expression grammar: it

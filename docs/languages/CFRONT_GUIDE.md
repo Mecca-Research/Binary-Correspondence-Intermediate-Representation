@@ -557,6 +557,10 @@ _mm_sfence();                      //                   store (release) fence ->
   function pointers or through a `T **` (`r = (v[1] = x)`), a dereferenced `T **` (`*low = *high = &absent`), a
   function-pointer member -- stored, then reloaded, as a scalar is. A pointer's compound assignment as a value, `(t->p
   += 1)`, stays refused on both rails as a follow-on (CSUB-2e).
+- An object through a loaded pointer, as through a named one: the address of a member of the struct it reaches
+  (`&s->t->arena`, `&s->t->name`, `&s->t->arr[i]`, `&s->t->m[i][j]`, a volatile member's a pointer to volatile) and of
+  a pointer element (`&s->pp[j]`, a `T **`); a member array's element stored, compound-assigned, assigned as a value
+  and stepped (`s->t->arr[i]++`), an `_Atomic` one atomically (CSUB-2e).
 - A for-step is a statement, as a block's are: a store to a member, an element or through a pointer (`t->p += 1`,
   `a[i] = 0, i++`, `*pp += 1`), stored once with no reload. `( E ) OP= v` with its redundant parentheses is `E OP= v`
   as a step piece too, and as an unbraced statement after a condition, `else` or `do` (CF-STEP).

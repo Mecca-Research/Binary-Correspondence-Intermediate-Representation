@@ -455,8 +455,8 @@
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
    "label": "CS2C26 twin: `&s.arr[i].p[j]` not taken through the member",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "              if(ef.is_ptr && !ef.fp_sig && (is(c,\"->\")||is(c,\"[\")))",
-   "new": "              if(0 && ef.is_ptr && !ef.fp_sig && (is(c,\"->\")||is(c,\"[\")))"
+   "old": "      if(ef.is_ptr && !ef.fp_sig && (is(c,\"->\")||is(c,\"[\")))",
+   "new": "      if(0 && ef.is_ptr && !ef.fp_sig && (is(c,\"->\")||is(c,\"[\")))"
   },
   {
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
@@ -469,21 +469,21 @@
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
    "label": "CS2C28 twin: `&s.arr[i].p` refused again",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "              if(ef.is_ptr){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */",
-   "new": "              if(0){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */"
+   "old": "      if(ef.is_ptr){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */",
+   "new": "      if(0){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */"
   },
   {
    "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
    "label": "CS2C29 twin: `&s.arr[i].in` of a struct member refused, which the oracle takes",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)){   /* a bit-field or function-pointer leaf",
-   "new": "              if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)||ef.sidx>=0){   /* a bit-field or function-pointer leaf"
+   "old": "      if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)){   /* a bit-field or function-pointer leaf",
+   "new": "      if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)||ef.sidx>=0){   /* a bit-field or function-pointer leaf"
   },
   {
    "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
    "label": "CS2C30 twin: `&s.arr[i].x[0]` refused for the twin's own reason",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "              if(!ef.bit_w && !farr(&ef) && !ef.fp_sig && elem_leaf_refused(c,&ef)) return 0;   /* for C's reason */\n",
+   "old": "      if(!ef.bit_w && !farr(&ef) && !ef.fp_sig && elem_leaf_refused(c,&ef)) return 0;   /* for C's reason */\n",
    "new": ""
   },
   {
@@ -1064,8 +1064,8 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W24 twin: `&s.m[k]` of a member array read as an element's address again",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "            if(!mf.elem_ptr && sub_group_count(c,c->i)<mf.nadims){ fail(c,CC_ROW_ADDR); return 0; }",
-   "new": "            if(0 && !mf.elem_ptr && sub_group_count(c,c->i)<mf.nadims){ fail(c,CC_ROW_ADDR); return 0; }"
+   "old": "    if(!mf.elem_ptr && sub_group_count(c,c->i)<mf.nadims){ fail(c,CC_ROW_ADDR); return 0; }",
+   "new": "    if(0 && !mf.elem_ptr && sub_group_count(c,c->i)<mf.nadims){ fail(c,CC_ROW_ADDR); return 0; }"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
@@ -1099,8 +1099,8 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W29 twin: `&s.arr[i]` of a volatile member typed a `T *` again",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "            last_ptr_to_volatile(c,rvo,0);         /* a `volatile T *` of volatile storage, as `&x`'s (CSUB-2d) */",
-   "new": "            last_ptr_to_volatile(c,0,0);         /* a `volatile T *` of volatile storage, as `&x`'s (CSUB-2d) */"
+   "old": "    last_ptr_to_volatile(c,rvo,0);         /* a `volatile T *` of volatile storage, as `&x`'s (CSUB-2d) */",
+   "new": "    last_ptr_to_volatile(c,0,0);         /* a `volatile T *` of volatile storage, as `&x`'s (CSUB-2d) */"
   },
   {
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
@@ -1113,8 +1113,8 @@
    "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
    "label": "CS2W31 twin: `&s.x` of a volatile member typed a `T *` again",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "          last_ptr_to_volatile(c,mf.is_volatile||v->type.is_volatile,mf.sidx>=0 && sdef_vol(c,mf.sidx));   /* (CSUB-2d) */",
-   "new": "          last_ptr_to_volatile(c,0,0);   /* (CSUB-2d) */"
+   "old": "  last_ptr_to_volatile(c,mf.is_volatile||v->type.is_volatile,mf.sidx>=0 && sdef_vol(c,mf.sidx));   /* (CSUB-2d) */",
+   "new": "  last_ptr_to_volatile(c,0,0);   /* (CSUB-2d) */"
   },
   {
    "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",

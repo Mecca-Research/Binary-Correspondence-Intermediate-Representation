@@ -289,6 +289,26 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — CSUB-2e, fifth slice: an object through a loaded pointer.**
+  - The address of a member of the struct a loaded pointer reaches is taken on the twin as the oracle takes it:
+    - a struct member (`&s->t->arena`, `bcir_bpe.c`), a scalar or nested member (`&s->t->arena.used`);
+    - a pointer member;
+    - a member array's element, of one or two dimensions;
+    - a volatile member, as a pointer to volatile.
+
+    The twin's address of a named pointer's member is now one function (`addr_of_member`), and the walk through a
+    loaded pointer ends in it. A pointer element's address, `&s->pp[j]`, is a `T **`. The twin had refused each.
+  - A member array's element through a loaded pointer is an lvalue: `s->t->arr[i]` stored, compound-assigned,
+    assigned as a value and stepped, in a for-step too, an `_Atomic` one as one atomic step (the walk's fifth kind).
+    The twin had refused each but the read.
+  - An assignment as a value into device storage through a loaded pointer is refused in the oracle's words, where the
+    twin had said `)`.
+  - **Evidence.** `test_an_object_through_a_loaded_pointer_lowers_alike_on_both_rails`: 15 units lower alike. Each
+    rail's emit runs as Clang's build of the source and compiles as C11 strictly. 3 device forms are refused alike.
+  - The ratchet stays at 32 of 58. `bcir_bpe.c` moves on to `memcmp` (CSUB-5).
+  - **Standing faults.** `cfront-loaded.json`, 11, each swept RED. Seven of `cfront-csub2.json`'s, whose code
+    `addr_of_member` now holds, are re-anchored and swept RED again.
+
 - **2026-11-20 — CSUB-2e, fourth slice: a pointer assigned as a value, and a for-step as a statement (CF-STEP).**
   - A pointer assigned as a value is stored, then reloaded, as a scalar one is, on both rails:
     - a member, of a value and through a pointer (`!(t->pieces = (piece_t *)...)`, `bcir_spm.c`);
