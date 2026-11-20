@@ -289,6 +289,28 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — CSUB-5a: the `<string.h>` reads are libc edges on both rails.**
+  - `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`, freestanding since C23
+    (4p7), are called verbatim, opaque to R18 and never renamed, as `memcpy` is. Each is typed by its declared
+    result: a comparison's `int`, `memchr`'s `void *`, a string search's `char *`, `strlen`'s `size_t`.
+  - Both rails had read each as a call of an undefined function, and R18 refused the unit. The oracle had typed the
+    result an `int32_t`.
+  - One set names every `<string.h>` routine either rail calls: the oracle's `_STRING_CALLS`, the twin's
+    `string_read` and `str_calls`. The linkable artifact includes `<string.h>` for each and never `<math.h>`, and the
+    link-flag map knows each as libc.
+  - **Evidence.**
+    - `test_a_string_read_is_a_libc_edge_on_both_rails`: 15 units lower alike and R18 clean. Each rail's emit runs
+      as Clang's build of the source and compiles as C11 strictly, two of them where each result's type shows in
+      its value (`strlen(s) - 20 > 0`, `strcmp("a", s) < 0`). A unit's own definition of a name is its function.
+    - The CF-RTWIDE linkable test's `string reads` entry: both rails' artifacts compile with implicit declarations
+      refused.
+  - The ratchet is **38 of 58**: `bcir_spm.c`, `bcir_bpe.c`, `bcir_verify.c`, `bcir_diag.c`, `bcir_decoder_gem.c` and
+    `bcir_decoder_pack.c` compile clean. `bcir_channel.c` moves on to R18's refusal of its recursive JSON skip. No
+    rung lifts that refusal; the record names it `outside`.
+  - `sizeof` of a call to a `<string.h>` routine, `memcpy`'s too, stays refused on both rails, in different words.
+  - **Standing faults.** `cfront-strread.json`, 12, each swept RED. `cfront-filescope.json`'s FS13 and
+    `cfront-roundtrip.json`'s O37 and O38 are re-anchored on `_STRING_CALLS` and swept RED again.
+
 - **2026-11-20 — CSUB-2e, fifth slice: an object through a loaded pointer.**
   - The address of a member of the struct a loaded pointer reaches is taken on the twin as the oracle takes it:
     - a struct member (`&s->t->arena`, `bcir_bpe.c`), a scalar or nested member (`&s->t->arena.used`);

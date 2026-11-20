@@ -30,7 +30,7 @@ from .lower import (
     ScopeOpen,
     SwitchNode,
     WhileNode,
-    _STRING_MEM,
+    _STRING_CALLS,
     _const_spelling,
     _kspell,
 )
@@ -543,8 +543,8 @@ def emit_linkable(lowered, emitted: dict) -> str:
     libc = {"malloc", "calloc", "realloc", "aligned_alloc", "free"}
     if callees & libc:
         parts.append("#include <stdlib.h>")
-    # the memcpy/memmove/memset edges, and the emit's own copies
-    if callees & _STRING_MEM or _MEM_CALL.search(code):
+    # the <string.h> edges (memcpy/memmove/memset, memcmp/memchr/strlen), and the emit's own copies
+    if callees & _STRING_CALLS or _MEM_CALL.search(code):
         parts.append("#include <string.h>")
     parts += [f"#include {h}" for h, names_re in _OWN_HEADERS if names_re.search(code)]
     # `I`, which the lowering read as <complex.h>'s imaginary unit
@@ -553,7 +553,7 @@ def emit_linkable(lowered, emitted: dict) -> str:
     parts += [f"#include {h}" for h, names_re in _C11_MACRO_HEADERS if names_re.search(code)]
     if any(op.startswith("c.call.extern:") for op in ops):
         parts.append("#include <stdio.h>")  # the printf/scanf-family edges
-    if callees - libc - _STRING_MEM and any(
+    if callees - libc - _STRING_CALLS and any(
         op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops
     ):
         parts.append("#include <math.h>")  # the remaining libm edges

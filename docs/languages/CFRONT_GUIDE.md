@@ -557,6 +557,9 @@ _mm_sfence();                      //                   store (release) fence ->
   function pointers or through a `T **` (`r = (v[1] = x)`), a dereferenced `T **` (`*low = *high = &absent`), a
   function-pointer member -- stored, then reloaded, as a scalar is. A pointer's compound assignment as a value, `(t->p
   += 1)`, stays refused on both rails as a follow-on (CSUB-2e).
+- The `<string.h>` reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`
+  (freestanding since C23) -- as libc edges beside `memcpy`, `memmove` and `memset`: called verbatim, opaque to R18,
+  each typed by its declared result; the linkable artifact includes `<string.h>` for them (CSUB-5).
 - An object through a loaded pointer, as through a named one: the address of a member of the struct it reaches
   (`&s->t->arena`, `&s->t->name`, `&s->t->arr[i]`, `&s->t->m[i][j]`, a volatile member's a pointer to volatile) and of
   a pointer element (`&s->pp[j]`, a `T **`); a member array's element stored, compound-assigned, assigned as a value

@@ -4646,6 +4646,16 @@ static int is_string_mem(const char *s, int n) {
   for(int i=0;M[i];i++) if((int)strlen(M[i])==n && !strncmp(M[i],s,(size_t)n)) return 1;
   return 0;
 }
+/* <string.h> reads -- the comparisons `memcmp`, `strcmp` and `strncmp`, the searches `memchr`, `strchr`, `strrchr` and
+ * `strstr`, and `strlen`, freestanding since C23 (4p7): external libc edges like the memory routines (verbatim, opaque
+ * to R18, NOT bcir_-renamed), each typed by its declared result: 1 a comparison's `int`, 2 `memchr`'s `void *`, 3
+ * `strlen`'s `size_t`, 4 a string search's `char *`, else 0 (CSUB-5). The oracle's `_STRING_READ`. */
+static int string_read(const char *s, int n) {
+  static const struct { const char *name; int kind; } M[]={{"memcmp",1},{"strcmp",1},{"strncmp",1},{"memchr",2},
+                                                            {"strchr",4},{"strrchr",4},{"strstr",4},{"strlen",3},{0,0}};
+  for(int i=0;M[i].name;i++) if((int)strlen(M[i].name)==n && !strncmp(M[i].name,s,(size_t)n)) return M[i].kind;
+  return 0;
+}
 
 /* B-breadth (#61) LAPACK: nonzero if s[0..n) is a Fortran-ABI LU/solve driver base name with a trailing
  * underscore (e.g. `sgesv_`) -- the symbol a C caller links against. Mirrors linkflags.py's _LAPACK_FORTRAN
@@ -4704,7 +4714,7 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
   if(libm_float_size(s,n) || libm_is_int(s,n) || libm_is_long(s,n) || libm_is_ld(s,n)) return "-lm";
   /* libc-implicit (malloc/free/realloc/calloc/aligned_alloc, memcpy/memmove/memset + the printf/scanf family)
    * -> no flag. */
-  if(is_stdlib_alloc(s,n) || is_string_mem(s,n) || is_extern_variadic(s,n)) return "";
+  if(is_stdlib_alloc(s,n) || is_string_mem(s,n) || string_read(s,n) || is_extern_variadic(s,n)) return "";
   /* B5 BLAS: cblas_sgemm and any cblas_* (CBLAS) -> -lcblas (the existing B5 path's choice). */
   if(n>=6 && !strncmp("cblas_",s,6)) return "-lcblas";
   /* B2 FFTW: each precision's library (`fftw_library`): fftwf_* -> -lfftw3f, the B2 wrap's single-precision
@@ -4945,6 +4955,17 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
     return t;                                /* not added to fn->calls (opaque to R18) */
   }
+  { int sr=string_read(name->s,name->n);     /* <string.h> memcmp/memchr/strlen, typed by its result (CSUB-5) */
+    if(sr && !unit_defines(c,name)){ uint32_t t;
+      if(sr==2){ t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");   /* a `void *` */
+        if(c->fn->n_res) c->fn->res[c->fn->n_res-1].ptr_depth=1; }
+      else if(sr==4){ bcir_ctype ct; memset(&ct,0,sizeof ct); ct.kind=2; ct.size=1; ct.signd=1; ct.is_plain_char=1;
+        ct.ptr_depth=1; t=temp_ptr(c,&ct,-1); }   /* a `char *` */
+      else t = sr==1 ? tempi(c,4,1) : tempi(c,cc_abi(c)->pointer_size,0);   /* an `int`, a `size_t` */
+      char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
+      bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+      if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+      return t; } }                          /* not added to fn->calls (opaque to R18) */
   const bcir_ctype *rt=callee_ret(c,name);   /* type the result by the callee's return (earlier defs) */
   if(rt && rt->kind==0 && rt->size==0){      /* a void callee -> a bare call statement, no result temp */
     char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.void:%.*s",name->n,name->s);
@@ -11960,6 +11981,8 @@ static int lk_lower_tail(const char *s, size_t n){ if(!n) return 0;
 static const char *lk_includes(CC *c, bcir_cfront_result *out){
   static const char *const stddef_names[]={"size_t","ptrdiff_t","wchar_t","max_align_t",0};
   static const char *const mem_calls[]={"memcpy","memmove","memset",0};
+  static const char *const str_calls[]={"memcpy","memmove","memset","memcmp","strcmp","strncmp","memchr","strchr",
+                                        "strrchr","strstr","strlen",0};   /* `_STRING_CALLS` */
   static const char *const va_names[]={"va_list","va_start","va_arg","va_end","va_copy",0};
   static const char *const bool_names[]={"bool","true","false",0};
   static const char *const align_names[]={"alignas","alignof",0};
@@ -12005,7 +12028,7 @@ static const char *lk_includes(CC *c, bcir_cfront_result *out){
     if(libm) f_libm=1;
     if(ext) f_extern=1;
     if(lk_named(nm,strlen(nm),libc)) f_stdlib=1;
-    else if(lk_named(nm,strlen(nm),mem_calls)) f_string=1;
+    else if(lk_named(nm,strlen(nm),str_calls)) f_string=1;
     else f_other=1; }
   ctext_putf(c,&c->lktext,"#include <stdint.h>\n%s%s%s%s%s%s%s%s%s%s%s%s",
              f_stddef?"#include <stddef.h>\n":"", f_quar?"#include \"bcir_quarantine.h\"\n":"",

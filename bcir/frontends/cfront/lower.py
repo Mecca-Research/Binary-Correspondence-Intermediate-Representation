@@ -336,6 +336,22 @@ _STDLIB_ALLOC = frozenset({"malloc", "calloc", "realloc", "aligned_alloc"})
 # copying between its operands.
 _STRING_MEM = frozenset({"memcpy", "memmove", "memset"})
 
+# <string.h> reads -- the comparisons `memcmp`, `strcmp` and `strncmp`, the searches `memchr`, `strchr`, `strrchr` and
+# `strstr`, and `strlen`, freestanding since C23 (4p7): external libc edges like the memory routines (verbatim, opaque
+# to R18, NOT bcir_-renamed), each typed by its declared result (CSUB-5). The twin's `string_read`. Every <string.h>
+# routine either rail calls is one of `_STRING_CALLS`.
+_STRING_READ = {
+    "memcmp": "int",
+    "strcmp": "int",
+    "strncmp": "int",
+    "memchr": "void *",
+    "strchr": "char *",
+    "strrchr": "char *",
+    "strstr": "char *",
+    "strlen": "size_t",
+}
+_STRING_CALLS = _STRING_MEM | frozenset(_STRING_READ)
+
 # GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
 _BUILTIN_INT = frozenset(
     {  # the bit-count family + abs -> int
@@ -5364,6 +5380,13 @@ class _FuncLowerer:
         if node.callee in _STRING_MEM and node.callee not in self.func_rets:
             # a <string.h> routine: its result is its destination, a `void *`
             t = self._temp(pointer(scalar("void")), f"mem_{node.callee}")
+            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
+        if node.callee in _STRING_READ and node.callee not in self.func_rets:
+            # a <string.h> read: a comparison's `int`, `memchr`'s `void *`, a string search's `char *`, `strlen`'s
+            # `size_t` (CSUB-5)
+            rt = _STRING_READ[node.callee]
+            ty = pointer(scalar(rt[:-2], self.abi)) if rt.endswith(" *") else scalar(rt, self.abi)
+            t = self._temp(ty, f"str_{node.callee}")
             return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
         if node.callee == "free" and node.callee not in self.func_rets:
             # void external (verbatim, opaque) + a R21 lifetime FREE event: the freed pointer (the actual it

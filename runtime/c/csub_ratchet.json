@@ -33,10 +33,7 @@
       "verdict": "clean"
     },
     "bcir_bpe.c": {
-      "verdict": "blocked",
-      "blocker": "verify error: R18: call to undefined function memcmp",
-      "construct": "`memcmp`, a `<string.h>` call R18 does not know yet",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_bundle_cli.c": {
       "verdict": "blocked",
@@ -58,9 +55,9 @@
     },
     "bcir_channel.c": {
       "verdict": "blocked",
-      "blocker": "verify error: R18: call to undefined function memcmp",
-      "construct": "`memcmp`, a `<string.h>` call R18 does not know yet",
-      "rung": "CSUB-5"
+      "blocker": "verify error: R18: recursive call cycle",
+      "construct": "the channel's recursive JSON skip (`jskip_depth` and `jskip_object`, `jskip_array`), which R18 refuses by design: the unit needs an explicit stack, as `bcir_per.c` did",
+      "rung": "outside"
     },
     "bcir_control_plane.c": {
       "verdict": "clean"
@@ -75,16 +72,10 @@
       "verdict": "clean"
     },
     "bcir_decoder_gem.c": {
-      "verdict": "blocked",
-      "blocker": "verify error: R18: call to undefined function strlen",
-      "construct": "`strlen`, a hosted `<string.h>` call R18 does not know (a hosted tool)",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_decoder_pack.c": {
-      "verdict": "blocked",
-      "blocker": "verify error: R18: call to undefined function strlen",
-      "construct": "`strlen`, a hosted `<string.h>` call R18 does not know (a hosted tool)",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_decoder_train.c": {
       "verdict": "blocked",
@@ -93,10 +84,7 @@
       "rung": "CSUB-6"
     },
     "bcir_diag.c": {
-      "verdict": "blocked",
-      "blocker": "verify error: R18: call to undefined function strlen",
-      "construct": "`strlen`, a hosted `<string.h>` call R18 does not know (a hosted tool)",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_ed25519.c": {
       "verdict": "clean"
@@ -219,10 +207,7 @@
       "verdict": "clean"
     },
     "bcir_spm.c": {
-      "verdict": "blocked",
-      "blocker": "verify error: R18: call to undefined function memcmp",
-      "construct": "`memcmp`, a `<string.h>` call R18 does not know yet",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_telemetry_envelope.c": {
       "verdict": "clean"
@@ -246,10 +231,7 @@
       "verdict": "clean"
     },
     "bcir_verify.c": {
-      "verdict": "blocked",
-      "blocker": "verify error: R18: call to undefined function memchr",
-      "construct": "`memchr`, a `<string.h>` call R18 does not know yet",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_xer.c": {
       "verdict": "clean"

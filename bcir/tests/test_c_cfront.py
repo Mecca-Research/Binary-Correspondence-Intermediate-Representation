@@ -13039,6 +13039,16 @@ _LINKABLE_HEADERS = {
         "#include <string.h>",
         ("#include <math.h>", "#include <stdlib.h>"),
     ),
+    # ... and for the reads, CSUB-5: memcmp/strcmp/strncmp, memchr/strchr/strrchr/strstr and strlen
+    "string reads": (
+        '#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\nstatic const char s[] = "ab.cd";\n'
+        "uint32_t f(uint32_t x) { size_t n = strlen(s); const char *p = strchr(s, '.');"
+        " const char *q = strrchr(s, 'c'); const char *w = strstr(s, \"cd\"); const void *m = memchr(s, 'b', n);"
+        ' return (uint32_t)memcmp(s, "ab", 2) + (uint32_t)strcmp(s, "ab") + (uint32_t)strncmp(s, "ab", 2)'
+        " + (uint32_t)n + (p != q) + (w != 0) + (m != 0) + x; }\n",
+        "#include <string.h>",
+        ("#include <math.h>", "#include <stdlib.h>"),
+    ),
     "aligned_alloc": (
         "#include <stdint.h>\n#include <stdlib.h>\nuint32_t f(uint32_t n) { uint32_t *p = aligned_alloc(16, 16);"
         " return (uint32_t)(p != 0) + n; }\n",
@@ -14937,6 +14947,89 @@ def test_an_object_through_a_loaded_pointer_lowers_alike_on_both_rails():
             _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
     for src, why in _LOADED_REFUSED:
         _refused_alike(exe, src, why, phase="PARSE")
+
+
+# CSUB-5: the <string.h> reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`,
+# freestanding since C23 (4p7) -- are libc edges on both rails, as `memcpy` is: called verbatim, opaque to R18, each
+# typed by its declared result. Both had read each as a call of an undefined function (R18), the oracle typing its
+# result an `int32_t` -- the first refusal of `bcir_spm.c`, `bcir_bpe.c`, `bcir_channel.c`, `bcir_verify.c`,
+# `bcir_diag.c`, `bcir_decoder_gem.c` and `bcir_decoder_pack.c`.
+_STRREAD_HDR = (
+    '#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\nstatic const char hay[] = "gather.matmul";\n'
+    "static const uint8_t a8[4] = {1, 2, 3, 4};\n"
+)
+_STRREAD_LOWERED = tuple(
+    _STRREAD_HDR + "uint32_t f(uint32_t k){ " + body + " }\n"
+    for body in (
+        "uint8_t b[4] = {1, 2, 3, (uint8_t)k}; return memcmp(a8, b, 4) == 0;",
+        "uint8_t b[4] = {1, 2, 3, (uint8_t)k}; int r = memcmp(a8, b, sizeof b); return r < 0 ? 1u : r > 0 ? 2u : 0u;",
+        "return (uint32_t)strlen(hay) + k;",
+        "size_t n = strlen(hay + (k & 3u)); return (uint32_t)n;",
+        "const uint8_t *p = (const uint8_t *)memchr(a8, (int)(k & 7u), 4); return p ? (uint32_t)(p - a8) : 9u;",
+        'return (uint32_t)(strcmp(hay, "gather.matmul") == 0) + k;',
+        'return (uint32_t)(strncmp(hay, "gath", 4 + (k & 1u)) == 0);',
+        'const char *p = strstr(hay, "matmul"); return p ? (uint32_t)(p - hay) + k : 0u;',
+        'return strstr(hay, "gather") != NULL ? 1u + k : k;',
+        "const char *p = strchr(hay, '.'); const char *q = strrchr(hay, 'a');"
+        " return (uint32_t)(p - hay) * 100u + (uint32_t)(q - hay) + k;",
+        "char *p = strchr((char *)hay, 'm' + (int)(k & 0u)); return p != 0;",
+        "char b[8]; memset(b, 'x', 7); b[7] = 0; return (uint32_t)strlen(b) + (uint32_t)memcmp(b, \"xxxx\", 4) + k;",
+        # each result's type, where the value shows it: `strlen`'s unsigned `size_t`, a comparison's signed `int`
+        "return (uint32_t)(strlen(hay) - 20 > 0) + k;",
+        'return (uint32_t)(strcmp("a", hay) < 0) + (uint32_t)(strncmp(hay, "z", 1) < 0)'
+        " + (uint32_t)(memcmp(a8, hay, 1) < 0) + k;",
+    )
+) + (  # a prototype alone is the library's
+    "#include <stdint.h>\n#include <stddef.h>\nsize_t strlen(const char *s);\n"
+    'uint32_t f(uint32_t k){ return (uint32_t)strlen("abc") + k; }\n',
+)
+# ... and a unit's own definition of the name is its function on both rails (a reserved name, so no run: C11 7.1.3)
+_STRREAD_OWN = (
+    "#include <stdint.h>\n#include <stddef.h>\nstatic size_t strlen(const char *s){ size_t n = 0; while (s[n]) n++;"
+    ' return n + 1u; }\nuint32_t f(uint32_t k){ return (uint32_t)strlen("abc") + k; }\n'
+)
+
+
+def test_a_string_read_is_a_libc_edge_on_both_rails():
+    """CSUB-5. `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen` are libc edges on both
+    rails: each unit lowers alike and R18 clean, each rail's emit runs as Clang's build of the source and compiles as
+    C11 strictly, and each call is the library's verbatim (the linkable artifacts' <string.h>: the CF-RTWIDE test's
+    `string reads`). A unit that defines the name calls its own function."""
+    from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
+    from bcir.frontends.cfront.lower import _STRING_READ
+
+    assert sorted(_STRING_READ) == sorted(
+        ("memcmp", "strcmp", "strncmp", "memchr", "strchr", "strrchr", "strstr", "strlen")
+    )
+    for name in _STRING_READ:  # libc: no flag, and known as such (not an unknown callee)
+        assert library_for_callee(name) == NO_FLAG, name
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_STRREAD_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary and r.r18_ok, (src, summary)
+            ops = {cl.op for fn in r.lowered.functions.values() for cl in fn.claims}
+            assert any(op.startswith("c.call.libm:") for op in ops), (src, sorted(ops))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"s{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    summary, r, _ = _oracle(_STRREAD_OWN)
+    ops = {cl.op for fn in r.lowered.functions.values() for cl in fn.claims}
+    assert "funcs=2" in summary and not any(op.startswith("c.call.libm:") for op in ops), (
+        summary,
+        sorted(ops),
+    )
+    if exe is not None:
+        assert _lowers_alike(exe, _STRREAD_OWN) == summary
 
 
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through
