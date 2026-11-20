@@ -289,6 +289,39 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — PER refuses every longer spelling of a whole number or a length, on both rails (PER-MIN).**
+  - Both PER rails read `a0 00 00 00 00 00 05`, an ALIGNED INTEGER (0..2^40), as 5. The encoder writes `00 05`.
+    Probing the rest of clause 11 found the same second spelling, accepted alike by the oracle (`per.py`) and the twin
+    (`bcir_per.c`), in five more places:
+    - a semi-constrained number with a leading zero octet (§11.7.4);
+    - an unconstrained one whose first octet only repeats the sign, as in `02 00 05` and `02 ff ff` (§11.8.2);
+    - a two-octet length below 128, as in `80 05` (§11.9.3.6 and §11.9.3.7), including a string's or a list's count
+      and the remainder after a fragment;
+    - the long form of a normally small number up to 63 (§11.6.1);
+    - the long form of a normally small length up to 64 (§11.9.3.4).
+  - The decision is per variant, and it is the same for both. Each of these is a "shall" in its own clause, not one of
+    the choices CANONICAL-PER takes from BASIC-PER, so a longer spelling is not BASIC-PER either. Both variants refuse
+    it on both rails. The generated UPER codecs (`cgen.py`) already refused the length and whole-number forms; the
+    oracle and the twin now hold the same rule.
+  - One predicate each, used at every site:
+    - minimum octets, unsigned: `_minimal_unsigned` / `minimal_unsigned`;
+    - minimum octets, two's complement: `_minimal_signed` / the twin's nine-bit sign test;
+    - the two-octet length: `_two_octet_length` / `bcir_per_length`.
+
+    The twin answers `BCIR_PER_MALFORMED`, its second-spelling status, and the oracle raises an `Asn1Error` that
+    cites the clause.
+  - The twin's normally small length also took a fragment header as the length (16K, with the fragment flag dropped).
+    The oracle refused it, and now the twin does too.
+  - **Evidence.**
+    - `test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails`: in both variants, each
+      longer spelling is refused on both rails (the twin's reply exactly `ERR 3`). The encoder's own spelling beside
+      each still reads, at the edges 0, 63/64, 127/128, ±128, 255/256 and 2^32.
+    - `test_a_payload_length_in_the_two_octet_form_below_128_is_refused`: the same, for the oracle's payload count,
+      alone and after a 16K fragment.
+    - The campaign of encoder output (`test_per_primitives_agree_across_the_python_and_c_rails`) and every
+      PER and ASN.1 module pass unchanged.
+  - **Standing faults.** `per-minimal.json`, 23, each swept RED.
+
 - **2026-11-20 — The twin's macro table grows to one bound on both rails (CF-MACROCAP).**
   - The twin held each macro in 2 KiB of fixed fields, whatever it spelled, in a table of 1024 (2.3 MB). It refused
     the 1025th (`too many macros`), where the oracle took any number, and found a macro by walking the whole table.

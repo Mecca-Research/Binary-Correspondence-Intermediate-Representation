@@ -116,6 +116,14 @@ static bcir_per_status read_unsigned_octets(bcir_per_reader *r, unsigned octets,
   return BCIR_PER_OK;
 }
 
+/* 11.3.6, 11.5.7.4, 11.7.4: a non-negative-binary-integer in the minimum number of octets. A leading zero octet
+ * before another octet spells the same value longer -- `a0 00 00 00 00 00 05` for INTEGER (0..2^40) is five in six
+ * octets, where the encoder writes `00 05` -- and BASIC-PER grants no choice here, so it is a second spelling under
+ * both variants (class A). The oracle's _minimal_unsigned; `octets` is 1..8, so the shift is at most 56. */
+static int minimal_unsigned(uint64_t value, uint64_t octets) {
+  return octets <= 1u || (value >> (8u * (octets - 1u))) != 0u;
+}
+
 /* The length of an indefinite-length constrained whole number (X.691 13.2.6 a): itself a constrained whole number,
  * lb = 1 and ub = max_octets, at most BCIR_PER_MAX_INT_OCTETS. Its range is at most 8, and both variants read a range
  * that small the same way: in bits_for_range(range) bits (11.5.6, 11.5.7.1), which is none for a range of 1 (11.5.4,
@@ -178,6 +186,7 @@ bcir_per_status bcir_per_constrained(bcir_per_reader *r, int64_t lb, int64_t ub,
     if (st != BCIR_PER_OK) return st;
     st = read_unsigned_octets(r, (unsigned)octets, &offset);
     if (st != BCIR_PER_OK) return st;
+    if (!minimal_unsigned(offset, octets)) return BCIR_PER_MALFORMED;
   }
 
   if (offset > span) return BCIR_PER_RANGE;
@@ -198,6 +207,7 @@ bcir_per_status bcir_per_semi_constrained(bcir_per_reader *r, int64_t lb, int64_
   if (st != BCIR_PER_OK) return st;
   st = read_unsigned_octets(r, (unsigned)count, &offset);
   if (st != BCIR_PER_OK) return st;
+  if (!minimal_unsigned(offset, count)) return BCIR_PER_MALFORMED;   /* 11.7.4: the minimum octets */
   /* 11.7.4 adds the offset to lb; refuse a sum this twin cannot represent.
    * Clamping a negative lb to 0 threw away headroom the type actually has: with
    * lb = -1 the representable offsets run to INT64_MAX + 1, so the largest value of
@@ -227,6 +237,13 @@ bcir_per_status bcir_per_unconstrained(bcir_per_reader *r, int64_t *out) {
   if (st != BCIR_PER_OK) return st;
   st = read_unsigned_octets(r, (unsigned)count, &raw);
   if (st != BCIR_PER_OK) return st;
+  /* 11.8.2: the minimum octets. A first octet that only repeats the sign -- all zeros before a clear sign bit, all
+   * ones before a set one -- leaves the top nine bits of the field equal: `02 00 05` is five, spelt `01 05`. The
+   * oracle's _minimal_signed. `count` is 2..8 here, so the shift is 7..55. */
+  if (count > 1u) {
+    uint64_t top = (raw >> (count * 8u - 9u)) & 0x1FFu;
+    if (top == 0u || top == 0x1FFu) return BCIR_PER_MALFORMED;
+  }
   /* 11.4: 2's complement. Sign-extend from the top bit of the FIRST octet read. A shift
    * by 64 would be undefined, which is why the count == 8 case falls through unchanged. */
   if (count < BCIR_PER_MAX_INT_OCTETS) {
@@ -249,6 +266,7 @@ bcir_per_status bcir_per_normally_small(bcir_per_reader *r, uint64_t *out) {
     st = bcir_per_semi_constrained(r, 0, &value);
     if (st != BCIR_PER_OK) return st;
     if (value < 0) return BCIR_PER_RANGE;
+    if (value <= 63) return BCIR_PER_MALFORMED;              /* 11.6.1 owns 0..63 */
     *out = (uint64_t)value;
   }
   return BCIR_PER_OK;
@@ -267,8 +285,15 @@ bcir_per_status bcir_per_normally_small_length(bcir_per_reader *r, uint64_t *out
     return BCIR_PER_OK;
   }
   {
+    /* 11.9.3.4 owns 1..64 in the 6-bit form, and the oracle's unconstrained read refuses a fragment header here:
+     * a fragment's count is not the length, and believing it read 16K as a whole bitmap length. */
     int more = 0;
-    return bcir_per_length(r, 0, 0, 0, out, &more);
+    uint64_t count = 0u;
+    st = bcir_per_length(r, 0, 0, 0, &count, &more);
+    if (st != BCIR_PER_OK) return st;
+    if (more || count <= 64u) return BCIR_PER_MALFORMED;
+    *out = count;
+    return BCIR_PER_OK;
   }
 }
 
@@ -302,7 +327,9 @@ bcir_per_status bcir_per_length(bcir_per_reader *r, int64_t lb, int64_t ub, int 
     uint64_t second = 0u;
     st = bcir_per_get_bits(r, 8u, &second);
     if (st != BCIR_PER_OK) return st;
-    *out = ((first & 0x3Fu) << 8) | second;
+    second |= (first & 0x3Fu) << 8;
+    if (second <= 127u) return BCIR_PER_MALFORMED;           /* 11.9.3.6 owns 0..127: `80 05` is `05` */
+    *out = second;
     return BCIR_PER_OK;
   }
   {                                                          /* 11.9.3.8: a fragment */

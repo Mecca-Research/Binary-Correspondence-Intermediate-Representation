@@ -193,11 +193,14 @@ tokens.
 
 Left open. The rails split on the first two, but only by one refusing what the other takes; none
 is a miscompile:
-- the twin holds 1 024 macros, and the oracle any number;
-- the twin refuses a computed `#include MACRO`, which the oracle expands;
+- the twin holds 1 024 macros, and the oracle any number (closed 2026-11-20 by CF-MACROCAP: one
+  bound of 65 534 on both rails);
+- the twin refuses a computed `#include MACRO`, which the oracle expands (closed 2026-11-20 by
+  CF-INCLUDEX: both rails expand it);
 - `sizeof` of a block-scope object in an integer constant expression is refused on both rails;
 - both PER rails accept an indefinite-length integer spelled in more octets than its value needs,
-  a second spelling of one value (`bcir_per.c` and `bcir/asn1/per.py` alike).
+  a second spelling of one value (`bcir_per.c` and `bcir/asn1/per.py` alike) (closed 2026-11-20 by
+  PER-MIN: both rails refuse it, and five more longer spellings in clause 11, under both variants).
 
 ### 4.2 CSUB-2, slice by slice
 
