@@ -359,6 +359,8 @@ typedef struct {
   int plv_row;                    /* plv_chain stopped at a row of a pointer-to-array member, `p->m[k]` (CSUB-2d) */
   uint32_t row_rid;               /* the last row's value `row_value` and `member_row_value` made (CSUB-2d) */
   int typeof_row;                 /* p_typeof_expr's operand was that row */
+  int step_end, step_stop;        /* a for-loop step is being read: the token its `)` is at, and the end of the piece
+                                   * a statement path lowers (its `;` is that piece's end: `eat`, CF-STEP) */
 } CC;
 /* The recursion-depth cap for the recursive-descent parser. Comfortably below the real native-stack
  * limit (the deepest cycle, the expression chain p_expr->...->p_primary->`(`->p_expr, is ~8 frames per
@@ -766,7 +768,9 @@ static tok adv(CC *c){
   return c->t[c->i++];                            /* (clamping i to nt keeps a runaway parser in-bounds) */
 }
 static void fail(CC *c,const char *m){if(!c->failed){snprintf(c->err,sizeof c->err,"%s",m);c->failed=1;}}
-static int eat(CC *c,const char *s){if(is(c,s)){c->i++;return 1;}fail(c,s);return 0;}
+static int eat(CC *c,const char *s){if(is(c,s)){c->i++;return 1;}
+  if(c->step_stop && c->i==c->step_stop && s[0]==';' && !s[1]) return 1;   /* a for-step piece's end (CF-STEP) */
+  fail(c,s);return 0;}
 /* A token's spelling into a name-sized buffer (BCIR_CIR_NAME). The lexer bounds an identifier at
  * BCIR_CIR_IDENT_MAX, so every name fits; a longer token is refused, never truncated (CF-BUF). */
 static void idcpy(CC *c,char *d,const tok *t){
@@ -3355,7 +3359,7 @@ static void scan_mutations(CC *c, int start) {
  * where the `(` opens a parenthesized expression: not a call's arguments (after a name, `)` or `]`), a cast's type
  * name, an `if`/`while`/`switch` condition, or a declarator (`T (x)[N]`, a form neither rail takes). A pass
  * rewrites the innermost parentheses of a nesting; the caller repeats it until nothing changes. */
-typedef struct { uint8_t blk, start, decl, init, lab, forhdr, fstart; int pd, dpd, xpd; } upframe;
+typedef struct { uint8_t blk, start, decl, init, lab, forhdr, fstart, semis, sstart, ctl; int pd, dpd, xpd, hdr; } upframe;
 #define UP_FRAMES 64
 /* The token after the balanced group that opens at `j` (`(`/`[`/`{` ... its closer), or -1 unbalanced. */
 static int up_group_end(CC *c, int j){
@@ -3428,6 +3432,8 @@ static int up_paren_ok(CC *c, int w, int lo, const upframe *f){
 /* Track what the token just written at `w` does to the statement structure (the frames of the braces it is in). */
 static void up_track(CC *c, upframe *fr, int *nf, int *deep, int w){
   upframe *f=&fr[*nf-1]; const tok *t=tat(c,w), *pv=tat(c,w-1);
+  if(t->k==T_ID && f->blk && f->pd==0 && (tok_is(t,"else")||tok_is(t,"do"))){ f->start=1; f->decl=0; return; }   /* its
+                                                       * statement starts after it, unbraced too (CF-STEP) */
   if(t->k!=T_PUN || t->n!=1) return;
   switch(t->s[0]){
     case '(': case '[':
@@ -3435,9 +3441,15 @@ static void up_track(CC *c, upframe *fr, int *nf, int *deep, int w){
          ||tok_is(pv,"typeof_unqual")||tok_is(pv,"sizeof")||tok_is(pv,"_Alignof")||tok_is(pv,"alignof")
          ||tok_is(pv,"_Alignas")||tok_is(pv,"alignas"))) f->xpd=f->pd;   /* an expression inside a declarator */
       f->pd++;
-      if(t->s[0]=='(' && f->forhdr){ f->forhdr=0; f->fstart=1; }   /* the for-init follows */
+      if(t->s[0]=='(' && f->forhdr){ f->forhdr=0; f->fstart=1; f->hdr=f->pd; f->semis=0; }   /* the for-init follows */
+      else if(t->s[0]=='(' && f->blk && f->pd==1 && (tok_is(pv,"if")||tok_is(pv,"while")||tok_is(pv,"switch")))
+        f->ctl=1;                                          /* a condition: its statement follows its `)` */
       break;
-    case ')': case ']': if(f->pd>0) f->pd--; if(f->pd==f->xpd) f->xpd=-1; break;
+    case ')': case ']': if(f->pd>0) f->pd--; if(f->pd==f->xpd) f->xpd=-1;
+      if(f->hdr && f->pd<f->hdr){ f->hdr=0; f->sstart=0; if(f->blk && f->pd==0){ f->start=1; f->decl=0; } }   /* the
+                                                       * for header's `)`: the loop's statement follows */
+      if(f->ctl && f->pd==0){ f->ctl=0; if(f->blk){ f->start=1; f->decl=0; } }   /* a condition's `)`: its statement */
+      break;
     case '{': {
       int blk=1;                                           /* a block (`({` a statement expression's too) -- */
       if(!tok_is(pv,"(")){                                 /* or an initializer's brace list, a compound literal's */
@@ -3452,9 +3464,13 @@ static void up_track(CC *c, upframe *fr, int *nf, int *deep, int w){
         while(c->nuph>0 && c->uph[c->nuph-1].frame>=*nf) c->nuph--;   /* its names end with it */
         if(*nf>0 && was_blk){ upframe *o=&fr[*nf-1]; if(o->blk && o->pd==0){ o->start=1; o->decl=0; } } }
       break;
-    case ';': if(f->blk && f->pd==0){ f->start=1; f->decl=0; } else if(f->decl && f->pd==f->dpd) f->decl=0; break;
+    case ';': if(f->blk && f->pd==0){ f->start=1; f->decl=0; } else if(f->decl && f->pd==f->dpd) f->decl=0;
+      if(f->hdr && f->pd==f->hdr && ++f->semis==2) f->sstart=1;   /* the for-step's first piece follows (CF-STEP) */
+      break;
     case '=': if(f->decl && f->pd==f->dpd && f->xpd<0) f->init=1; break;
-    case ',': if(f->decl && f->pd==f->dpd) f->init=0; break;
+    case ',': if(f->decl && f->pd==f->dpd) f->init=0;
+      if(f->hdr && f->pd==f->hdr && f->semis==2) f->sstart=1;   /* ... and each after a `,` of the step */
+      break;
     case ':': if(f->lab && f->pd==0){ f->lab=0; f->start=1; } break;
     default: break;
   }
@@ -3515,6 +3531,7 @@ static int unparen_body(CC *c, int start){
       else { f->decl=(uint8_t)decl_start_tok(c,&t); f->dpd=0; f->init=0; f->xpd=-1; f->forhdr=(uint8_t)tok_is(&t,"for");
         first=!f->decl; } }
     else if(f->fstart){ f->fstart=0; f->decl=(uint8_t)decl_start_tok(c,&t); f->dpd=f->pd; f->init=0; f->xpd=-1; }
+    else if(f->sstart){ f->sstart=0; first=1; }           /* a for-step piece starts: `(x) += 1` as `x += 1` */
     if(first && tok_is(&t,"(") && np<UP_FRAMES && !deep){   /* `( E ) = v;` -> `E = v;` (CF-RTFP) */
       int q=up_paren_lvalue(c,r);
       if(q>0){ pend[np].pos=q; pend[np].n=1; pend[np].zero=0; np++; r++; changed=1; continue; } }
@@ -7046,6 +7063,12 @@ static int name_assign_ahead(CC *c){
  * both-rails follow-on -- the value grammar store+reloads a direct member). A BITFIELD member IS eligible
  * (#bfassignexpr) -- its value is the masked/sign-extended STORED field (a bf.set store + a bf.get reload) --
  * UNLESS the base is volatile/MMIO (the re-read would be an extra access; that stays a fallback). */
+/* A member of device storage assigned as a value -- the base is volatile or reaches a device region, or the member
+ * is volatile -- is the oracle's `_mmio` follow-on: its value would re-read the register (CSUB-2e). */
+static int member_value_device(CC *c, const venv *base, const field *f){
+  const bcir_resource *r=res_of(c->fn,base->rid);
+  return base->type.is_volatile || f->is_volatile || (r && r->domain==BCIR_DOM_MMIO);
+}
 static int member_assign_ahead(CC *c, field *out, venv **base){
   if(!isk(c,T_ID)) return 0;
   venv *v=lookup(c,&c->t[c->i]); if(!v || v->sidx<0) return 0;        /* a local/param struct (value or pointer) */
@@ -7057,7 +7080,6 @@ static int member_assign_ahead(CC *c, field *out, venv **base){
   if(fi<0) return 0;
   field f=S->f[fi];
   if(f.is_ptr || farr(&f) || f.sidx>=0) return 0;                  /* a scalar member (plain or bitfield) only */
-  if(f.bit_w && v->type.is_volatile) return 0;                        /* a volatile/MMIO bitfield re-read stays a fallback */
   const tok *as=tat(c,c->i+3);
   if(!(as->k==T_PUN && ((as->n==1 && as->s[0]=='=') || is_compound_op(as)))) return 0;
   *out=f; *base=v; return 1;
@@ -7250,10 +7272,14 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
       else if(assign_tok_at(c,c->i+1) && deref_lvalue_refused(c,pvp,&pid)) return 0; }   /* `x = (*fp = v)` (CF-FPTAB) */
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
+    int pdeep = ok && pv && pv->type.ptr_depth==2 && is_eq;    /* `*pp = q`: a pointer pointee assigned, stored as the
+                                                                 * statement stores it, then reloaded (CSUB-2e) */
+    if(ok && pv && pv->type.kind==2 && !pv->type.is_volatile && pv->type.ptr_depth==2 && !has_idx
+       && is_compound_op(op)){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }   /* `(*pp += 2)`: the oracle's reason */
     if(ok && pv && pv->type.kind==2 && !pv->type.is_volatile      /* a non-volatile pointer to a scalar pointee */
-       && !pv->type.ptr_to_struct                                  /* (a struct's is the oracle's follow-on too) */
-       && pv->type.ptr_depth<=1 && (is_eq || is_compound_op(op))){
-      int sz = pv->type.size?pv->type.size:4;
+       && (!pv->type.ptr_to_struct || pdeep)                       /* (a struct's is the oracle's follow-on too) */
+       && (pv->type.ptr_depth<=1 || pdeep) && (is_eq || is_compound_op(op))){
+      int sz = pdeep ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4);
       bcir_ctype pst=pointee_slot(&pv->type);           /* `*p` stores a byte copy: C's conversion first */
       int at=index_elem_atomic(c,pv);                   /* an `_Atomic` pointee: atomic accesses (CF-ATOMIC) */
       if(is_eq){                                       /* plain: rhs FIRST, then store, then RELOAD */
@@ -7363,7 +7389,13 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
   if(tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     /* eligible only for a plain SCALAR-element array (kind 0, non-volatile) indexed directly to an `=`/OP=
      * -- NOT an array-of-structs `a[i].f`, NOT a member-array (those are reached as a Member, not here). */
-    if((v->type.kind!=0 || v->type.is_volatile) && !ptr_elem_lv(c,v)){ c->i=save; return 0; }
+    const bcir_resource *pr=res_of(c->fn,v->rid);
+    int parr = !v->type.is_volatile                    /* `(a[1] = q)` of an element that is a pointer: its plain
+                                                       * `=` stored and reloaded (CSUB-2e) -- of an array of pointers,
+                                                       * of one of function pointers, or through a `T **` */
+               && ((v->type.kind==2 && (ptr_array(c,v) || (v->type.ptr_depth==2 && sub_group_count(c,c->i+1)==1)))
+                   || (v->type.kind==3 && pr && pr->is_array && sub_group_count(c,c->i+1)==1));
+    if((v->type.kind!=0 || v->type.is_volatile) && !ptr_elem_lv(c,v) && !parr){ c->i=save; return 0; }
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     { field gf; c->i++;                               /* `g[i][j] =`/OP= of a multi-dimensional global: the whole
                                                        * object's element at offset 0, as it is read (CF-SMALL) */
@@ -7378,6 +7410,8 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
     int istart=c->i; c->i++; uint32_t idx=array_index(c,v);   /* resolve the index ONCE (Horner-flattened) */
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
+    if(parr && is_compound_op(op)){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }   /* `(v[1] += 2)` of a pointer
+                                                       * element: the oracle's reason (CSUB-2e) */
     if(!(is_eq || is_compound_op(op))){                /* `a[i]` not followed by `=`/OP= -> a plain value */
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc;
       c->i=istart-1; c->i=save; return 0;
@@ -7385,6 +7419,10 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
     int at=index_elem_atomic(c,v);                    /* `_Atomic` elements: atomic accesses (CF-ATOMIC) */
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same index */
       c->i++; uint32_t rhs=p_assign(c);
+      if(parr){ bcir_ctype et=v->type;                 /* `(a[1] = 0)`: a null pointer of the element's type -- of
+                                                       * a `T **`, one level below the pointer itself */
+        if(et.kind==2 && !ptr_array(c,v) && et.ptr_depth==2) et.ptr_depth=1;
+        rhs=null_pointer(c,rhs,&et); }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=rhs;cl->bounds=access_bnd(c,v->rid);mark_atomic(cl,at);}
       if(at){ bcir_ctype et=index_elem_ctype(v); *out=atomic_assign_value(c,rhs,&et); return 1; }   /* the value
@@ -7464,8 +7502,13 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
      * (a pointer field reaching `->` / an array `[` would not land here; a struct leaf with no `=` is a
      * value), and the base must not be a volatile/MMIO struct (a bitfield re-read there would be an extra
      * access -- it stays a fallback, matching the single-level member path + the oracle's gate). */
-    if(!(is_eq || is_compound_op(op)) || f.is_ptr || farr(&f) || f.sidx>=0
-       || v->type.is_volatile){ c->i=save; return 0; }
+    if((is_eq || is_compound_op(op)) && !farr(&f) && f.sidx<0 && !(f.fp_sig && is_eq)
+       && ((f.is_ptr && !is_eq) || member_value_device(c,v,&f))){   /* `(t->p += 1)` of a pointer leaf, or a leaf of
+                                                       * device storage, whose reload is a second access: the
+                                                       * oracle's reasons (CSUB-2e) */
+      fail(c,is_eq?CC_ASSIGN_VALUE_FO:CC_COMPOUND_VALUE_FO); return 0; }
+    if(!(is_eq || is_compound_op(op)) || (f.is_ptr && (!is_eq || f.fp_sig)) || farr(&f) || f.sidx>=0
+       || v->type.is_volatile){ c->i=save; return 0; }   /* a pointer leaf assigned: stored, then reloaded (CSUB-2e) */
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same member */
       c->i++; uint32_t rhs=p_assign(c);
       if(f.bit_w) store_member_bf(c,v,&f,rhs);          /* a nested bitfield: bf.set */
@@ -7985,6 +8028,9 @@ static uint32_t p_assign(CC *c){
     /* SNAPSHOT the struct base env entry into a LOCAL before the RHS sub-parse below reallocs c->env[]
      * (store_member/emit_member read mbase->rid + mbase->type only -- a by-value copy is identical). */
     venv mbsnap=*mbp; venv *mbase=&mbsnap;
+    if(member_value_device(c,mbase,&mf)){           /* `(t->n = 1)` of device storage: the reload would be a second
+                                                     * access, so the oracle leaves it to the statement (CSUB-2e) */
+      fail(c,tok_is(tat(c,c->i+3),"=")?CC_ASSIGN_VALUE_FO:CC_COMPOUND_VALUE_FO); return 0; }
     c->i+=3;                                        /* consume `name . field` (or `name -> field`) */
     const tok *op=&c->t[c->i];
     if(op->n==1 && op->s[0]=='='){                  /* plain: store rhs, then RE-READ -> the converted value */
@@ -8838,6 +8884,21 @@ static int p_incdec(CC *c) {
 /* one simple expression WITHOUT a trailing `;` -- a for-loop step element (each comma-separated piece
  * of `i++, j--, acc += d`). Mirrors the scalar/pointer assignment forms p_stmt handles (plain `=`,
  * compound `OP=`, inc/dec) so a step matches the oracle whether it is one element or a comma list. */
+/* A for-step piece the statement grammar stores (CF-STEP): it starts at an object's name or a `*` (CF-PAREN's pass
+ * has made `( E ) OP= v` `E OP= v`), and an `=` or an `OP=` stands at its own depth before its end -- a `,` at that
+ * depth, or the step's `)`. Returns that end, or 0. The statement grammar reads it as it reads `piece;`. */
+static int step_store_piece(CC *c){
+  if(!c->step_end || c->i>=c->step_end) return 0;
+  const tok *t0=&c->t[c->i];
+  if(!(tok_is(t0,"*") || (t0->k==T_ID && (lookup(c,t0) || find_global(c,t0->s,t0->n)>=0)))) return 0;
+  int d=0, asg=0, k=c->i;
+  for(; k<c->step_end; k++){ const tok *t=&c->t[k];
+    if(tok_is(t,"(")||tok_is(t,"[")||tok_is(t,"{")) d++;
+    else if(tok_is(t,")")||tok_is(t,"]")||tok_is(t,"}")) d--;
+    else if(d==0 && tok_is(t,",")) break;
+    else if(d==0 && (tok_is(t,"=") || is_compound_op(t))) asg=1; }
+  return asg ? k : 0;
+}
 static void ctype_str(const bcir_ctype *ty,char *o,size_t n);   /* used to spell a captured funcptr signature */
 static void p_simple(CC *c) {
   if(p_incdec(c)) return;
@@ -8870,6 +8931,11 @@ static void p_simple(CC *c) {
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
       mark_obj_write(c,cp,v);
       return; } }
+  { int stop=step_store_piece(c);                  /* a store to a member, an element or through a pointer, `t->p
+                                                     * += 1`, `a[i] = 0`, `*pp += 1`: a statement, as the oracle's
+                                                     * `_for_step` lowers it -- the value path reloaded it, or
+                                                     * left the rest of the step unread (CF-STEP) */
+    if(stop>0){ int os=c->step_stop; c->step_stop=stop; p_stmt(c); c->step_stop=os; return; } }
   (void)p_expr(c);
 }
 /* Store through a loaded POINTER chain (#fieldderef): `s->mid->k = v`, the two-hop `s->mid->leaf->x = v`,
@@ -9064,10 +9130,13 @@ static void p_stmt_inner(CC *c) {
     int step_end=c->i; eat(c,")");
     p_block(c);                        /* the loop body */
     marker(c,"c.cont.tgt",0,0);        /* continue -> run the step, then re-test */
-    if(step_end>step_start){ int save=c->i; c->i=step_start;   /* step @ iter end */
+    if(step_end>step_start){ int save=c->i, ose=c->step_end; c->i=step_start;   /* step @ iter end */
+      c->step_end=step_end;
       p_simple(c);                                             /* `i++, j--, k = …` -- the comma */
       while(is(c,",")&&!c->failed){ c->i++; p_simple(c); }     /* operator in its dominant position */
-      c->i=save; }
+      if(!c->failed && c->i!=step_end) fail(c,")");            /* the whole step read, or refused: never a part
+                                                                * of it lowered and the rest dropped (CF-STEP) */
+      c->step_end=ose; c->i=save; }
     c->nenv=env_mark;                  /* pop the loop scope -- restore outer name bindings */
     marker(c,"c.endloop",0,0); return;
   }

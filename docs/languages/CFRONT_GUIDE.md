@@ -553,6 +553,13 @@ _mm_sfence();                      //                   store (release) fence ->
   `MS_OP(&v, i)` -- which is `v.m`, of a local, an element, a global's element, a member or a device member; and
   `(&*p)->m`, which is `p->m`. A parenthesized operand of `&` or `*`, `&(x)`, `&(s.m[1])`, `*(p)`, is the operand
   itself, at any depth of parentheses (CSUB-2e).
+- A pointer assigned as a value -- a member (`!(t->pieces = alloc(n))`), an element of an array of pointers, of
+  function pointers or through a `T **` (`r = (v[1] = x)`), a dereferenced `T **` (`*low = *high = &absent`), a
+  function-pointer member -- stored, then reloaded, as a scalar is. A pointer's compound assignment as a value, `(t->p
+  += 1)`, stays refused on both rails as a follow-on (CSUB-2e).
+- A for-step is a statement, as a block's are: a store to a member, an element or through a pointer (`t->p += 1`,
+  `a[i] = 0, i++`, `*pp += 1`), stored once with no reload. `( E ) OP= v` with its redundant parentheses is `E OP= v`
+  as a step piece too, and as an unbraced statement after a condition, `else` or `do` (CF-STEP).
 - A struct or union member of an array element -- `set->slots[j].name = name`, `width(d->notes[i].span)`, `return
   t[i].sp;`, `&t[i].sp` -- the aggregate value, read, stored, copied, passed, returned and addressed (CSUB-2c).
 - A pointer-to-array member `T (*m)[N]` -- `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]` -- a pointer to a row of N

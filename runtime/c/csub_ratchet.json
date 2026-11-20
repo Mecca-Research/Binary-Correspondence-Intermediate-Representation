@@ -103,9 +103,9 @@
     },
     "bcir_emit.c": {
       "verdict": "blocked",
-      "blocker": "parse error: ;",
-      "construct": "an assignment through a dereferenced pointer used as a value, `*low = *high = &absent`",
-      "rung": "CSUB-2"
+      "blocker": "verify error: R18: recursive call cycle",
+      "construct": "the emitter's recursive descent over the schema tree (`der_write_full` and `der_write_content`, `per_node`, `jer_node`), which R18 refuses by design: the unit needs an explicit stack, as `bcir_per.c` did",
+      "rung": "outside"
     },
     "bcir_encode.c": {
       "verdict": "clean"
@@ -220,9 +220,9 @@
     },
     "bcir_spm.c": {
       "verdict": "blocked",
-      "blocker": "parse error: )",
-      "construct": "a pointer member's assignment used as a value, `!(t->pieces = (piece_t *)...)`",
-      "rung": "CSUB-2"
+      "blocker": "verify error: R18: call to undefined function memcmp",
+      "construct": "`memcmp`, a `<string.h>` call R18 does not know yet",
+      "rung": "CSUB-5"
     },
     "bcir_telemetry_envelope.c": {
       "verdict": "clean"

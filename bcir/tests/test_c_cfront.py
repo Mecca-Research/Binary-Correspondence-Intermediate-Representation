@@ -14726,6 +14726,220 @@ def test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails():
         assert _lowers_alike(exe, spelled) == _lowers_alike(exe, plain), (spelled, plain)
 
 
+# CSUB-2e: a pointer assigned as a value -- a member (`!(t->pieces = alloc(..))`), an element of an array of pointers, of
+# function pointers or through a `T **` (`r = (v[1] = x)`), a dereferenced `T **` (`*low = *high = &absent`), a function
+# pointer member -- is stored, then reloaded, as a scalar one is, on both rails. Both had refused it (a function pointer
+# member the oracle alone).
+_PTRVALUE_LOWERED = tuple(
+    "#include <stdint.h>\n" + body
+    for body in (
+        "static uint32_t absent = 7u;\nuint32_t f(uint32_t k){ uint32_t a = k, b = 2u; uint32_t *pa = &a, *pb = &b; uint32_t **low = &pa, **high = &pb; *low = *high = &absent; return **low + **high + *pa; }\n",
+        "struct t { uint32_t *pieces; uint32_t n; };\nstatic uint32_t buf[4] = {5, 6, 7, 8};\nuint32_t f(uint32_t k){ struct t s = {0, k}; struct t *t = &s; if (!(t->pieces = buf)) return 0; return t->pieces[k & 3u] + 1u; }\n",
+        "struct t { uint32_t *p; };\nstatic uint32_t buf[2] = {3, 4};\nuint32_t f(uint32_t k){ struct t s = {0}; uint32_t *r = (s.p = buf + (k & 1u)); return *r + *s.p; }\n",
+        "uint32_t f(uint32_t k){ uint32_t x = k, y = 9u; uint32_t *v[2] = {&y, &y}; uint32_t *r = (v[1] = &x); return *r + *v[1] + *v[0]; }\n",
+        "uint32_t f(uint32_t k){ uint32_t y = 9u; uint32_t *v[2] = {&y, &y}; return (v[k & 1u] = 0) == 0; }\n",
+        "uint32_t f(uint32_t k){ uint32_t x = k; uint32_t *p = 0; uint32_t **pp = &p; uint32_t *r = (*pp = &x); return *r + *p; }\n",
+        "struct n { uint32_t v; };\nuint32_t f(uint32_t k){ struct n a = {k}; struct n *p = 0; struct n **pp = &p; struct n *r = (*pp = &a); return r->v + p->v; }\n",
+        "struct t { uint32_t *p; };\nstatic uint32_t buf[2] = {3, 4};\nuint32_t f(uint32_t k){ struct t s = {0}; struct t *t = &s; return (t->p = (k & 1u) ? buf : 0) != 0; }\n",
+        "struct t { uint32_t *cur; };\nstatic uint32_t buf[4] = {1, 2, 3, 0};\nuint32_t f(uint32_t k){ struct t s = {buf}; struct t *t = &s; uint32_t n = 0; while (*(t->cur = t->cur + 1) != 0u) n++; return n + k; }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstruct t { op_t fn; };\nuint32_t f(uint32_t k){ struct t s = {0}; op_t g = (s.fn = inc); return g(k); }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstatic uint32_t dbl(uint32_t x){ return x * 2u; }\nstruct t { op_t fn; uint32_t n; };\nuint32_t f(uint32_t k){ struct t s = {0, 1}; struct t *t = &s; op_t g = (s.fn = inc); op_t h = (t->fn = (k & 1u) ? dbl : inc); op_t a[2] = {inc, inc}; op_t i = (a[1] = dbl); return g(k) + h(k) + i(k) + s.fn(1u); }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstatic uint32_t dbl(uint32_t x){ return x * 2u; }\nuint32_t f(uint32_t k){ op_t a[2] = {inc, inc}; op_t i = (a[k & 1u] = 0) ? inc : dbl; return i(k); }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstatic uint32_t dbl(uint32_t x){ return x * 2u; }\nuint32_t f(uint32_t k){ uint32_t x = k, y = 1u; uint32_t *s[2] = {&y, &y}; uint32_t **v = s; uint32_t *r = (v[1] = &x); return *r + *s[1] + ((v[0] = 0) == 0); }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstatic uint32_t dbl(uint32_t x){ return x * 2u; }\nuint32_t f(uint32_t k){ uint32_t x = k; uint32_t *s[2][2] = {{0, 0}, {0, 0}}; uint32_t *r = (s[1][0] = &x); return *r; }\n",
+        "static uint32_t absent;\nuint32_t f(uint32_t **low, uint32_t **high){ *low = *high = &absent; return **low; }\n",
+        "struct t { uint32_t *pieces; };\nstatic uint32_t buf[4];\nuint32_t f(struct t *t){ if (!(t->pieces = buf)) return 0; return t->pieces[0] + 1u; }\n",
+        "uint32_t f(uint32_t **v, uint32_t *x){ uint32_t *r = (v[1] = x); return *r; }\n",
+    )
+)
+# ... and the value form beside its spelled statements, to one summary
+_PTRVALUE_SPELLED = tuple(
+    (
+        "#include <stdint.h>\nstruct t { uint32_t *p; };\nstatic uint32_t buf[2] = {3, 4};\n" + a,
+        "#include <stdint.h>\nstruct t { uint32_t *p; };\nstatic uint32_t buf[2] = {3, 4};\n" + b,
+    )
+    for a, b in (
+        (
+            "uint32_t f(uint32_t k){ struct t s = {0}; uint32_t *r = (s.p = buf + (k & 1u)); return *r; }\n",
+            "uint32_t f(uint32_t k){ struct t s = {0}; s.p = buf + (k & 1u); uint32_t *r = s.p; return *r; }\n",
+        ),
+        (
+            "uint32_t f(uint32_t k){ uint32_t x = k; uint32_t *p = 0; uint32_t **pp = &p; uint32_t *r = (*pp = &x);"
+            " return *r; }\n",
+            "uint32_t f(uint32_t k){ uint32_t x = k; uint32_t *p = 0; uint32_t **pp = &p; *pp = &x; uint32_t *r = *pp;"
+            " return *r; }\n",
+        ),
+    )
+)
+
+# ... and what stays the oracle's follow-on is refused for its reason on both rails: a pointer's compound assignment as a
+# value (a member, an element, `*pp`), and an assignment into device storage as a value, whose reload would be a second
+# access -- a volatile struct's member through a pointer and of a local, a struct holding volatile storage, a volatile
+# bit-field. The twin had refused the first in its own words (`)`), and lowered the second with a reload.
+_ASSIGN_FO = "this lvalue form's assignment as a value is a follow-on"
+_COMPOUND_FO = "this lvalue form's compound assignment as a value is a follow-on"
+_PTRVALUE_REFUSED = tuple(
+    (
+        "#include <stdint.h>\nstruct t { uint32_t *p; uint32_t n; unsigned bf : 3; };\n"
+        "struct u { volatile uint32_t n; uint32_t m; };\nstatic uint32_t buf[4];\n" + body + "\n",
+        why,
+    )
+    for body, why in (
+        (
+            "uint32_t f(struct t *t){ uint32_t *r = (t->p += 1); return (uint32_t)(r - buf); }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(uint32_t k){ struct t s = {buf}; uint32_t *r = (s.p -= 0); return (uint32_t)(r - buf) + k; }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(uint32_t k){ uint32_t *v[2] = {buf, buf}; uint32_t *r = (v[1] += 2); return (uint32_t)(r - buf) + k; }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(uint32_t **v){ uint32_t *r = (v[1] += 2); return (uint32_t)(r - buf); }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(uint32_t **v){ uint32_t *r = (*v += 2); return (uint32_t)(r - buf); }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(volatile struct t *t){ uint32_t *r = (t->p = buf); return r == buf; }",
+            _ASSIGN_FO,
+        ),
+        ("uint32_t f(volatile struct t *t){ uint32_t r = (t->n = 1u); return r; }", _ASSIGN_FO),
+        ("uint32_t f(volatile struct t *t){ uint32_t r = (t->n += 1u); return r; }", _COMPOUND_FO),
+        ("uint32_t f(volatile struct t *t){ uint32_t r = (t->bf = 1u); return r; }", _ASSIGN_FO),
+        ("uint32_t f(struct u *t){ uint32_t r = (t->m = 1u); return r; }", _ASSIGN_FO),
+        (
+            "uint32_t f(void){ volatile struct t s = {0}; uint32_t r = (s.n = 1u); return r; }",
+            _ASSIGN_FO,
+        ),
+    )
+)
+
+
+def test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails():
+    """CSUB-2e. A pointer assigned as a value is stored, then reloaded, as a scalar one is, on both rails: a member,
+    through a pointer and of a value; an element of an array of pointers, of function pointers and through a `T **`,
+    a null pointer stored too; a dereferenced `T **` of a scalar or a struct pointee, in a chain (`*low = *high =
+    &absent`); a function pointer member. Each unit lowers alike, each rail's emit runs as Clang's build of the source
+    and compiles as C11 strictly, and the value form has its spelled statements' summary. A compound assignment of a
+    pointer used as a value and an assignment into a device struct used as a value stay refused, as the oracle's
+    follow-ons."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_PTRVALUE_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"p{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for value, spelled in _PTRVALUE_SPELLED:
+        assert _lowers_alike(exe, value) == _lowers_alike(exe, spelled), (value, spelled)
+    for src, why in _PTRVALUE_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+
+
+# CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through
+# a pointer (`t->p += 1`, `a[i] = 0`, `*pp += 1`), an `( E ) OP= v` the parentheses of which are redundant -- and so is an
+# unbraced statement after a condition, `else` or `do`. The twin had read a step through the expression grammar: it
+# reloaded a stored member or element, left a pointer member's `+=` unread (the loop never advanced: the emit ran
+# forever) and lowered the part of a step it read, dropping the rest.
+_STEP_HDR = (
+    "#include <stdint.h>\nstruct t { uint32_t *p; uint32_t n; uint8_t b; uint32_t a[4]; struct t *nx; unsigned bf : 3; };\n"
+    "static uint32_t buf[4] = {1, 2, 3, 4};\nstatic uint32_t g;\n"
+)
+_STEP_LOWERED = tuple(
+    _STEP_HDR + "uint32_t f(uint32_t k){ " + body + " }\n"
+    for body in (
+        "struct t s = {buf, 0}; struct t *t = &s; uint32_t r = 0; for (t->p = buf; t->p != buf + 4; t->p += 1) r += *t->p;"
+        " return r + k;",
+        "struct t s = {buf, 0}; struct t *t = &s; uint32_t r = 0; for (t->p = buf; t->p != buf + 4; t->p = t->p + 1)"
+        " r += *t->p; return r + k;",
+        "struct t s = {buf, 0}; uint32_t x = 0, r = 0; for (; x < 4u; x++, s.p += 1) r += *s.p; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->b = 0; t->b < 4u; t->b += 1u) r++; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->n = 0; t->n < 4u; t->n = t->n + 1u) r++; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->bf = 0; t->bf < 4u; t->bf += 1u) r++; return r + k;",
+        "struct t s = {0}, u = {0}; struct t *t = &s; s.nx = &u; uint32_t r = 0; for (t->nx->n = 0; t->nx->n < 4u;"
+        " t->nx->n += 1u) r++; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0, i; for (i = 0; i < 4u; t->a[i] = i + k, i++) r += i;"
+        " return r + t->a[3];",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0, i; for (i = 0; i < 4u; i++, t->n = i) r++; return r + t->n;",
+        "uint32_t a[4] = {9, 9, 9, 9}; uint32_t r = 0, i; for (i = 0; i < 4u; a[i] = k, i++) r++; return r + a[2];",
+        "uint32_t x = k & 1u; uint32_t *a = &x; uint32_t r = 0; for (; *a < 4u; *a = *a + 1u) r++; return r;",
+        "uint32_t *p = buf; uint32_t **pp = &p; uint32_t r = 0; for (; *pp != buf + 4; *pp += 1) r += **pp; return r + k;",
+        "uint32_t *v[1] = {buf}; uint32_t r = 0; for (v[0] = buf; v[0] != buf + 4; v[0] += 1) r += *v[0]; return r + k;",
+        "volatile uint32_t x = 0; volatile uint32_t *a = &x; uint32_t r = 0; for (; *a < 4u; *a += 1u) r++; return r + k;",
+        "volatile struct t s = {0}; volatile struct t *t = &s; uint32_t r = 0; for (t->n = 0; t->n < 4u; t->n += 1u) r++;"
+        " return r + k;",
+        "uint32_t r = 0; for (g = 0; g < 4u; g += 1u) r++; return r + k;",
+        "uint32_t x = 0, r = 0; for (; x < 4u; r++, (x) += 1u, ((r)) += 0u) r++; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->n = 0; t->n < 4u; (t->n) += 1u) r++; return r + k;",
+        "uint32_t x = 0, r = 0; for (; x < 4u; x++) for (; r < 2u; (r) += 1u) r += 0u; return r + x + k;",
+        "uint32_t x = 0, r = 0; if (k) for (; x < 4u; (x) += 1u) r++; else while (x < 2u) (x) += 1u; return r + x + k;",
+        "uint32_t x = 0, r = 0; do (x) += 1u; while ((x) < 3u); switch (k) { case 1: (r) = 2u; break; default: (r) += 1u; }"
+        " if (k) {(r) += 1u;} else if (x) (r) -= 1u; return r + x + k;",
+        "uint32_t a[2] = {0, 0}; if (k) (a)[1] = 3u; else (a[0]) += 1u; return a[0] + a[1];",
+        "uint32_t x, r = 0; for (x = 0; x < 2u; x++) (r) += x + k; return r;",
+    )
+)
+# ... and a step neither rail lowers is refused for one reason on both: never a part of it lowered, the rest dropped
+_STEP_REFUSED = (
+    (
+        _STEP_HDR
+        + "uint32_t f(uint32_t k){ struct t s = {buf, 0}; uint32_t x = 0, r = 0; for (; x < 4u; x++, s.p -= 0,"
+        " s.p++) r += *s.p; return r + k; }\n",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+)
+
+
+def test_a_for_step_store_is_a_statement_on_both_rails():
+    """CF-STEP. A for-step lowers as a statement on both rails: a store to a member, through a pointer member, a narrow
+    or bit-field member, an element and an element of an array of pointers, `*p` and `*pp`, a volatile object's, a
+    global's, a step of several pieces, an `( E ) OP= v` -- and an unbraced statement after a condition, `else` or
+    `do` is a statement start to CF-PAREN's pass. Each unit lowers alike, each rail's emit runs as Clang's build of
+    the source and compiles as C11 strictly; a step neither rail lowers is refused for one reason on both."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_STEP_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"s{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for src, why in _STEP_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+    # a step the twin reads only part of is refused, never lowered without the rest: a store through a call's result,
+    # `h()->n = 1u`, which the twin takes in no position (the oracle lowers it, a recorded split)
+    partial = _STEP_HDR + (
+        "struct t *h(void);\nuint32_t f(uint32_t k){ uint32_t r = 0, x = 0; for (; x < 2u; x++, h()->n = 1u) r++;"
+        " return r + k; }\n"
+    )
+    assert _oracle_refusal(partial) == "", partial
+    if exe is not None:
+        assert _twin_line(exe, partial) == (1, "PARSE-ERR )"), _twin_line(exe, partial)
+
+
 # CF-TYPEOFARR: `typeof` of an array object is the array it is, on both rails, each as Clang builds it. The twin had
 # declared one element of it (`sizeof b` read 2 where C reads 6, `b[2]` refused, an uninitialized pointer stored through
 # for a member array); now it types the operand with `sizeof`'s static walk and hands the dimensions on as an array

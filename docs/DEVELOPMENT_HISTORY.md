@@ -289,6 +289,43 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — CSUB-2e, fourth slice: a pointer assigned as a value, and a for-step as a statement (CF-STEP).**
+  - A pointer assigned as a value is stored, then reloaded, as a scalar one is, on both rails:
+    - a member, of a value and through a pointer (`!(t->pieces = (piece_t *)...)`, `bcir_spm.c`);
+    - an element of an array of pointers, of function pointers or through a `T **`, a null pointer stored as the
+      element's type;
+    - a dereferenced `T **`, of a scalar or a struct pointee, in a chain (`*low = *high = &absent`, `bcir_emit.c`);
+    - a function-pointer member, which the oracle alone had refused.
+  - What stays the oracle's follow-on is refused for its reason on both rails: a pointer's compound assignment as a
+    value, and an assignment into device storage as a value, whose reload would be a second access. The twin had
+    refused the first with a bare `)`. It lowered the second with a volatile reload, through a `volatile struct t *`,
+    of a volatile struct local and of a struct holding volatile storage (`member_value_device`).
+  - **CF-STEP.** Probing those refusals found the twin reading a for-step through the expression grammar, where the
+    oracle's `_for_step` lowers a statement. Of 21 steps, 12 disagreed with the oracle:
+    - a stored member or element was reloaded;
+    - a pointer member's `+=` was left unread, so `for (t->p = buf; t->p != buf + 4; t->p += 1)` emitted a loop that
+      never advanced;
+    - a step read in part was lowered with the rest dropped (`(x) += 1u`, `x++, s.p -= 0, s.p++`);
+    - a volatile `*a += 1u` was refused as a value is.
+
+    A step piece that stores to a member, an element or through a pointer is now read by the statement grammar, with
+    the piece's end as the statement's `;` (`step_store_piece`, `eat`). A step not read whole is refused. CF-PAREN's
+    pass takes a step piece as a statement start, and so an unbraced statement after a condition, `else`, `do` or a
+    for header: `(x) += 1u` there is `x += 1u`. The twin had refused `if (k) (x) += 1u;`, which the oracle lowers.
+  - A store through a call's result, `h()->n = 1u`, is a recorded split: the oracle lowers it, the twin refuses it in
+    every position.
+  - **Evidence.**
+    - `test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails`: 17 units lower alike. Each rail's
+      emit runs as Clang's build of the source and compiles as C11 strictly. 2 value forms have their spelled
+      statements' summary, and 11 forms are refused alike in the oracle's words.
+    - `test_a_for_step_store_is_a_statement_on_both_rails`: 23 units lower alike, as above; 1 step is refused alike;
+      the step the twin reads in part is refused.
+  - The ratchet stays at 32 of 58, but two units move on:
+    - `bcir_spm.c` to `memcmp` (CSUB-5);
+    - `bcir_emit.c` to R18's refusal of the emitter's recursive descent over the schema tree. R18 stays, so the record
+      names it `outside`: the unit needs an explicit stack, as `bcir_per.c` did.
+  - **Standing faults.** `cfront-ptrvalue.json`, 16, and `cfront-step.json`, 9, each swept RED.
+
 - **2026-11-20 — CSUB-2e, third slice: a member through an object's own address, `(&v)->m`.**
   - `(&v)->m` is `v.m` on both rails (C11 6.5.2.3p4, 6.5.3.2p3), and `(&*p)->m` is `p->m` (`&*E` is `E`). Both had
     refused it, and `bcir_kplan.c`'s `MS_OP(&v, i)` had stopped the ratchet at `parse error: )`.

@@ -4987,7 +4987,12 @@ class _FuncLowerer:
                 return self._cast_value(v, unqualified(_ct))  # a second atomic access
             return rid
         lv = self._lvalue(node.target)
-        if not stmt and not (_is_scalar_member_lv(node.target, lv) and not self._mmio(lv.rid)):
+        # a pointer member, element or `*pp` assigned as a value -- `!(t->pieces = alloc(...))`, `*low = *high = &a`
+        # -- is stored, then reloaded, as a scalar one is (CSUB-2e); a function pointer's too, as the twin's is
+        pointer_lv = lv.kind == "mem" and lv.ct.kind in ("pointer", "funcptr") and not lv.bit_width
+        if not stmt and not (
+            (_is_scalar_member_lv(node.target, lv) or pointer_lv) and not self._mmio(lv.rid)
+        ):
             raise CLowerError(
                 "this lvalue form's assignment as a value is a follow-on"
             )  # MMIO re-read unsound
