@@ -334,7 +334,7 @@ class Preprocessor:
         self._depth = 0
         self._cur_file = "<source>"  # __FILE__: the file currently being processed
         self._cur_line = 0  # __LINE__: its presumed line number
-        self._cur_spliced = False  # whether the current line's continuation holds `__LINE__` (`_splice`)
+        self._cur_spliced = False  # its continuation holds `__LINE__` (`_splice`)
         self._presumed = 0  # presumed line of the *next* line (#line sets it)
         self._incstack: list = []  # active #include sites: (including_file, line), outer-first
         self.linemap: list = []  # per output line: (file, line, include-stack snapshot)
