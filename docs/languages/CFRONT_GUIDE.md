@@ -485,7 +485,9 @@ _mm_sfence();                      //                   store (release) fence ->
   of `#` or `##`, and an empty `##` operand is a placemarker (6.10.3.3p2). `#` keeps an argument's spacing as Clang
   and GCC keep it: one space where white space came between two tokens, none elsewhere (`S(a + b)` is `"a + b"`,
   6.10.3.2p2). An argument's prescan nests at most 63 deep (`macro expansion nesting too deep`) and one expansion
-  does at most 2^22 units of work (`macro expansion is too large`), counted alike on both rails. A
+  does at most 2^22 units of work (`macro expansion is too large`), counted alike on both rails. A unit holds at
+  most 65 534 macros at once, the 5 predefined ones and each `-D` included (`too many macros`, alike on both rails:
+  the twin's hide sets name a macro by a 16-bit index; it had stopped at 1024, CF-MACROCAP). A
   function-like invocation may run across lines, its `(` included (6.10.3p10): the lines it spans become one, and
   blank lines keep the next line's number. An invocation left open at the end of the unit (`unterminated macro
   argument list`), a directive inside its arguments (`preprocessing directive inside macro arguments`, 6.10.3p11)

@@ -152,6 +152,11 @@ LINE_ON_SPLICED = "__LINE__ on a line a backslash continues"
 #: The one reason both rails refuse an `#embed` for whose header name C23's parameters follow (`limit`, `prefix`,
 #: `suffix`, `if_empty`): neither reads them, and both had read the whole file past a `limit(1)` (CF-INCLUDEX).
 EMBED_PARAMETERS = "#embed parameters are not supported"
+#: The most macros a unit holds at once, the predefined ones and each `-D` included, and the one reason both rails
+#: refuse one more for: the twin's hide sets name a macro by a 16-bit index (`BCIR_CPP_MAX_MACROS`). The twin had
+#: stopped at 1024, the oracle at none (CF-MACROCAP).
+_MAX_MACROS = 65534
+TOO_MANY_MACROS = "too many macros"
 
 
 class _Incomplete(Exception):
@@ -548,6 +553,8 @@ class Preprocessor:
     # --- #define ---
     def _define(self, rest: str) -> None:
         nm, nameend = _macro_name(rest, "macro name must be an identifier")
+        if nm not in self.macros and len(self.macros) >= _MAX_MACROS:
+            raise CPPError(TOO_MANY_MACROS)
         if nameend < len(rest) and rest[nameend] == "(":  # function-like
             params, i = _params(rest, nameend + 1)
             variadic = bool(params) and params[-1] == "__VA_ARGS__"

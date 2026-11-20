@@ -289,6 +289,27 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — The twin's macro table grows to one bound on both rails (CF-MACROCAP).**
+  - The twin held each macro in 2 KiB of fixed fields, whatever it spelled, in a table of 1024 (2.3 MB). It refused
+    the 1025th (`too many macros`), where the oracle took any number, and found a macro by walking the whole table.
+  - The twin now holds each macro's parameters and body in one allocation of their own size, in a table grown from
+    its allocator, and finds a macro by an FNV-1a hash index: linear probing, kept at most half full, with
+    backward-shift removal. A removal moves the last macro into the freed place, and the index follows it. `#undef`,
+    a context reset and its end free each macro's allocation.
+  - The twin's hide sets name a macro by a 16-bit index, and a token from a macro's body by `PPX_BODY` plus that index.
+    So one bound holds on both rails: 65 534 macros at once, the 5 predefined ones and each `-D` included
+    (`cpp._MAX_MACROS`, `BCIR_CPP_MAX_MACROS`, a `_Static_assert` beside `PPX_BODY`). The set the twin builds a hide
+    set in is sized to it.
+  - **Evidence.** `test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more`:
+    - a unit at the bound lowers alike, and one past it is refused alike;
+    - at the bound, a redefinition, an `#undef`, a new macro and a function-like one are taken;
+    - 3 000 macros, every third undefined and every fifth redefined, keep every name, each tested by `#ifdef` and
+      `#if`;
+    - a 2 000-macro chain, past the old table, expands alike.
+
+    At the bound the twin preprocesses the unit in about 0.03 s.
+  - **Standing faults.** `cfront-macrocap.json`, 9, each swept RED.
+
 - **2026-11-20 — A computed `#include` and `#embed`, read by one predicate on both rails (CF-INCLUDEX).**
   - A `#include` or `#embed` whose operand is no header name is macro-expanded and must then be one (C11 6.10.2p4).
     The oracle did so; the twin refused every computed operand (`malformed #include`), so `#include HDR` and

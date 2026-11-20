@@ -32,12 +32,27 @@
 #define BCIR_CPP_LINE 8192
 #define BCIR_CPP_ARGS 16
 #define BCIR_CPP_LONG_NAME "macro name is too long"
+/* A macro as `define_macro` reads one: fixed fields, held only while its line is read. */
 typedef struct {
   char name[BCIR_CPP_NAME];
   int isfunc;
   int np; char params[16][BCIR_CPP_NAME]; int variadic;
   char body[1024];
+} MacroDef;
+/* A macro as the table holds one: its parameters and body in one allocation of their own size (`blk`). Each had held
+ * 2 KiB whatever it spelled, in a table of 1024 that `define_macro` refused past (`too many macros`), where the oracle
+ * took any number (CF-MACROCAP). */
+typedef struct {
+  char name[BCIR_CPP_NAME];
+  int isfunc, np, variadic;
+  char (*params)[BCIR_CPP_NAME];
+  char *body;
+  void *blk;
 } Macro;
+/* The most macros the table holds, predefined and `-D` ones included, on both rails (the oracle's `cpp._MAX_MACROS`):
+ * a hide set names a macro by a 16-bit index, and a token from a macro's body by PPX_BODY + its index. */
+#define BCIR_CPP_MAX_MACROS 65534u
+#define PP_TOO_MANY_MACROS "too many macros"
 
 /* A token in macro replacement (the engine below): its spelling (`len` bytes at `off` in the text `src` names), its
  * hide set (an interned set of macro indices, 0 the empty one), its kind as `ntok` reads it ('i', 'n', 's', 'p'; 0 a
@@ -50,8 +65,9 @@ typedef struct { uint32_t start, len, hash, slot; } PPHide;
 typedef struct CppState {
   bcir_host_allocator allocator;
   bcir_host_arena scratch;
-  Macro macros[1024];
+  Macro *macros; size_t macro_cap;           /* the macro table, grown from the allocator (CF-MACROCAP) */
   int macro_count;
+  int *macro_index; size_t macro_index_cap;   /* each macro's index by its name's hash, -1 an empty slot (find_macro) */
   const char *limit_error;
   char constant_error[96];   /* the text of a malformed `#if` constant's refusal (`lit`), which limit_error names */
   const char *current_file;
@@ -75,7 +91,7 @@ typedef struct CppState {
   PPHide *hs_v; size_t hs_n, hs_cap;
   uint16_t *hs_el; size_t hs_el_n, hs_el_cap;
   uint32_t *hs_tab; size_t hs_tab_cap;
-  uint16_t hs_tmp[1024];                     /* a set being made: at most every macro */
+  uint16_t hs_tmp[BCIR_CPP_MAX_MACROS];      /* a set being made: at most every macro */
   char ppx_tok[BCIR_CPP_LINE];               /* ntok's copy of the token it reads */
   char line_token[BCIR_CPP_LINE];            /* a `#line` operand (cpp_process recurses per #include: no frame) */
   char *out_buf;                             /* the caller's output buffer, and whether the output filled it */
@@ -99,15 +115,79 @@ static void cpp_limit(CppState *state, const char *message) {
   if (state && !state->limit_error) state->limit_error = message;
 }
 
+/* The macro table's index: open addressing with linear probing over a power-of-two table at most half full, keyed by
+ * a name's FNV-1a hash. A lookup had walked every macro, which a table past 1024 could not afford (CF-MACROCAP). */
+static size_t macro_home(const CppState *state, const char *n, size_t len) {
+  uint32_t h = 2166136261u;
+  for (size_t k = 0; k < len; k++) { h ^= (unsigned char)n[k]; h *= 16777619u; }
+  return (size_t)h & (state->macro_index_cap - 1u);
+}
 static int find_macro(CppState *state, const char *n, int len) {
-  for (int i = 0; i < state->macro_count; i++)
-    if ((int)strlen(state->macros[i].name) == len &&
-        !strncmp(state->macros[i].name, n, (size_t)len)) return i;
+  if (!state->macro_index_cap) return -1;
+  for (size_t h = macro_home(state, n, (size_t)len), i; (i = (size_t)state->macro_index[h]) != (size_t)-1;
+       h = (h + 1u) & (state->macro_index_cap - 1u))
+    if ((int)strlen(state->macros[i].name) == len && !strncmp(state->macros[i].name, n, (size_t)len)) return (int)i;
   return -1;
 }
+/* The index slot that holds macro i. */
+static size_t macro_slot(const CppState *state, int i) {
+  size_t h = macro_home(state, state->macros[i].name, strlen(state->macros[i].name));
+  while (state->macro_index[h] != i) h = (h + 1u) & (state->macro_index_cap - 1u);
+  return h;
+}
+static void macro_index_put(CppState *state, int i) {
+  size_t h = macro_home(state, state->macros[i].name, strlen(state->macros[i].name));
+  while (state->macro_index[h] >= 0) h = (h + 1u) & (state->macro_index_cap - 1u);
+  state->macro_index[h] = i;
+}
+/* Room in the index for one macro more, keeping it at most half full: 0 on an exhausted allocator. */
+static int macro_index_room(CppState *state) {
+  size_t cap = state->macro_index_cap ? state->macro_index_cap : 32u;
+  int *t;
+  while ((size_t)(state->macro_count + 1) * 2u > cap) cap *= 2u;
+  if (cap == state->macro_index_cap) return 1;
+  if (!(t = (int *)bcir_host_allocate(&state->allocator, cap * sizeof *t))) return 0;
+  for (size_t k = 0; k < cap; k++) t[k] = -1;
+  bcir_host_deallocate(&state->allocator, state->macro_index);
+  state->macro_index = t; state->macro_index_cap = cap;
+  for (int i = 0; i < state->macro_count; i++) macro_index_put(state, i);
+  return 1;
+}
+/* Empty slot s, shifting back each entry after it that its home no longer reaches past the hole. */
+static void macro_index_remove(CppState *state, size_t s) {
+  size_t mask = state->macro_index_cap - 1u, j = s, k = s;
+  int *t = state->macro_index;
+  for (;;) {
+    t[j] = -1;
+    for (;;) {
+      size_t h;
+      k = (k + 1u) & mask;
+      if (t[k] < 0) return;
+      h = macro_home(state, state->macros[t[k]].name, strlen(state->macros[t[k]].name));
+      if (j <= k ? (j < h && h <= k) : (j < h || h <= k)) continue;   /* its home lies after the hole: it stays */
+      break;
+    }
+    t[j] = t[k]; j = k;
+  }
+}
+/* Remove the macro `n`: its slot emptied, its allocation freed, the last macro moved into its place. */
 static void undef_macro(CppState *state, const char *n) {
-  int i = find_macro(state, n, (int)strlen(n));
-  if (i >= 0) state->macros[i] = state->macros[--state->macro_count];
+  int i = find_macro(state, n, (int)strlen(n)), last;
+  if (i < 0) return;
+  macro_index_remove(state, macro_slot(state, i));
+  bcir_host_deallocate(&state->allocator, state->macros[i].blk);
+  last = --state->macro_count;
+  if (i != last) {
+    size_t s = macro_slot(state, last);
+    state->macros[i] = state->macros[last];
+    state->macro_index[s] = i;
+  }
+}
+/* Every macro freed and the table emptied (a context reset, or its end). */
+static void macros_clear(CppState *state) {
+  for (int i = 0; i < state->macro_count; i++) bcir_host_deallocate(&state->allocator, state->macros[i].blk);
+  state->macro_count = 0;
+  for (size_t k = 0; k < state->macro_index_cap; k++) state->macro_index[k] = -1;
 }
 
 /* __FILE__/__LINE__: the file currently being processed + its 1-based logical line number. These
@@ -340,6 +420,7 @@ static int pastes(const char *prevp, char a, const char *t, int anum) {
 #define PPX_IN 0u
 #define PPX_POOL 1u
 #define PPX_BODY 2u
+_Static_assert(BCIR_CPP_MAX_MACROS - 1u + PPX_BODY <= 0xFFFFu, "a body token's source is a 16-bit PPX_BODY + index");
 
 static int ppx_grow(CppState *st, void **v, size_t *cap, size_t need, size_t elem) {
   size_t c = *cap ? *cap : 256u;
@@ -1418,7 +1499,7 @@ static int eval_if(CppState *state, const char *expr, const char *const *dirs, i
 
 /* --- directive processing ------------------------------------------------ */
 static void define_macro(CppState *state, const char *rest) {
-  int i=0; Macro m; memset(&m,0,sizeof m);
+  int i=0; MacroDef m; memset(&m,0,sizeof m);
   if(!macro_name(state,rest,&i,m.name,"macro name must be an identifier"))return;
   if(rest[i]=='('){m.isfunc=1;i++; for(;;){
       while(pp_space(rest[i]))i++;
@@ -1455,8 +1536,17 @@ static void define_macro(CppState *state, const char *rest) {
   if(strlen(rest+i)>=sizeof m.body){cpp_limit(state, "macro replacement is too large");return;}
   strcpy(m.body,rest+i);
   undef_macro(state, m.name);
-  if(state->macro_count>=1024){cpp_limit(state, "too many macros");return;}
-  state->macros[state->macro_count++]=m;
+  if((unsigned)state->macro_count>=BCIR_CPP_MAX_MACROS){cpp_limit(state, PP_TOO_MANY_MACROS);return;}
+  { size_t pl=(size_t)m.np*BCIR_CPP_NAME, bl=strlen(m.body)+1u;
+    char *blk=(char *)bcir_host_allocate(&state->allocator,pl+bl);
+    if(!blk || !ppx_grow(state,(void **)&state->macros,&state->macro_cap,(size_t)state->macro_count+1u,
+                         sizeof *state->macros) || !macro_index_room(state)){
+      bcir_host_deallocate(&state->allocator,blk); if(!state->limit_error) cpp_limit(state,"oom"); return; }
+    memcpy(blk,m.params,pl); memcpy(blk+pl,m.body,bl);
+    Macro *t=&state->macros[state->macro_count];
+    memcpy(t->name,m.name,sizeof t->name); t->isfunc=m.isfunc; t->np=m.np; t->variadic=m.variadic;
+    t->params=(char (*)[BCIR_CPP_NAME])(void *)blk; t->body=blk+pl; t->blk=blk;
+    macro_index_put(state,state->macro_count++); }
 }
 
 /* Join one include-search directory and name without a path-length truncation. */
@@ -1858,7 +1948,7 @@ void bcir_cpp_context_reset(bcir_cpp_context *context) {
   if (!context || !context->state) return;
   state = (CppState *)context->state;
   bcir_host_arena_reset(&state->scratch);
-  state->macro_count = 0;
+  macros_clear(state);
   state->limit_error = NULL;
   state->current_file = "<source>";
   state->current_line = 0;
@@ -1875,9 +1965,11 @@ void bcir_cpp_context_destroy(bcir_cpp_context *context) {
   state = (CppState *)context->state;
   allocator = state->allocator;
   bcir_host_arena_destroy(&state->scratch);
-  {                                                  /* macro replacement's buffers (expand_text) */
+  macros_clear(state);
+  {                                                  /* the macro table and macro replacement's buffers */
     void *blocks[] = {state->ppx_stack.v, state->ppx_out.v, state->ppx_args.v, state->ppx_sub.v, state->ppx_body.v,
-                      state->ppx_pool, state->ppx_text, state->hs_v, state->hs_el, state->hs_tab};
+                      state->ppx_pool, state->ppx_text, state->hs_v, state->hs_el, state->hs_tab, state->macros,
+                      state->macro_index};
     for (size_t k = 0; k < sizeof blocks / sizeof blocks[0]; k++) bcir_host_deallocate(&allocator, blocks[k]);
   }
   memset(state, 0, sizeof *state);

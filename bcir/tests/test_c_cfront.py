@@ -7268,7 +7268,7 @@ def test_the_preprocessors_share_their_expansion_bounds():
         "macro expansion is too large",
     )
     # the same edge where hide sets carry the charge: a chain of 1 000 macros first makes sets of 1 to 1 000 elements,
-    # 500 500 in all, so 443 copies expand and 444 do not (no standard header: the twin holds 1 024 macros)
+    # 500 500 in all, so 443 copies expand and 444 do not (the table's bound, CF-MACROCAP, is far past it)
     plain = "unsigned g(unsigned x) { return x; }\n"
     chain = "".join(f"#define C{k} C{k + 1}\n" for k in range(1, 1000)) + "#define C1000\n"
     _lowers_alike(exe, chain + head + "C1 " + " ".join(["B"] * 443) + "\n" + plain)
@@ -14583,6 +14583,52 @@ def test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails():
             assert oracle(src) == (None, EMBED_PARAMETERS), (src, oracle(src))
             if exe is not None:
                 assert twin(src) == (1, f"CPP-ERR {EMBED_PARAMETERS}"), (src, twin(src))
+
+
+def test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more():
+    """CF-MACROCAP. The twin's macro table held 1024 macros of 2 KiB each, whatever each spelled, and refused the
+    1025th (`too many macros`); the oracle took any number. The twin now holds each macro at its own size in a table
+    grown from its allocator, found by a hash index, up to one bound on both rails: 65 534 macros at once, the 5
+    predefined ones and each `-D` included, for the twin's hide sets name a macro by a 16-bit index. A unit at the bound
+    lowers alike and one past it is refused alike; at the bound a redefinition, and a new macro where one was undefined,
+    are taken. The index keeps every name as macros are undefined and redefined, and a chain of 2 000 macros, whose hide
+    sets outgrow the old table, expands alike."""
+    from bcir.frontends.cfront.cpp import _MAX_MACROS, TOO_MANY_MACROS, Preprocessor
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    assert (
+        len(Preprocessor().macros) == 5
+    )  # the bound lands at one count of the unit's own on both rails
+    defs = "".join(f"#define M{k} {k}\n" for k in range(_MAX_MACROS - 5))
+    last = f"M{_MAX_MACROS - 6}"
+    _lowers_alike(exe, defs + f"unsigned f(unsigned x) {{ return x + {last} + M0; }}\n")
+    _refused_alike(
+        exe,
+        defs + f"#define MX 1\nunsigned f(unsigned x) {{ return x + {last}; }}\n",
+        TOO_MANY_MACROS,
+    )
+    # (a function-like one too, whose parameters are held beside its body)
+    _lowers_alike(
+        exe,
+        defs
+        + "#undef M7\n#undef M8\n#define MX 1\n#define MF(a, b) ((a) * (b) + M0)\n#define M0 5\n"
+        + f"unsigned f(unsigned x) {{ return MF(x, MX) + {last}; }}\n",
+    )
+    # the index under churn: 3 000 macros, every third undefined and every fifth (re)defined, each name then tested
+    lines = [f"#define N{k} {k}" for k in range(3000)]
+    lines += [f"#undef N{k}" for k in range(0, 3000, 3)]
+    lines += [f"#define N{k} {k + 7}" for k in range(0, 3000, 5)]
+    live = {k: k + 7 if k % 5 == 0 else k for k in range(3000) if k % 3 or k % 5 == 0}
+    for k in range(3000):
+        lines.append(
+            f"#if !defined(N{k}) || N{k} != {live[k]}\n#error N{k}\n#endif"
+            if k in live
+            else f"#ifdef N{k}\n#error N{k}\n#endif"
+        )
+    _lowers_alike(exe, "\n".join(lines) + "\nunsigned f(unsigned x) { return x + N1 + N5; }\n")
+    # a chain of 2 000 macros, past the old table: its hide sets grow to 2 000 elements (2 001 000 charged in all)
+    chain = "".join(f"#define C{k} C{k + 1}\n" for k in range(1, 2000)) + "#define C2000 7u\n"
+    _lowers_alike(exe, chain + "unsigned f(unsigned x) { return x + C1; }\n")
 
 
 # CF-GARRAY: file-scope arrays and character tables pass through cfront as local ones do. Each function writes the
