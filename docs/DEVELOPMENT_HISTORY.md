@@ -289,6 +289,27 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — A computed `#include` and `#embed`, read by one predicate on both rails (CF-INCLUDEX).**
+  - A `#include` or `#embed` whose operand is no header name is macro-expanded and must then be one (C11 6.10.2p4).
+    The oracle did so; the twin refused every computed operand (`malformed #include`), so `#include HDR` and
+    `#include S(h.h)` lowered on the oracle alone. Each rail now reads a `#include`, `#embed`, `__has_include` and
+    `__has_embed` operand by one predicate (`cpp._header_operand`, the twin's `header_operand`).
+  - Found on the way, on the oracle:
+    - It expanded a header name written as one, which C forbids (6.10.2p2-3), so a macro named `h` turned
+      `<h.h>` into `<nothere.h>`.
+    - It took a bare `#include h.h` for a quoted one, and an unterminated `<stdint.h` for a whole one. Clang refuses
+      both, and so do both rails now.
+  - Found on the way, on both rails:
+    - Each read the whole file past C23's `#embed` parameters, so `limit(1)` embedded two bytes where Clang's build
+      has one: a miscompile. Both now refuse the parameters (`#embed parameters are not supported`).
+    - The twin never evaluated `__has_embed` (a malformed `#if` there). It now gives C23's three answers, which
+      the oracle now gives too: it had answered 1 for an empty resource, where C23 says 2.
+    - A missing header is named in one set of words: the oracle's had added the search path.
+  - **Evidence.** `test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails`: each unit is checked
+    beside its header and its two resources; each one Clang takes lowers alike, and each one it refuses is refused
+    alike in one set of words. Clang 23's `#embed` verdicts are checked where the host's Clang has `#embed`.
+  - **Standing faults.** `cfront-includex.json`, 17, each swept RED.
+
 - **2026-11-20 — `__LINE__` after a spliced line is Clang's on both rails (CF-SPLICELINE).**
   - A backslash-newline deletes a new-line (translation phase 2), and both rails numbered the logical lines that
     were left. So every `__LINE__` after a spliced line was one less than Clang's and GCC's for each splice above

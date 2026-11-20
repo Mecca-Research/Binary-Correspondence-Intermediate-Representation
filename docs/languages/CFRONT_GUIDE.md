@@ -474,7 +474,11 @@ _mm_sfence();                      //                   store (release) fence ->
 - `_Thread_local` globals and `static _Thread_local` locals: each thread has its own object, and both emits
   keep the storage class.
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
-  predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators. Both rails run one engine,
+  predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators. A `#include`, `#embed`,
+  `__has_include` or `__has_embed` operand written as a header name, `"..."` or `<...>`, is read as it stands, no macro
+  replaced inside it; any other operand is macro-expanded and must then be one (C11 6.10.2), so `#include HDR` and
+  `#include S(h.h)` read the header they compute (CF-INCLUDEX). `__has_embed` gives C23's three answers: 1 for a
+  resource that holds bytes, 2 for an empty one, 0 for one not found. Both rails run one engine,
   C's rescanning rule by Prosser's hide sets (C11 6.10.3.4): a name is not re-expanded inside its own expansion
   (`#define EPERM EPERM`), a macro's result is rescanned once with what follows it and a token once passed is never
   looked at again, an argument is macro-replaced on its own before it is substituted (6.10.3.1) except as an operand
@@ -589,6 +593,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   (`'\q'`) or past its code unit (`'\x100'`, and `L'\xffffffff'` where `wchar_t` holds 16 bits), a universal
   character name (`'\u0041'`), two characters behind a prefix (`u8'ab'`): `unsupported character constant`. A
   literal whose quote never closes: `unterminated character constant` or `unterminated string literal`.
+- An `#include`, `#embed`, `__has_include` or `__has_embed` operand that, expanded, is no header name (`malformed
+  #include`), one whose `>` or `"` never comes (`unterminated #include name`), a name past 1023 bytes (`#include name
+  too long`), a file not found (`#include h.h not found`, `#embed d.bin not found`), and C23's `#embed` parameters
+  (`limit`, `prefix`, `suffix`, `if_empty`; `#embed parameters are not supported`): both rails refuse each alike
+  (CF-INCLUDEX).
 - A C23 digit separator a constant does not admit, one not between two digits of its part (6.4.4.1, 6.4.4.2): behind a
   base prefix (`0x'1`), beside a `.`, an exponent's letter or a suffix (`1.'5`, `1'e5`, `1'u`, `1.5'f`), or beside
   another `'`: `invalid integer literal` or `invalid floating constant`, the spelling quoted. A `'` is a number's only

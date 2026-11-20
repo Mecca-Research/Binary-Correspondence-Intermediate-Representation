@@ -14462,6 +14462,129 @@ def test_line_after_a_spliced_line_is_clangs_on_both_rails():
     ), run.stdout
 
 
+# A computed `#include`, `#embed`, `__has_include` and `__has_embed` operand, read by one predicate on both rails
+# (CF-INCLUDEX: the oracle's `_header_operand`, the twin's `header_operand`). The units run beside `h.h` (`HV` 3u),
+# `d.bin` (two bytes) and `e.bin` (none): the oracle reads them from its mounts, the twin from the directory.
+_INCLUDEX_FILES = {"h.h": b"#define HV 3u\n", "d.bin": b"AB", "e.bin": b""}
+_INCLUDEX_FN = "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + HV; }\n"
+_INCLUDEX_ARRAY = "#include <stdint.h>\nstatic const unsigned char b[] = {\n#embed %s\n};\n"
+_INCLUDEX_LOWERED = {
+    "a quoted computed include": '#define HDR "h.h"\n#include HDR\n' + _INCLUDEX_FN,
+    "a stringized one": "#define S(x) #x\n#include S(h.h)\n" + _INCLUDEX_FN,
+    "a computed <stdint.h>": "#define SYS <stdint.h>\n#include SYS\n#define HV 1u\n" + _INCLUDEX_FN,
+    "a computed <h.h>": "#define SH <h.h>\n#include SH\n" + _INCLUDEX_FN,
+    # a header name written as one is no macro's: the oracle had read `<h.h>` as `<nothere.h>` here
+    "a macro named inside <h.h>": "#define h nothere\n#include <h.h>\n" + _INCLUDEX_FN,
+    "a computed __has_include": '#define HDR "h.h"\n#if __has_include(HDR)\n#include HDR\n#endif\n'
+    + _INCLUDEX_FN,
+    "an embed": _INCLUDEX_ARRAY % '"d.bin"' + "uint32_t f(uint32_t x) { return x + b[1]; }\n",
+    "a computed embed": '#define E "d.bin"\n'
+    + _INCLUDEX_ARRAY % "E"
+    + "uint32_t f(uint32_t x) { return x + b[1] + (uint32_t)sizeof b; }\n",
+    # C23 6.10.1: 1 for a resource that holds bytes, 2 for an empty one, 0 for one not found
+    "__has_embed's three answers": '#if __has_embed("e.bin") == 2 && __has_embed("d.bin") == 1 '
+    '&& __has_embed("no.bin") == 0\n#define HV 1u\n#endif\n' + _INCLUDEX_FN,
+}
+_INCLUDEX_REFUSED = (
+    ('#define HDR "nope.h"\n#include HDR\n' + _INCLUDEX_FN, "#include nope.h not found"),
+    ("#include h.h\n" + _INCLUDEX_FN, "malformed #include"),
+    ("#define B <h.h\n#include B\n" + _INCLUDEX_FN, "unterminated #include name"),
+    (
+        "#include <stdint.h\n#define HV 1u\nuint32_t f(uint32_t x) { return x + HV; }\n",
+        "unterminated #include name",
+    ),
+    ("#if __has_include(foo)\n#endif\n" + _INCLUDEX_FN, "malformed __has_include"),
+    ("#define E nothing\n" + _INCLUDEX_ARRAY % "E", "malformed #embed"),
+    (_INCLUDEX_ARRAY % '"nope.bin"', "#embed nope.bin not found"),
+    # one bound on both rails: a header name past 1023 bytes
+    ('#include "' + "a" * 1024 + '.h"\n' + _INCLUDEX_FN, "#include name too long"),
+)
+# ... and C23's `#embed` parameters, which neither rail reads, refused alike where Clang reads them: both had embedded
+# the whole file past a `limit(1)`, two bytes where Clang's build has one
+_INCLUDEX_PARAMETERS = (
+    _INCLUDEX_ARRAY % '"d.bin" limit(1)',
+    '#if __has_embed("d.bin" limit(1))\n#endif\nint z;\n',
+)
+
+
+def _clang_c23_in(d: str, src: str) -> "bool | None":
+    """Whether Clang compiles `src` as C23 beside the files in `d` (`-fsyntax-only`, `-I d`); None where the host has no
+    Clang, or one that predates `#embed` (Clang 19)."""
+    clang = shutil.which("clang")
+    if clang is None:
+        return None
+    path = os.path.join(d, "probe.c")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(src)
+    if "embed" in src:
+        with open(os.path.join(d, "embed_probe.c"), "w", encoding="utf-8") as fh:
+            fh.write('static const unsigned char p[] = {\n#embed "d.bin"\n};\n')
+        old = subprocess.run(
+            [clang, "-std=c23", "-fsyntax-only", os.path.join(d, "embed_probe.c")],
+            capture_output=True,
+        )
+        if old.returncode != 0:
+            return None
+    return (
+        subprocess.run(
+            [clang, "-std=c23", "-fsyntax-only", "-I", d, path], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
+def test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails():
+    """CF-INCLUDEX. A `#include` or `#embed` whose operand is no header name is macro-expanded and must then be one
+    (C11 6.10.2p4): the oracle did so, the twin refused every computed operand (`malformed #include`). A header name
+    written as one is read as it stands, no macro replaced inside it (6.10.2p2-3): the oracle had expanded `<h.h>` too,
+    so a macro named `h` changed the header, and had taken a bare `#include h.h` for a quoted one and an unterminated
+    `<stdint.h` for a whole one. `__has_include` reads its operand alike, and the twin now evaluates `__has_embed`,
+    which it had read as a malformed expression, with C23's three answers, which the oracle now gives too (an empty
+    resource is 2). A file not found is refused in one set of words, and C23's `#embed` parameters, which neither rail
+    reads, are refused alike: both had embedded the whole file past a `limit(1)`."""
+    from bcir.frontends.cfront.cpp import EMBED_PARAMETERS
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    includes = {"h.h": _INCLUDEX_FILES["h.h"].decode()}
+    embeds = {k: v for k, v in _INCLUDEX_FILES.items() if k.endswith(".bin")}
+
+    def oracle(src: str):
+        """The oracle's summary of `src`, or its refusal's reason."""
+        try:
+            r = compile_unit(src, check_clang=False, includes=includes, embeds=embeds)
+        except Exception as e:  # noqa: BLE001 -- each front-end phase's refusal, by its reason
+            return None, str(e)
+        return _summary_line(r), ""
+
+    with tempfile.TemporaryDirectory() as d:
+        for name, data in _INCLUDEX_FILES.items():
+            with open(os.path.join(d, name), "wb") as fh:
+                fh.write(data)
+
+        def twin(src: str) -> tuple:
+            path = os.path.join(d, "u.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            return run.returncode, (run.stdout.splitlines() or [""])[0]
+
+        for label, src in _INCLUDEX_LOWERED.items():
+            assert _clang_c23_in(d, src) in (True, None), label
+            summary, why = oracle(src)
+            assert summary is not None, (label, why)
+            if exe is not None:
+                assert twin(src) == (0, summary), (label, twin(src), summary)
+        for src, want in _INCLUDEX_REFUSED:
+            assert _clang_c23_in(d, src) in (False, None), src
+            assert oracle(src) == (None, want), (src, oracle(src))
+            if exe is not None:
+                assert twin(src) == (1, f"CPP-ERR {want}"), (src, twin(src))
+        for src in _INCLUDEX_PARAMETERS:
+            assert oracle(src) == (None, EMBED_PARAMETERS), (src, oracle(src))
+            if exe is not None:
+                assert twin(src) == (1, f"CPP-ERR {EMBED_PARAMETERS}"), (src, twin(src))
+
+
 # CF-GARRAY: file-scope arrays and character tables pass through cfront as local ones do. Each function writes the
 # globals, so the driver runs the original and the emit from one saved state and compares what each returns and
 # leaves behind.

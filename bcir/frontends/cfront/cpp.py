@@ -149,6 +149,9 @@ LINE_IN_CONTINUED_ARGS = "__LINE__ on a continued line of a macro invocation"
 #: token (CF-SPLICELINE; the twin's `PP_LINE_ON_SPLICED`). One before the splice, or reached through a macro named
 #: there, is the line the logical line starts on, as both compilers read it where they agree.
 LINE_ON_SPLICED = "__LINE__ on a line a backslash continues"
+#: The one reason both rails refuse an `#embed` for whose header name C23's parameters follow (`limit`, `prefix`,
+#: `suffix`, `if_empty`): neither reads them, and both had read the whole file past a `limit(1)` (CF-INCLUDEX).
+EMBED_PARAMETERS = "#embed parameters are not supported"
 
 
 class _Incomplete(Exception):
@@ -593,9 +596,9 @@ class Preprocessor:
 
     # --- #include / #embed ---
     def _include(self, rest: str, out, name) -> None:
-        rest_x = self._expand_text(rest).strip(_ASCII_SPACE)
-        system = rest_x.startswith("<")
-        target = self._header_name(rest)
+        target, system, _after = self._header_operand(
+            rest, "#include"
+        )  # (tokens after it ignored, as Clang's)
         text = self._resolve(target)
         if text is None and system:
             # a standard header no search path holds: the frontend's own, for the target (`stdheaders`, CSUB-1) --
@@ -603,11 +606,10 @@ class Preprocessor:
             text = header_text(target, self.abi)
             if text is None:
                 return
-        if text is None:
-            raise CPPError(
-                f"#include {target!r} not found (in {name}); searched the mount + "
-                f"{len(self.search_paths)} -I path(s)"
-            )
+        if (
+            text is None
+        ):  # in the twin's words, which had named the search path no more than these (CF-INCLUDEX)
+            raise CPPError(f"#include {target} not found")
         # a NUL in a header, in the twin's words (`bcir_cpp.c`); the tokenizer had dropped it (CF-PPLIMITS)
         if "\0" in text:
             raise CPPError(f"#include {target} contains NUL")
@@ -624,25 +626,51 @@ class Preprocessor:
     def _has_header(self, operand: str) -> bool:
         """`__has_include`'s answer for `operand`: the header resolves, or is a `<...>` one this frontend supplies
         itself (`stdheaders`), as `#include` reads it (CSUB-1)."""
-        target = self._header_name(operand)
+        target, system, _after = self._header_operand(operand, "__has_include")
         if self._resolve(target) is not None:
             return True
-        return self._expand_text(operand).strip(_ASCII_SPACE).startswith("<") and (
-            header_text(target, self.abi) is not None
-        )
+        return system and header_text(target, self.abi) is not None
+
+    def _has_embed(self, operand: str) -> str:
+        """`__has_embed`'s answer for `operand` (C23 6.10.1): 1 where the resource holds bytes, 2 where it is empty, 0
+        where it is not found (`__STDC_EMBED_FOUND__`, `_EMPTY__`, `_NOT_FOUND__`), its name read as `#embed` reads
+        one. It had answered 1 for an empty one, and the twin had not read the operator at all (CF-INCLUDEX)."""
+        target, _system, after = self._header_operand(operand, "__has_embed")
+        if after.strip(_ASCII_SPACE):
+            raise CPPError(EMBED_PARAMETERS)
+        data = self.embeds.get(target)
+        return "0" if data is None else "1" if data else "2"
 
     def _embed(self, rest: str) -> str:
-        target = self._header_name(rest.split()[0] if rest else rest)
+        target, _system, after = self._header_operand(rest, "#embed")
+        # `limit(1)` and C23's other parameters: read by neither rail (CF-INCLUDEX)
+        if after.strip(_ASCII_SPACE):
+            raise CPPError(EMBED_PARAMETERS)
         data = self.embeds.get(target)
         if data is None:
-            raise CPPError(f"#embed {target!r} not found")
+            raise CPPError(f"#embed {target} not found")
         return ", ".join(str(b) for b in data)
 
-    def _header_name(self, rest: str) -> str:
-        rest = self._expand_text(rest).strip(_ASCII_SPACE)
-        if rest.startswith(("<", '"')):
-            return rest[1:].split(">" if rest[0] == "<" else '"', 1)[0]
-        return rest
+    def _header_operand(self, rest: str, kind: str) -> tuple[str, bool, str]:
+        """(the header's name, whether it is a `<...>` one, the text after it) of a `#include`, `#embed` or
+        `__has_include` operand `rest` (`kind` names which, for the refusal), read as the twin's `header_operand`
+        reads it (CF-INCLUDEX). A header name written as one, `"..."` or `<...>`, is read as it stands: no macro is
+        replaced inside it (C11 6.10.2p2-3), where `<stdint.h>` had been expanded, so a macro named `stdint` changed
+        the header. Any other operand is macro-expanded and must then be one (6.10.2p4): the twin had refused every
+        computed operand (`malformed #include`), and the oracle had taken a bare name for a quoted one. A name whose
+        `>` or `"` never comes, and one past 1023 bytes, are refused on both rails."""
+        text = rest.strip(_ASCII_SPACE)
+        if not text.startswith(("<", '"')):
+            text = self._expand_text(text).strip(_ASCII_SPACE)
+            if not text.startswith(("<", '"')):
+                raise CPPError(f"malformed {kind}")
+        end = text.find(">" if text[0] == "<" else '"', 1)
+        if end < 0:
+            raise CPPError(f"unterminated {kind} name")
+        target = text[1:end]
+        if len(target.encode("utf-8", "surrogatepass")) > 1023:
+            raise CPPError(f"{kind} name too long")
+        return target, text[0] == "<", text[end + 1 :]
 
     # --- macro expansion ---
     def _defined(self, name: str) -> bool:
@@ -948,7 +976,7 @@ class Preprocessor:
         )
         expr = re.sub(
             r"\b__has_embed\s*\(([^)]*)\)",
-            lambda m: "1" if self._header_name(m.group(1)) in self.embeds else "0",
+            lambda m: self._has_embed(m.group(1)),
             expr,
         )
         # feature-test macros for supported language features: only the L8 ABI attributes are

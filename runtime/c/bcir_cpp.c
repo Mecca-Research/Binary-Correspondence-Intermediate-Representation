@@ -258,6 +258,9 @@ static int next_is(const char *s, int *i, char c) {
  * after the splice the line it stands on, which the twin does not track per token (CF-SPLICELINE; the oracle's
  * `cpp.LINE_ON_SPLICED`) */
 #define PP_LINE_ON_SPLICED "__LINE__ on a line a backslash continues"
+/* An `#embed` whose header name C23's parameters follow (`limit`, `prefix`, `suffix`, `if_empty`): read by neither rail,
+ * and both had embedded the whole file past a `limit(1)` (CF-INCLUDEX; the oracle's `cpp.EMBED_PARAMETERS`) */
+#define PP_EMBED_PARAMETERS "#embed parameters are not supported"
 
 /* --- macro expansion (expand a line until stable) ------------------------ */
 static void app(CppState *state, char *o, size_t cap, size_t *w, const char *s) {
@@ -1291,6 +1294,8 @@ static ppv ce_comma(CE *c, int live, int depth){
 /* Does header `name` resolve against the search dirs (existence only, no read)? Mirrors
  * read_file_dirs' search so __has_include in #if agrees with #include. */
 static char *joined_path(CppState *state, const char *base, const char *name);
+static int read_file_dirs(CppState *state, const char *const *dirs, int ndirs, const char *name,
+                          unsigned char **out, size_t *out_len);
 static int header_exists(CppState *state, const char *const *dirs, int ndirs, const char *name) {
   int tries=ndirs?ndirs:1;
   for(int d=0;d<tries;d++){
@@ -1301,14 +1306,33 @@ static int header_exists(CppState *state, const char *const *dirs, int ndirs, co
   return 0;
 }
 
-/* Parse the header name out of a `__has_include`/`#include` argument `s[0..e)`: the text between the
- * first <...> or "..." pair. Writes into `nm` (NUL-terminated). */
-static void header_name_of(CppState *state, const char *s, int e, char *nm, size_t cap) {
-  int p=0; while(p<e && s[p]!='<' && s[p]!='"') p++;
-  if(p<e && (s[p]=='<' || s[p]=='"')) p++;
-  int q=p; while(q<e && s[q]!='>' && s[q]!='"') q++;
-  int nl=q-p; if(nl<0) nl=0; if((size_t)nl>cap-1){cpp_limit(state, "header name is too long");nl=(int)cap-1;}
-  memcpy(nm, s+p, (size_t)nl); nm[nl]=0;
+/* The header name of an `#include`, `#embed`, `__has_include` or `__has_embed` operand `rest` (kind 0, 1, 2 or 3:
+ * which, for the refusal) into nm (1024 bytes), *sys whether it is a `<...>` one and *after the text after it, read as
+ * the oracle's `_header_operand` reads it (CF-INCLUDEX). A header name written as one, `"..."` or `<...>`, is read as it
+ * stands, no macro replaced inside it (C11 6.10.2p2-3); any other operand is macro-expanded and must then be one
+ * (6.10.2p4) -- the twin had refused every computed operand as `malformed #include`. NULL, or the reason it is
+ * refused: none of the two forms, a `>` or `"` that never comes, a name past 1023 bytes, or the expansion's own. */
+static const char *header_operand(CppState *st, const char *rest, int kind, char *nm, int *sys, const char **after) {
+  static const char *const malformed[]={"malformed #include","malformed #embed","malformed __has_include",
+                                        "malformed __has_embed"};
+  static const char *const open[]={"unterminated #include name","unterminated #embed name",
+                                   "unterminated __has_include name","unterminated __has_embed name"};
+  static const char *const long_[]={"#include name too long","#embed name too long","__has_include name too long",
+                                    "__has_embed name too long"};
+  const char *t=rest; while(pp_space(*t)) t++;
+  if(*t!='<' && *t!='"'){
+    t=expand_text(st,t,0);
+    if(!t) return st->limit_error ? st->limit_error : "preprocessor error";
+    while(pp_space(*t)) t++;
+    if(*t!='<' && *t!='"') return malformed[kind];
+  }
+  *sys = *t=='<';
+  const char *e=strchr(t+1, *sys ? '>' : '"');
+  if(!e) return open[kind];
+  size_t nl=(size_t)(e-(t+1));
+  if(nl>1023) return long_[kind];
+  memcpy(nm,t+1,nl); nm[nl]=0; *after=e+1;
+  return NULL;
 }
 
 static int eval_if(CppState *state, const char *expr, const char *const *dirs, int ndirs) {
@@ -1349,13 +1373,34 @@ static int eval_if(CppState *state, const char *expr, const char *const *dirs, i
       int j=i; while(expr[j]&&expr[j]!='(') j++; int has=0;
       if(expr[j]=='('){ int s=j+1, depth=1, e=s;
         while(expr[e]&&depth){ if(expr[e]=='(')depth++; else if(expr[e]==')'){depth--; if(!depth)break;} e++; }
-        char nm[1024]; header_name_of(state, expr+s, e-s, nm, sizeof nm);
-        has = nm[0] ? header_exists(state, dirs, ndirs, nm) : 0;
-        if (!has && nm[0]) {                     /* ... or a `<...>` one the preprocessor supplies (CSUB-1) */
-          int z = s; while (z < e && pp_space(expr[z])) z++;
-          has = expr[z] == '<' && builtin_known(nm); }
+        char op[BCIR_CPP_LINE], nm[1024]; int sys=0; const char *after=NULL;
+        size_t on=(size_t)(e-s); if(on>sizeof op-1) on=sizeof op-1;
+        memcpy(op, expr+s, on); op[on]=0;
+        const char *why=header_operand(state, op, 2, nm, &sys, &after);
+        if(why) cpp_limit(state, why);
+        else {
+          has = header_exists(state, dirs, ndirs, nm);
+          if (!has) has = sys && builtin_known(nm); }   /* ... or a `<...>` one the preprocessor supplies (CSUB-1) */
         i = (expr[e]==')') ? e+1 : e; }
       { char bit[2]={(char)(has?'1':'0'),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
+    if(k=='i'&&!strcmp(t,"__has_embed")){
+      /* C23 6.10.1: 1 where the resource is found and holds bytes, 2 where it is found empty, 0 where it is not
+       * (`__STDC_EMBED_FOUND__`, `_EMPTY__`, `_NOT_FOUND__`), its name read as `#embed` reads one: the twin had read the
+       * operator as an identifier, a malformed expression, where the oracle evaluated it (CF-INCLUDEX) */
+      int j=i; while(expr[j]&&expr[j]!='(') j++; int has=0;
+      if(expr[j]=='('){ int s=j+1, depth=1, e=s;
+        while(expr[e]&&depth){ if(expr[e]=='(')depth++; else if(expr[e]==')'){depth--; if(!depth)break;} e++; }
+        char op[BCIR_CPP_LINE], nm[1024]; int sys=0; const char *after=NULL;
+        size_t on=(size_t)(e-s); if(on>sizeof op-1) on=sizeof op-1;
+        memcpy(op, expr+s, on); op[on]=0;
+        const char *why=header_operand(state, op, 3, nm, &sys, &after);
+        if(!why){ while(pp_space(*after)) after++; if(*after) why=PP_EMBED_PARAMETERS; }
+        if(why) cpp_limit(state, why);
+        else { unsigned char *blob=NULL; size_t bn=0; int rr=read_file_dirs(state,dirs,ndirs,nm,&blob,&bn);
+          has = rr<0 ? 0 : bn ? 1 : 2;
+          if(rr>=0) bcir_host_deallocate(&state->allocator,blob); }
+        i = (expr[e]==')') ? e+1 : e; }
+      { char bit[2]={(char)('0'+has),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
     app(state,buf,sizeof state->conditional_buffer,&w,t);}
   if(state->limit_error) return 0;
   const char *ex=expand_text(state,buf,0);
@@ -1676,13 +1721,9 @@ static int cpp_process(CppState *state, const char *src, const unsigned char *sp
         else if(!strcmp(dir,"undef")){char n[BCIR_CPP_NAME];int j=0;
           if(macro_name(state,rest,&j,n,"#undef requires an identifier"))undef_macro(state,n);}
         else if(!strcmp(dir,"include")){
-          int sys=(rest[0]=='<');char close=sys?'>':'"';char nm[1024];int j=0;
-          if(rest[0]!='<'&&rest[0]!='"'){if(err&&errcap)snprintf(err,errcap,"malformed #include");return 1;}
-          j++;int s2=j;while(rest[j]&&rest[j]!=close)j++;
-          if(rest[j]!=close){if(err&&errcap)snprintf(err,errcap,"unterminated #include name");return 1;}
-          int nl=j-s2;
-          if(nl>1023){if(err&&errcap)snprintf(err,errcap,"#include name too long");return 1;}
-          memcpy(nm,rest+s2,(size_t)nl);nm[nl]=0;
+          int sys=0;char nm[1024];const char *after=NULL;   /* (tokens after the name ignored, as Clang's) */
+          const char *why=header_operand(state,rest,0,nm,&sys,&after);
+          if(why){if(err&&errcap)snprintf(err,errcap,"%s",why);return 1;}
           unsigned char *hd=NULL;size_t hn=0;int rr=read_file_dirs(state,dirs,ndirs,nm,&hd,&hn);
           if(rr<0){
             if(rr==-2){if(err&&errcap)snprintf(err,errcap,"cannot read #include %s",nm);return 1;}
@@ -1709,12 +1750,11 @@ static int cpp_process(CppState *state, const char *src, const unsigned char *sp
           }
         }
         else if(!strcmp(dir,"embed")){
-          int sys=(rest[0]=='<');char close=sys?'>':'"';char nm[1024];int j=0;
-          if(rest[0]!='<'&&rest[0]!='"'){if(err&&errcap)snprintf(err,errcap,"malformed #embed");return 1;}
-          j++;int s2=j;while(rest[j]&&rest[j]!=close)j++;
-          if(rest[j]!=close){if(err&&errcap)snprintf(err,errcap,"unterminated #embed name");return 1;}
-          int nl=j-s2;if(nl>1023){if(err&&errcap)snprintf(err,errcap,"#embed name too long");return 1;}
-          memcpy(nm,rest+s2,(size_t)nl);nm[nl]=0;
+          int sys=0;char nm[1024];const char *after=NULL;
+          const char *why=header_operand(state,rest,1,nm,&sys,&after);
+          if(why){if(err&&errcap)snprintf(err,errcap,"%s",why);return 1;}
+          while(pp_space(*after)) after++;
+          if(*after){if(err&&errcap)snprintf(err,errcap,"%s",PP_EMBED_PARAMETERS);return 1;}
           unsigned char *blob=NULL;size_t bn=0;int rr=read_file_dirs(state,dirs,ndirs,nm,&blob,&bn);
           if(rr<0){if(err&&errcap)snprintf(err,errcap,rr==-2?"cannot read #embed %s":"#embed %s not found",nm);return 1;}
           char num[16];for(size_t b=0;b<bn&&!state->limit_error;b++){
