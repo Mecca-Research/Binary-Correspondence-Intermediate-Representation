@@ -243,6 +243,15 @@ class Block:
 
 
 @dataclass(frozen=True)
+class Timed:
+    """A statement a `[[bcir::timing(...)]]` attribute leads (PORT-3): every claim `stmt` lowers carries `timing`,
+    a `bcir.model.Timing`, for the timing laws R19 and R20 -- the twin's `CC.timing`."""
+
+    timing: object
+    stmt: object
+
+
+@dataclass(frozen=True)
 class StmtExpr:
     """A GCC statement expression `({ s1; ...; expr; })` -- a compound statement, in its own scope, whose
     value is the last statement's (an expression statement). The prefix statements lower inline before the

@@ -136,6 +136,51 @@ input under the same policy; the cross-rail exit-code parity is gated in `tools/
 uaf.c: lifetime error: R21 f: use-after-free of RID 102 (freed and not re-allocated)
 ```
 
+## Timing annotations (R19/R20, PORT-3)
+
+A statement's claims take a timing from the C23 attribute `[[bcir::timing(field = value, ...)]]` (also
+`__bcir__` and `__timing__`), which the timing laws R19 (synchronous timing) and R20 (clock-domain crossing) read:
+every claim the statement lowers carries it, the claims of a block's statements and of a control statement's
+condition, body and step among them. Both rails answer `__has_c_attribute(bcir::timing)` with 1, so a unit Clang
+also builds guards it:
+
+```c
+#if __has_c_attribute(bcir::timing)
+#define TIMED(...) [[bcir::timing(__VA_ARGS__)]]
+#else
+#define TIMED(...)
+#endif
+
+uint32_t g;
+uint32_t poll(uint32_t x) {
+  TIMED(clock_domain = "rtc", latency_cycles = 2) g = x;
+  uint32_t y;
+  TIMED(clock_domain = "cpu", sync_type = "mixed") y = g;   /* synchronized: no R20 */
+  return y;
+}
+```
+
+| field | value |
+|---|---|
+| `clock_domain`, `power_domain`, `sync_type` | one string literal of at most 63 letters, digits, `_`, `.` and `-` |
+| `latency_cycles`, `min_throughput_q16`, `clock_frequency_mhz`, `setup_hold_margin` | an integer constant expression of 64 bits |
+| `critical_path` | 0 or 1 |
+
+Each field is named at most once; one it does not name keeps the model's default. R19 refuses an unknown
+`sync_type`, a negative latency, margin or clock, a synchronous claim with no positive clock, and a margin past a
+positive latency. R20 refuses a claim that reads, from another named clock domain, a RID the last claim to write it
+wrote, unless it is synchronized (`sync_type = "mixed"`, or a barriered hazard). Both are in the verdict on both
+rails: `bcir-cc` refuses the unit, naming the law and the claim in the oracle's words.
+
+```
+poll.c: verify error: R20: claim 1001: reads RID 101 from clock domain 'rtc' into 'cpu' without a synchronizer (declare sync_type='mixed' or a barriered hazard) -- an unguarded clock-domain crossing
+```
+
+R20 follows the claim graph's resources, function by function, as the oracle defines it: a crossing through a
+global between two functions, or through memory a pointer reaches (a device register), is not one it sees. A timing
+leads a statement; before a declaration, a function, a member, a label, a `case`, a `default` or a null statement it
+is refused (`a timing annotation leads a statement`), and so is one inside a statement another annotates.
+
 ## Inline assembly (ASM1)
 
 GNU inline assembly — `asm` / `__asm__`, basic and extended — is modeled as an **ISA-neutral trusted
@@ -597,6 +642,14 @@ _mm_sfence();                      //                   store (release) fence ->
 These are reported as diagnostics, or — with `--fallback` — as a fallback-to-LLVM signal:
 
 - Non-constant `static`/global initializers; constructs beyond the L1–L6 statement subset.
+- A C23 vendor attribute neither rail knows to be a hint -- `[[gnu::packed]]`, `[[gnu::aligned(8)]]`,
+  `[[gnu::section(".x")]]`, `[[clang::likely]]` -- wherever an attribute run is read (`a vendor attribute neither
+  rail knows to be a hint is not supported`): neither rail can honor one, and both had dropped it, laying a struct
+  out at offsets Clang's are not (CF-VENDORATTR). Write the GNU form, `__attribute__((packed))`, which both rails lay
+  out. A standard attribute (`[[maybe_unused]]`, `[[nodiscard]]`, `[[fallthrough]]`) and a GNU or Clang hint
+  (`always_inline`, `artificial`, `cold`, `const`, `deprecated`, `flatten`, `format`, `hot`, `leaf`, `malloc`,
+  `noinline`, `nonnull`, `noreturn`, `nothrow`, `pure`, `returns_nonnull`, `unused`, `used`, `warn_unused_result`)
+  are read over and dropped before a function, an object, a member, a block declaration or a statement.
 - A function called, named as a value or used in a `sizeof` operand before any declaration of it -- C99 dropped
   the implicit declaration (C11 6.5.1p2): `call to undeclared function 'g'`, `use of undeclared identifier 'g'`.
   Declare it first with a prototype. A definition that leaves a parameter unnamed is refused as well.

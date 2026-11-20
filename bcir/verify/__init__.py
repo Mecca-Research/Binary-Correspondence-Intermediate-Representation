@@ -814,6 +814,7 @@ def _canon_func_records(lf) -> list[str]:
                 int(c.domain),
                 int(bool(c.volatile)),
             )
+            + _canon_timing(c.timing)
         )
     recs.sort()
 
@@ -849,6 +850,25 @@ def _canon_func_records(lf) -> list[str]:
         )
     )
     return recs
+
+
+def _canon_timing(tm) -> str:
+    """A claim's timing in its canon record (PORT-3): nothing for none -- every unit without one keeps its canon byte
+    for byte -- else `|t:` and its eight fields in the model's order, the flag as 0 or 1. Its names are letters,
+    digits, `_`, `.` and `-` (the front ends' `TIMING_TEXT`), so a comma parts them. The twin's `canon_timing`."""
+    if tm is None:
+        return ""
+    fields = (
+        tm.clock_domain,
+        tm.latency_cycles,
+        tm.min_throughput_q16,
+        int(bool(tm.critical_path)),
+        tm.power_domain,
+        tm.sync_type,
+        tm.clock_frequency_mhz,
+        tm.setup_hold_margin,
+    )
+    return "|t:" + ",".join(str(f) for f in fields)
 
 
 def cfront_structural_canon(lowered) -> str:

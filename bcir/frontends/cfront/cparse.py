@@ -9,6 +9,7 @@ standard C precedence with `[]` / `.` / `->` / call postfixes.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 from . import cast
 from .abi import HOST
@@ -16,6 +17,7 @@ from .clex import KEYWORDS, Tok, char_constant, parse_int_literal, tokenize
 from .ctype_model import int_literal_type
 from .ctype_model import is_scalar_name
 from .diagnostics import FixIt, SourceDiagnostic, Span
+from ...model import Timing
 from .lower import (
     BF_WIDTH,
     DIM_RANGE,
@@ -42,6 +44,21 @@ from .lower import (
     OFFSETOF_INCOMPLETE,
     OFFSETOF_NOT_AGG,
     STATIC_ASSERT_FAILED,
+    ATTR_VENDOR,
+    VENDOR_HINTS,
+    VENDOR_PREFIXES,
+    TIMING_COUNT,
+    TIMING_COUNTS,
+    TIMING_FIELD,
+    TIMING_FIELDS,
+    TIMING_FLAG,
+    TIMING_NESTED,
+    TIMING_PLACE,
+    TIMING_SYNTAX,
+    TIMING_TEXT,
+    TIMING_TEXTS,
+    TIMING_TWICE,
+    TIMING_UNKNOWN,
     TYPE_NAME_NAMED,
     CAST_ARRAY,
     ATOMIC_LITERAL,
@@ -50,6 +67,18 @@ from .lower import (
     fold_constant,
     layout_aggregates,
 )
+
+
+#: the spellings of PORT-3's attribute, `bcir::timing` (C23 6.7.13.2: a prefix and a token may be written `__x__`)
+_BCIR_PREFIX = frozenset({"bcir", "__bcir__"})
+_TIMING_NAME = frozenset({"timing", "__timing__"})
+#: a timing name's literal, whole: its quotes and at most 63 letters, digits, `_`, `.` and `-` (`TIMING_TEXT`)
+_TIMING_LITERAL = re.compile(r'"[A-Za-z0-9_.\-]{0,63}"', re.ASCII)
+
+
+def _bare(name: str) -> str:
+    """An attribute prefix or name with the `__x__` spelling C23 6.7.13.2 allows taken off."""
+    return name[2:-2] if len(name) > 4 and name.startswith("__") and name.endswith("__") else name
 
 
 def _name_rooted(node) -> bool:
@@ -260,6 +289,8 @@ class _Parser:
         # (`_decl_stmt`), `align` the strictest N they ask (C11 6.7.5p6; CSUB-2)
         self.align_ok = False
         self.align = 0
+        # a statement `[[bcir::timing(...)]]` leads is being parsed: a second inside it is refused (PORT-3)
+        self.timed = False
         # an untagged `struct { ... }` defined by the specifiers being read: `agg_ok` while a block declaration's are
         # (`_decl_stmt`); each one the function defines, by its synthesized tag, with its source spelling, which the
         # emit's typedef spells it by (`Func.block_types`; CSUB-2)
@@ -366,26 +397,17 @@ class _Parser:
     # --- unit ---
     def _attributes(self, alignas: bool = True) -> dict:
         """Consume `__attribute__((packed))` / `__attribute__((aligned(N)))` / `alignas(N)` runs, plus a
-        C23 `[[ ... ]]` attribute run. The only C23 attributes acted on are the value-neutral hints
-        `[[unsequenced]]` / `[[reproducible]]` (recorded in the dict); any other C23 attribute (incl.
-        namespaced `gnu::packed` / argument forms) is scanned over and dropped."""
+        C23 `[[ ... ]]` attribute run (`_attribute_run`). The only C23 attributes acted on are the value-neutral hints
+        `[[unsequenced]]` / `[[reproducible]]` (recorded in the dict); any other standard attribute is scanned over
+        and dropped, a vendor's hint too (`gnu::const`), and any other vendor's attribute (`gnu::packed`) refused
+        (CF-VENDORATTR). PORT-3's timing leads a statement alone (`TIMING_PLACE`)."""
         attrs: dict = {}
         while True:
-            if self.at("PUNCT", "[") and self.peek(1).kind == "PUNCT" and self.peek(1).text == "[":
-                self.nxt()  # consume the opening `[[`
-                self.nxt()
-                while not (
-                    self.at("PUNCT", "]")
-                    and self.peek(1).kind == "PUNCT"  # scan to the closing `]]`
-                    and self.peek(1).text == "]"
-                ):
-                    if self.at("EOF"):
-                        raise CParseError("unterminated [[...]] attribute", pos=self.peek().pos)
-                    if self.at("IDENT", "unsequenced") or self.at("IDENT", "reproducible"):
-                        attrs["reproducible"] = True  # both hints fold to one fusion-legality flag
-                    self.nxt()  # robust to args/namespaces: skip every other token
-                self.nxt()  # eat the closing `]]`
-                self.nxt()
+            if self._at_attribute_run():
+                at = self.peek().pos
+                # a timing appertains to a statement's claims alone
+                if self._attribute_run(attrs) is not None:
+                    raise CParseError(TIMING_PLACE, pos=at)
             elif self.at("IDENT", "__attribute__"):
                 self.nxt()
                 self.eat("PUNCT", "(")
@@ -409,6 +431,162 @@ class _Parser:
                 self.eat("PUNCT", ")")
             else:
                 return attrs
+
+    def _at_attribute_run(self) -> bool:
+        """The cursor is on a C23 attribute run's `[[` (a `[` is a token of its own, so two adjacent ones)."""
+        return self.at("PUNCT", "[") and self.peek(1).kind == "PUNCT" and self.peek(1).text == "["
+
+    def _at_run_end(self) -> bool:
+        return self.at("PUNCT", "]") and self.peek(1).kind == "PUNCT" and self.peek(1).text == "]"
+
+    def _attribute_run(self, attrs: dict):
+        """One C23 `[[ ... ]]` run, the cursor on its `[[`: `[[unsequenced]]` / `[[reproducible]]` recorded in `attrs`,
+        PORT-3's `bcir::timing(...)` read into a `Timing` -- returned, and in `attrs["timing"]`, where a second one, in
+        this run or another, is refused (`TIMING_TWICE`) -- and every other standard attribute scanned over and dropped,
+        its arguments whatever they are (the run ends at the first `]]`). An attribute starts the run or follows a comma
+        outside any parenthesis; one of the `bcir` prefix other than `timing` is refused (`TIMING_UNKNOWN`), and one of
+        any other prefix unless it is a GNU or Clang hint (`VENDOR_HINTS`; `ATTR_VENDOR`, CF-VENDORATTR). Returns the
+        run's timing, or None. The twin's `c23_attr_run`."""
+        self.nxt()  # consume the opening `[[`
+        self.nxt()
+        timing = None
+        start, depth = True, 0
+        while not self._at_run_end():  # scan to the closing `]]`
+            tk = self.peek()
+            if tk.kind == "EOF":
+                raise CParseError("unterminated [[...]] attribute", pos=tk.pos)
+            if (
+                start
+                and tk.kind == "IDENT"
+                and self.peek(1).kind == "PUNCT"
+                and self.peek(1).text == ":"
+                and self.peek(2).kind == "PUNCT"
+                and self.peek(2).text == ":"
+            ):
+                # another vendor's: dropped if a hint, else refused (CF-VENDORATTR)
+                if tk.text not in _BCIR_PREFIX:
+                    name = self.peek(3)
+                    if not (
+                        _bare(tk.text) in VENDOR_PREFIXES
+                        and name.kind == "IDENT"
+                        and _bare(name.text) in VENDOR_HINTS
+                    ):
+                        raise CParseError(ATTR_VENDOR, pos=tk.pos)
+                    # the prefix, `::` and the hint's name; its arguments are scanned below
+                    for _ in range(4):
+                        self.nxt()
+                    start = False
+                    continue
+                self.nxt()  # the prefix and its `::`
+                self.nxt()
+                self.nxt()
+                name = self.peek()
+                if name.kind != "IDENT" or name.text not in _TIMING_NAME:
+                    raise CParseError(TIMING_UNKNOWN, pos=tk.pos)
+                if "timing" in attrs:
+                    raise CParseError(TIMING_TWICE, pos=tk.pos)
+                self.nxt()
+                timing = attrs["timing"] = self._timing_args()
+                if not (self.at("PUNCT", ",") or self._at_run_end()):
+                    raise CParseError(TIMING_SYNTAX, pos=self.peek().pos)
+                start = False
+                continue
+            if tk.kind == "IDENT" and tk.text in ("unsequenced", "reproducible"):
+                attrs["reproducible"] = True  # both hints fold to one fusion-legality flag
+            if tk.kind == "PUNCT" and tk.text == "(":
+                depth += 1
+            elif tk.kind == "PUNCT" and tk.text == ")":
+                depth -= 1
+            start = depth == 0 and tk.kind == "PUNCT" and tk.text == ","
+            self.nxt()  # robust to args/namespaces: skip every other token
+        self.nxt()  # eat the closing `]]`
+        self.nxt()
+        return timing
+
+    def _timing_args(self) -> Timing:
+        """`bcir::timing`'s arguments, the cursor after its name: none, `()`, or `(field = value, ...)`, each of the
+        model's eight fields at most once (`TIMING_FIELD`) -- a name one string literal (`TIMING_TEXT`), a count an
+        integer constant expression of 64 bits (`TIMING_COUNT`), `critical_path` 0 or 1 (`TIMING_FLAG`). A field it
+        does not name keeps the model's default. The twin's `timing_args`."""
+        fields: dict = {}
+        if not self.at("PUNCT", "("):
+            return Timing()
+        self.nxt()
+        if not self.at("PUNCT", ")"):
+            while True:
+                key = self.peek()
+                if key.kind != "IDENT":
+                    raise CParseError(TIMING_SYNTAX, pos=key.pos)
+                if key.text not in TIMING_FIELDS or key.text in fields:
+                    raise CParseError(TIMING_FIELD, pos=key.pos)
+                self.nxt()
+                if not self.at("OP", "="):
+                    raise CParseError(TIMING_SYNTAX, pos=self.peek().pos)
+                self.nxt()
+                fields[key.text] = self._timing_value(key.text)
+                if not self.at("PUNCT", ","):
+                    break
+                self.nxt()
+        if not self.at("PUNCT", ")"):
+            raise CParseError(TIMING_SYNTAX, pos=self.peek().pos)
+        self.nxt()
+        return Timing(**fields)
+
+    def _timing_value(self, field: str):
+        """One timing field's value, the cursor after its `=`."""
+        at = self.peek()
+        if field in TIMING_TEXTS:
+            if at.kind != "STRING" or not _TIMING_LITERAL.fullmatch(at.text):
+                raise CParseError(TIMING_TEXT, pos=at.pos)
+            self.nxt()
+            # one literal: adjacent ones would be another spelling of one name
+            if self.at("STRING"):
+                raise CParseError(TIMING_TEXT, pos=at.pos)
+            return at.text[1:-1]
+        value = self._const_int()
+        if field == "critical_path":
+            if value not in (0, 1):
+                raise CParseError(TIMING_FLAG, pos=at.pos)
+            return bool(value)
+        if not -(1 << 63) <= value < (1 << 63):
+            raise CParseError(TIMING_COUNT, pos=at.pos)
+        return value
+
+    def _attributed_stmt(self):
+        """A statement or a block declaration C23 attribute runs lead (6.8p1, 6.7p1), the cursor on the first `[[`.
+        Every attribute but PORT-3's timing is dropped, as at file scope. A timing leads a statement -- the claims it
+        lowers carry it (`cast.Timed`) -- never a declaration, a label or a null statement, which would time none
+        (`TIMING_PLACE`), nor one inside a statement another annotates (`TIMING_NESTED`). The twin's `p_attributed`."""
+        at = self.peek().pos
+        attrs: dict = {}
+        while self._at_attribute_run():
+            self._attribute_run(attrs)
+        timing = attrs.get("timing")
+        if timing is None:
+            return self._stmt()
+        label = (
+            self.at("IDENT")
+            and self.peek(1).kind == "PUNCT"
+            and self.peek(1).text == ":"
+            and not (self.peek(2).kind == "PUNCT" and self.peek(2).text == ":")
+        )
+        if (
+            self._is_decl_start()
+            or label
+            or self.at("PUNCT", ";")
+            or any(
+                self.at("IDENT", w) for w in ("static_assert", "_Static_assert", "case", "default")
+            )
+        ):  # it would time no claim: a declaration's, a label's (C23 6.8.1), a null statement's
+            raise CParseError(TIMING_PLACE, pos=at)
+        if self.timed:
+            raise CParseError(TIMING_NESTED, pos=at)
+        self.timed = True
+        try:
+            body = self._stmt()
+        finally:
+            self.timed = False
+        return cast.Timed(timing, body)
 
     def parse_unit(self) -> cast.Unit:
         unit = cast.Unit()
@@ -1670,6 +1848,9 @@ class _Parser:
         )
 
     def _stmt(self):
+        # `[[...]] stmt` / `[[...]] T x;` (C23), PORT-3's timing among them
+        if self._at_attribute_run():
+            return self._attributed_stmt()
         if self.at("PUNCT", ";"):  # empty statement -> a no-op (e.g. the
             self.nxt()  # body of `for(...);` / `while(...);`, `if(c);`)
             return cast.Seq(())

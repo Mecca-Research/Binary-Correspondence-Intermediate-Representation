@@ -112,12 +112,20 @@ name it.
 **The C verifier's law surface** is a fifth Tier-1 item, scoped rather than a module.
 `bcir_verify.c` is declared over the C front end's subset and covers its laws:
 - R1–R18, where R14–R17 are vacuous for scalar integer code;
+- R19 and R20 (synchronous timing, clock-domain crossing), over the timing a
+  `[[bcir::timing(...)]]` statement gives its claims (**PORT-3, landed 2026-11-20**);
 - R21, advisory.
 
-R19 and R20 (synchronous timing, clock-domain crossing) and R22–R25 run on the oracle and the
-law rail only. R19/R20 matter as soon as driver code with timing claims is compiled by `bcir-cc`
-without the oracle, so they are **PORT-3, with driver row 1** (the event timers). R22–R25 join
-the C path when tensor programs or generated ASN.1 codecs do (IF-6).
+R19/R20 had run on the oracle and the law rail only, over a claim's optional timing, which no C
+front end could give one. They mattered as soon as driver code with timing claims is compiled
+by `bcir-cc` without the oracle (driver row 1, the event timers), so PORT-3 gave the C front
+end a source form for them. A C23 attribute `[[bcir::timing(field = value, ...)]]` leads a
+statement on both rails, and every claim the statement lowers carries the model's `Timing`;
+`__has_c_attribute(bcir::timing)` is 1 on both, so a unit Clang builds too guards it. The
+cross-rail canon holds each claim's timing, and `bcir_verify_unit` refuses a unit that breaks
+either law, in the oracle's words (`bcir_verify_timing` lists every diagnostic). The C subset
+audit's §4.5 records the slice. R22–R25 join the C path when tensor programs or generated
+ASN.1 codecs do (IF-6).
 
 ### Tier 2 — the C++ toolchain (the migration proposal's CXX ladder)
 
@@ -246,7 +254,7 @@ containers by hand for code that never runs on a target.
 | **PORT-0** (**landed 2026-11-10**: 45 twinned modules became 66; C 47, C++ 1, MLIR 21) | The inventory reads `runtime/cpp/` and `mlir/lib/` and counts their twins. C units that mirror a module without naming it name it (`bcir_artifact_bundle.c`, `bcir_q4_kernel.c`). The A/B audit's Python-only rows show their MLIR pass where one exists. | First; small, tooling only |
 | **PORT-1** (**landed 2026-11-10**: `bcir-pack` and `bcir-bundle` in C, the oracle's octets over 78 packs, 3 bundles, 34 envelopes and their resealed mutants; 66 twinned modules became 68) | N1, MC1 disassembly in C. The views the oracle delegates to a resident disassembler, and the ASN.1 projections, stay the Python tool's | Between interface-phase slices |
 | **PORT-2** (**landed 2026-11-10**: `bcir_bpe.c` and `bcir_spm.c` behind `bcir-tokenize`. The byte-level BPE reads `tokenizer.json` through the bounded JSON reader both rails now share; SentencePiece reads `tokenizer.model`'s wire format. Both give the oracle's verdicts, ids and octets. 68 twinned modules became 70) | N2, the tokenizers in C | Between slices; before SLM-1 |
-| **PORT-3** | The C verifier's R19/R20 | With driver row 1 |
+| **PORT-3** (**landed 2026-11-20**: R19/R20 in `bcir_verify.c`, the oracle's words for every diagnostic; `[[bcir::timing(...)]]` gives a statement's claims their timing on both C front ends, the canon holding it; a vendor's `[[...]]` attribute, which both rails had dropped, refused alike unless it is a known hint) | The C verifier's R19/R20 | With driver row 1 |
 | **PORT-4** | N4, the event transducer in C | With the UART event-driven slices |
 | ECN in `cgen` | N3 | Inside the interface phase, IF-5 |
 | **PORT-5** | The C++ solver library's foundation: the façade, the arena and error conventions, and the first solver (`gem.exact`) at parity | After the interface phase's stage A |

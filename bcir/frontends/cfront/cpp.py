@@ -42,6 +42,8 @@ _DYNAMIC = ("__FILE__", "__LINE__")
 _HAS_OPS = ("__has_include", "__has_embed", "__has_attribute", "__has_builtin", "__has_c_attribute")
 _SUPPORTED_ATTRS = frozenset({"packed", "aligned"})  # attributes the L8 ABI honours (GCC __x__ ok)
 #: The feature-test operators whose parenthesized operand the twin's `#if` walk reads as tokens.
+#: `__has_c_attribute`'s operand naming PORT-3's attribute: `bcir::timing`, each name also as `__x__` (C23 6.7.13.2)
+_TIMING_ATTRIBUTE = re.compile(r"\s*(?:bcir|__bcir__)\s*::\s*(?:timing|__timing__)\s*", re.ASCII)
 _HAS_PAREN = ("__has_attribute", "__has_builtin", "__has_c_attribute")
 #: The reason both rails refuse a `defined` with no name, or with `(` and a name but no `)`, for (CF-PPLIMITS).
 _BAD_DEFINED = "malformed defined operator"
@@ -995,7 +997,13 @@ class Preprocessor:
             flags=re.ASCII,
         )
         expr = re.sub(r"\b__has_builtin\s*\([^)]*\)", "0", expr)
-        expr = re.sub(r"\b__has_c_attribute\s*\([^)]*\)", "0", expr)
+        # ... and of the C23 attributes, PORT-3's `bcir::timing` (1, as Clang answers for a vendor attribute it
+        # implements) -- the standard ones each rail drops are reported absent, as before
+        expr = re.sub(
+            r"\b__has_c_attribute\s*\(([^)]*)\)",
+            lambda m: "1" if _TIMING_ATTRIBUTE.fullmatch(m.group(1)) else "0",
+            expr,
+        )
         items = _tokens_ws(expr)
         _bound_names([t for t, _ in items])
         toks = self._expand(items)

@@ -6,7 +6,7 @@
 
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **4899** across 341 files |
+| Static Python `test_*` function inventory | **4902** across 341 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **134** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **134** files; 421 `expected-error` markers |
@@ -24,7 +24,8 @@ and R18 (call-graph integrity) are *additionally* construction-enforced on the o
 there — but both still carry MLIR negative cases for hand-written IR (R1 in `verify_laws.mlir`,
 R18 in `verify_callgraph.mlir`). R19/R20 (synchronous timing / clock-domain crossing) and R21
 (pointer lifetime: use-after-free / double-free) ride **optional** claim metadata that defaults
-to absent, so they are vacuous over the entire scalar/C subset (the non-disturbance invariant) —
+to absent, so they are vacuous over the scalar/C subset (the non-disturbance invariant) until a
+statement carries `[[bcir::timing(...)]]`, which the C verifier then holds R19/R20 over (PORT-3) —
 their negative cases live in `verify_timing_lifetime.mlir`.
 
 | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 | R22 | R23 | R24 | R25 |

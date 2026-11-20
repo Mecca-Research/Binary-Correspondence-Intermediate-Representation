@@ -22,6 +22,7 @@ from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
 from bcir.frontends.cfront.lower import (
+    ATTR_VENDOR,
     ROW_ADDR,
     ROW_PTR_ELEM,
     ROW_PTR_PLACE,
@@ -30,6 +31,15 @@ from bcir.frontends.cfront.lower import (
     TYPEOF_DIMS,
     TYPEOF_SCOPE,
     TYPEOF_UNSIZED,
+    TIMING_COUNT,
+    TIMING_FIELD,
+    TIMING_FLAG,
+    TIMING_NESTED,
+    TIMING_PLACE,
+    TIMING_SYNTAX,
+    TIMING_TEXT,
+    TIMING_TWICE,
+    TIMING_UNKNOWN,
     VOLATILE_PTR,
 )
 from bcir.model import Domain
@@ -19957,3 +19967,318 @@ def test_an_indexed_atomic_member_of_a_defined_object_is_a_lock_free_atomic_unde
                 assert len(atomics) >= 3, (rail, fn, atomics, body)
                 libcalls = re.findall(r"call [^\n]*@__atomic_\w+", body)
                 assert not libcalls, (rail, fn, libcalls)
+
+
+# PORT-3: a statement's timing, the metadata the timing laws R19 and R20 read. `[[bcir::timing(field = value, ...)]]`
+# leads a statement, and every claim the statement lowers carries it -- on both rails, the cross-rail canon holding each
+# claim's (`|t:...`), so a claim one rail timed and the other did not is a digest apart. R19/R20 then run on the C
+# verifier as they do on the oracle and the law rail: a unit that breaks one lowers on both rails and is refused by
+# each verdict, every diagnostic in the oracle's words. Claim and RID numbers are each rail's own.
+_TIMED = (
+    "#if __has_c_attribute(bcir::timing)\n#define TIMED(...) [[bcir::timing(__VA_ARGS__)]]\n#else\n"
+    "#define TIMED(...)\n#endif\n"
+)
+_TIMING_LOWERED = (
+    'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc", latency_cycles = 2)]] g = x;\n'
+    "  return g + 1u;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(clock_domain = "hpet", latency_cycles = 4, '
+    'min_throughput_q16 = 65536, critical_path = 1, power_domain = "aon", sync_type = "synchronous", '
+    "clock_frequency_mhz = 14, setup_hold_margin = 1)]] y = x * 3u;\n  return y;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing(clock_domain = "a")]] { y = x + 1u; y = y * 2u; }\n'
+    "  return y;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned y = 1u;\n  [[bcir::timing(clock_domain = "a", latency_cycles = 1)]] '
+    "if (x > 3u) y = x; else y = 2u;\n  return y;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned s = 0u;\n  [[bcir::timing(clock_domain = "a")]] while (x) { s += x; '
+    "x = x - 1u; }\n  return s;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned s = 0u;\n  [[bcir::timing(clock_domain = "a")]] for (unsigned i = 0u; '
+    "i < (x & 7u); i++) s += i;\n  return s;\n}\n",
+    "unsigned f(unsigned x) {\n  unsigned s = 0u;\n  [[bcir::timing(latency_cycles = 2)]] do { s += 3u; } "
+    "while (s < (x & 15u));\n  return s;\n}\n",
+    'unsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "a")]] return x ^ 5u;\n}\n',
+    'unsigned f(unsigned x) {\n  unsigned y = 0u;\n  if (x) [[bcir::timing(clock_domain = "a")]] y = x + 9u;\n'
+    "  return y;\n}\n",
+    "typedef unsigned int uint32_t;\nunsigned f(volatile uint32_t *r, unsigned x) {\n"
+    '  [[bcir::timing(clock_domain = "dev", sync_type = "asynchronous")]] *r = x;\n  unsigned v;\n'
+    '  [[bcir::timing(clock_domain = "dev")]] v = *r;\n  return v;\n}\n',
+    _TIMED
+    + 'unsigned g;\nunsigned f(unsigned x) {\n  TIMED(clock_domain = "rtc", latency_cycles = 3) g = x + 1u;\n'
+    '  TIMED(clock_domain = "rtc") return g;\n}\n',
+    'unsigned f(unsigned x) {\n  unsigned y;\n  [[__bcir__::__timing__(clock_domain = "a")]] y = x;\n'
+    '  [[bcir_hint, bcir::timing(clock_domain = "a"), other_hint("no")]] y = y + 1u;\n  return y;\n}\n',
+    "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing]] y = x;\n  [[bcir::timing()]] y = y + 2u;\n"
+    "  return y;\n}\n",
+    "enum { L = 6 };\nunsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = L * 2, "
+    "setup_hold_margin = sizeof(int), clock_frequency_mhz = 9223372036854775807, critical_path = true)]] y = x;\n"
+    "  return y;\n}\n",
+    "unsigned h(unsigned a) { return a + 1u; }\nunsigned f(unsigned x) {\n  unsigned y;\n"
+    '  [[bcir::timing(clock_domain = "a")]] y = h(x);\n  return y;\n}\n',
+    'unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing(clock_domain = "a")]] { y = x; goto out; }\n'
+    "out:\n  return y;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing(clock_domain = "a", latency_cycles = 1)]] '
+    "switch (x & 3u) { case 0u: y = 5u; break; case 1u: y = 6u; break; default: y = 7u; }\n  return y;\n}\n",
+    "unsigned f(unsigned x) {\n  unsigned y = 0u;\n"
+    '  [[bcir::timing(clock_domain = "' + "a" * 63 + '")]] y = x;\n  return y;\n}\n',
+    # what a timing does not break: a margin with no latency to fit in, a mixed consumer, one domain, an untimed or
+    # rewritten writer
+    "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(critical_path = 0, latency_cycles = 0, "
+    "setup_hold_margin = 5)]] y = x;\n  return y;\n}\n",
+    'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n  unsigned y;\n'
+    '  [[bcir::timing(clock_domain = "cpu", sync_type = "mixed")]] y = g;\n  return y;\n}\n',
+    'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n  unsigned y;\n'
+    '  [[bcir::timing(clock_domain = "rtc")]] y = g;\n  return y;\n}\n',
+    'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n  g = x + 1u;\n'
+    '  unsigned y;\n  [[bcir::timing(clock_domain = "cpu")]] y = g;\n  return y;\n}\n',
+    # a device register written in one domain and read in another: R20 follows the claim graph's resources, and a store
+    # through a pointer writes none of them -- memory, not a RID -- so it sees no writer, on the oracle as here (the
+    # read is barriered besides). A crossing through memory is outside what R20 reads, on every rail
+    "typedef unsigned int uint32_t;\nunsigned f(volatile uint32_t *r, unsigned x) {\n"
+    '  [[bcir::timing(clock_domain = "dev")]] *r = x;\n  unsigned v;\n'
+    '  [[bcir::timing(clock_domain = "cpu.0")]] v = *r;\n  return v;\n}\n',
+    # each function is its own module, as on the oracle: a crossing through a global between two is not one (R20)
+    'unsigned g;\nvoid w(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n}\n'
+    'unsigned f(unsigned x) {\n  w(x);\n  unsigned y;\n  [[bcir::timing(clock_domain = "cpu")]] y = g;\n'
+    "  return y;\n}\n",
+    # the standard attributes, which lead a statement and a declaration now on both rails, dropped
+    "unsigned f(unsigned x) {\n  [[maybe_unused]] unsigned y = x;\n  [[maybe_unused, deprecated]] unsigned z = 1u;\n"
+    "  switch (x) { case 1u: x = 7u; [[fallthrough]]; case 2u: x = x + 1u; break; default: break; }\n"
+    "  return x + y + z;\n}\n",
+    "struct s { [[maybe_unused]] unsigned a; unsigned b; };\nunsigned f(struct s *p) { return p->a + p->b; }\n",
+)
+# R19 and R20, each rule, and the oracle's words for each: both rails lower the unit and refuse it at the verdict
+_TIMING_BROKEN = (
+    (
+        'unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(sync_type = "rising")]] y = x;\n  return y;\n}\n',
+        ["R19 f: claim #: unknown sync_type 'rising'"],
+    ),
+    (
+        "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = -1, setup_hold_margin = -2, "
+        "clock_frequency_mhz = -3)]] y = x;\n  return y;\n}\n",
+        [
+            "R19 f: claim #: negative latency_cycles -1",
+            "R19 f: claim #: negative setup_hold_margin -2",
+            "R19 f: claim #: negative clock_frequency_mhz -3",
+        ],
+    ),
+    (
+        'unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(sync_type = "synchronous")]] y = x;\n  return y;\n}\n',
+        ["R19 f: claim #: a synchronous claim needs a positive clock_frequency_mhz"],
+    ),
+    (
+        "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = 2, setup_hold_margin = 3)]] y = x;\n"
+        "  return y;\n}\n",
+        ["R19 f: claim #: setup_hold_margin 3 exceeds the stage latency_cycles 2"],
+    ),
+    (
+        "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = -9223372036854775807 - 1)]] y = x;\n"
+        "  return y;\n}\n",
+        ["R19 f: claim #: negative latency_cycles -9223372036854775808"],
+    ),
+    (
+        'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n  unsigned y;\n'
+        '  [[bcir::timing(clock_domain = "cpu")]] y = g;\n  return y;\n}\n',
+        [
+            "R20 f: claim #: reads RID # from clock domain 'rtc' into 'cpu' without a synchronizer (declare "
+            "sync_type='mixed' or a barriered hazard) -- an unguarded clock-domain crossing"
+        ],
+    ),
+    (
+        "unsigned f(unsigned x) {\n  unsigned y = 0u, i;\n  [[bcir::timing(latency_cycles = -1)]] {\n"
+        "    for (i = 0u; i < (x & 3u); i++) { if (i == 2u) continue; y += i; }\n"
+        "    switch (x & 1u) { case 0u: y += 4u; break; default: y += 5u; }\n"
+        "    while (y > 100u) { y -= 1u; if (y == 50u) break; }\n    do { y += 1u; } while (y < 3u);\n"
+        "    if (y == 7u) goto out;\n    y += 1u;\n  }\nout:\n  [[bcir::timing(latency_cycles = -2)]] return y;\n}\n",
+        None,  # every claim of each control statement, its markers none of them, as on the oracle
+    ),
+)
+_TIMING_BODY = "unsigned f(unsigned x) {\n  unsigned y;\n  {} y = x;\n  return y;\n}\n"
+_TIMING_REFUSED = tuple(
+    (_TIMING_BODY.replace("{}", attr), why)
+    for attr, why in (
+        ('[[bcir::timeing(clock_domain = "a")]]', TIMING_UNKNOWN),
+        ("[[bcir::]]", TIMING_UNKNOWN),
+        ("[[bcir::timing, bcir::timing]]", TIMING_TWICE),
+        ("[[bcir::timing]] [[bcir::timing(latency_cycles = 1)]]", TIMING_TWICE),
+        ("[[bcir::timing(latency_cycles 2)]]", TIMING_SYNTAX),
+        ("[[bcir::timing(latency_cycles = 2 setup_hold_margin = 1)]]", TIMING_SYNTAX),
+        ("[[bcir::timing(latency_cycles = 2) junk]]", TIMING_SYNTAX),
+        ("[[bcir::timing(3 = 1)]]", TIMING_SYNTAX),
+        ("[[bcir::timing(latency_cycles = 1]]", TIMING_SYNTAX),
+        ("[[bcir::timing(latency = 2)]]", TIMING_FIELD),
+        ("[[bcir::timing(latency_cycles = 2, latency_cycles = 3)]]", TIMING_FIELD),
+        ("[[bcir::timing(clock_domain = 3)]]", TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = "a b")]]', TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = "' + "a" * 64 + '")]]', TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = "a" "b")]]', TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = u8"a")]]', TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = "a\\x41")]]', TIMING_TEXT),
+        ("[[bcir::timing(latency_cycles = 0x8000000000000000)]]", TIMING_COUNT),
+        ("[[bcir::timing(latency_cycles = x)]]", "not an integer constant expression"),
+        ("[[bcir::timing(critical_path = 2)]]", TIMING_FLAG),
+        ("[[bcir::timing(critical_path = -1)]]", TIMING_FLAG),
+        ("[[gnu::bcir::timing]]", ATTR_VENDOR),
+    )
+) + (
+    ('unsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "a")]] unsigned y = x;\n  return y;\n}\n', TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  [[bcir::timing]] static unsigned k = 3u;\n  return x + k;\n}\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  [[bcir::timing]] static_assert(1);\n  return x;\n}\n", TIMING_PLACE),
+    ("typedef unsigned u;\nunsigned f(unsigned x) {\n  [[bcir::timing]] u y = x;\n  return y;\n}\n", TIMING_PLACE),
+    ("[[bcir::timing]] unsigned f(unsigned x) { return x; }\n", TIMING_PLACE),
+    ("[[bcir::timing]] unsigned g;\nunsigned f(unsigned x) { return x + g; }\n", TIMING_PLACE),
+    ("struct s { [[bcir::timing]] unsigned a; };\nunsigned f(struct s *p) { return p->a; }\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing]] { [[bcir::timing]] y = x; }\n  return y;\n}\n",
+     TIMING_NESTED),
+    ("unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing]] y = ({ [[bcir::timing]] x + 1u; });\n  return y;\n}\n",
+     TIMING_NESTED),
+    ("unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = 1) y = x;\n  return y;\n}\n",
+     TIMING_SYNTAX),
+    ("unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing]] L: y = x;\n  return y;\n}\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  [[bcir::timing]];\n  return x;\n}\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  switch (x) { [[bcir::timing]] case 1u: x = 2u; break; default: break; }\n"
+     "  return x;\n}\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  switch (x) { case 1u: break; [[bcir::timing]] default: x = 3u; }\n  return x;\n}\n",
+     TIMING_PLACE),
+)  # fmt: skip
+
+
+def _timing_lines(lines) -> list:
+    """`<law> <func>: <message>` R19/R20 lines, each rail's claim and RID numbers made `#`."""
+    out = []
+    for line in lines:
+        if line.startswith(("R19 ", "R20 ")):
+            out.append(re.sub(r"RID \d+", "RID #", re.sub(r"claim \d+", "claim #", line)))
+    return out
+
+
+def test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails():
+    """PORT-3. R19 (synchronous timing) and R20 (clock-domain crossing) ran on the oracle and the law rail only, over a
+    claim's optional timing, which no C front end could give one: neither rail took an attribute before a statement at
+    all. A C23 attribute `[[bcir::timing(field = value, ...)]]` now leads a statement on both rails, and every claim the
+    statement lowers carries the model's `Timing`; `__has_c_attribute(bcir::timing)` is 1 on both, so a unit Clang
+    builds too guards it. The canon holds each claim's timing, so each unit lowers digest-equal and each rail's emit
+    runs as Clang's build of the source (which drops the attribute). A unit that breaks R19 or R20 lowers on both rails
+    and each verdict refuses it, the twin's every diagnostic the oracle's (`bcir_verify_timing`): the C verifier holds
+    the two laws now, for driver code `bcir-cc` compiles without the oracle. A malformed or misplaced timing is refused
+    alike, in one set of words."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_TIMING_LOWERED):
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src, summary)
+            timed = [
+                c for fn in r.lowered.functions.values() for c in fn.claims if c.timing is not None
+            ]
+            # every unit annotated gives a claim its timing
+            assert timed or "maybe_unused" in src, src
+            if exe is None:
+                continue
+            path = os.path.join(d, f"t{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+        # the canon holds each claim's timing: the same unit with another value in one field is another digest
+        base = _oracle(_TIMING_LOWERED[0])[0]
+        moved = _oracle(_TIMING_LOWERED[0].replace("latency_cycles = 2", "latency_cycles = 3"))[0]
+        bare = _oracle(
+            _TIMING_LOWERED[0].replace(
+                '[[bcir::timing(clock_domain = "rtc", latency_cycles = 2)]] ', ""
+            )
+        )[0]
+        assert len({base, moved, bare}) == 3, (base, moved, bare)
+    for src, words in _TIMING_BROKEN:
+        summary, r, _entry = _oracle(src)
+        oracle = _timing_lines(f"{d.law} {d.message}" for d in r.diagnostics)
+        assert " ok=0 " in summary and oracle, (src, summary)
+        assert all(d.law in ("R19", "R20") for d in r.diagnostics), (src, r.diagnostics)
+        if words is not None:
+            assert oracle == words, (src, oracle)
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "u.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+        lines = run.stdout.splitlines()
+        assert run.returncode == 1 and lines[0] == summary, (src, lines[:2], summary)
+        assert _timing_lines(lines) == oracle, (src, _timing_lines(lines), oracle)
+        first = oracle[0].split(" ", 2)  # the verdict names the first, `R19: claim N: ...`
+        assert re.sub(r"claim \d+", "claim #", re.sub(r"RID \d+", "RID #", lines[1])) == (
+            f"diag: {first[0]}: {first[2]}"
+        ), (src, lines[1])
+    for src, why in _TIMING_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+    # what each rail refused before, in its own words, both still refuse: an attribute before a for-loop's first clause
+    # (an expression there, to C23 6.8.5), a run that ends a block, a block `typedef`, a statement expression's last
+    for src in (
+        "unsigned f(unsigned x) {\n  unsigned s = 0u, i;\n  for ([[bcir::timing]] i = 0u; i < x; i++) s += 2u;\n"
+        "  return s;\n}\n",
+        "unsigned f(unsigned x) {\n  [[bcir::timing]]\n}\n",
+        "unsigned f(unsigned x) {\n  [[bcir::timing]] typedef unsigned v;\n  return x;\n}\n",
+        "unsigned f(unsigned x) {\n  unsigned y;\n  y = ({ x = x + 1u; [[bcir::timing]] x + 2u; });\n  return y;\n}\n",
+    ):
+        assert _oracle_refusal(src), src
+        if exe is not None:
+            status, line = _twin_line(exe, src)
+            assert status == 1 and line.startswith("PARSE-ERR "), (src, line)
+    if exe is None:
+        return
+    # ... and the compiler a driver is built with refuses the unit at its verdict, naming the law
+    cc = _build_bcir_cc(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "crossing.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_TIMING_BROKEN[5][0])
+        run = subprocess.run([cc, "--emit-c", path], capture_output=True, text=True)
+    assert run.returncode == 1 and "verify error: R20: claim " in run.stderr, (
+        run.returncode,
+        run.stderr,
+    )
+
+
+def test_has_c_attribute_answers_the_timing_attribute_alone_on_both_rails():
+    """PORT-3. `__has_c_attribute(bcir::timing)` is 1 on both preprocessors, with each name also written `__x__` and
+    space around the names; any other operand is 0, as before -- another `bcir` attribute, a standard attribute the
+    rails drop, a space inside the `::`, a name of no prefix."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    one = "unsigned f(unsigned x) { return x + 1u; }\n"
+    two = "unsigned f(unsigned x) { return x + 2u; }\n"
+    for test, want in (
+        ("__has_c_attribute(bcir::timing) == 1", one),
+        ("__has_c_attribute(__bcir__::__timing__) && __has_c_attribute( bcir :: timing )", one),
+        ("__has_c_attribute(bcir::other) || __has_c_attribute(maybe_unused)", two),
+        ("__has_c_attribute(bcir: :timing) || __has_c_attribute(timing)", two),
+    ):
+        src = f"#if {test}\n{one}#else\n{two}#endif\n"
+        assert _lowers_alike(exe, src) == _oracle(want)[0], test
+
+
+def test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning():
+    """CF-VENDORATTR. Both rails read a C23 attribute run over and dropped what it held -- the oracle at file scope and
+    before a member, so `[[gnu::aligned(8)]]` and `[[gnu::packed]]` laid a struct out at offsets Clang's are not:
+    `sizeof` 8 where Clang's is 16 and 5. A vendor's attribute is refused alike now, wherever a run is read, unless it
+    is a GNU or Clang hint both rails know (`VENDOR_HINTS`: a promise about a function or an object, or a placement
+    hint), which is dropped as a standard attribute is, and lowers alike."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for src in (
+        "struct s { unsigned a; [[gnu::aligned(8)]] unsigned b; };\nunsigned f(void) { return (unsigned)sizeof(struct s); }\n",
+        '[[gnu::section(".x")]] unsigned f(unsigned x) { return x + 1u; }\n',
+        "unsigned f(unsigned x) {\n  [[clang::likely]] x = x + 1u;\n  return x;\n}\n",
+        "unsigned f(unsigned x) {\n  [[maybe_unused, gnu::mode(DI)]] unsigned y = x;\n  return x;\n}\n",
+        "unsigned f(unsigned x) {\n  [[__gnu__::__packed__]] x = x + 1u;\n  return x;\n}\n",
+        "[[msvc::forceinline]] unsigned f(unsigned x) { return x + 1u; }\n",
+        "unsigned f(unsigned x) {\n  [[gnu::hot, gnu::vector_size(16)]] unsigned y = x;\n  return y;\n}\n",
+    ):
+        _refused_alike(exe, src, ATTR_VENDOR, phase="PARSE")
+    for src in (
+        'unsigned f(unsigned x) {\n  [[deprecated("gnu::x")]] unsigned y = x;\n  return y;\n}\n',
+        "[[gnu::const]] unsigned h(unsigned x) { return x * 3u; }\n[[__gnu__::__hot__, clang::noinline]] unsigned "
+        "f(unsigned x) { return h(x) + 1u; }\n",
+        "struct s { [[gnu::unused]] unsigned a; unsigned b; };\n[[gnu::nonnull(1), gnu::warn_unused_result]] unsigned "
+        "f(struct s *p) { return p->a + p->b; }\n",
+    ):
+        summary = _lowers_alike(exe, src)
+        assert " ok=1 " in summary, (src, summary)

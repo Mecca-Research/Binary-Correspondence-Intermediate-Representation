@@ -546,6 +546,49 @@ The count is **38 of 58**: `bcir_spm.c`, `bcir_bpe.c`, `bcir_verify.c`, `bcir_di
 The count stays 38 of 58: no unit's first refusal was a checked operation. `<stdbit.h>` and the one `bcir_bytes.h`
 built on both are CSUB-3's next slices.
 
+### 4.5 Attributes and a statement's timing (PORT-3, 2026-11-20)
+
+The native port audit's PORT-3 puts the timing laws R19 and R20 on the C verifier. They read a claim's optional
+timing, which no C front end could give a claim: neither rail took an attribute before a statement at all.
+
+- **A C23 attribute run leads a statement and a block declaration on both rails** (6.8p1, 6.7p1), and a member's
+  on the twin as on the oracle. A standard attribute is read over and dropped, as at file scope, whatever its
+  arguments.
+- **`[[bcir::timing(field = value, ...)]]` gives a statement's claims their timing.** It is also spelled `__bcir__`
+  and `__timing__`, and `__has_c_attribute(bcir::timing)` is 1 on both preprocessors, so a unit Clang builds too can
+  guard it (Clang answers 0 and drops the attribute):
+  - The fields are the model's eight, each named at most once: `clock_domain`, `power_domain` and `sync_type` each
+    one string literal of at most 63 letters, digits, `_`, `.` and `-`; `latency_cycles`, `min_throughput_q16`,
+    `clock_frequency_mhz` and `setup_hold_margin` each an integer constant expression of 64 bits, as the law rail's
+    `#bcir.timing` holds one; `critical_path` 0 or 1.
+  - Every claim the statement lowers carries the timing: an expression, a block, each control statement with the
+    claims of its condition, body and step, a `return`, a call.
+  - The cross-rail canon holds each claim's timing (`|t:...`), so a unit one rail timed differently is a digest
+    apart; a unit without one keeps its canon byte for byte.
+- **R19 and R20 are in both verdicts.** The oracle's pipeline runs `verify_timing` per function and the twin's
+  `bcir_verify_unit` refuses at the first diagnostic, in the oracle's words. `bcir_verify_timing` lists every one,
+  which the cross-rail test holds to the oracle's list, claim and RID numbers apart. The twin's control-flow markers
+  take no part, as the oracle's claim graph has none. `bcir-cc` refuses a unit that breaks either law, naming it.
+- **What stays refused**, alike and in one set of words: a timing before a declaration, a function, a member, a
+  label, a `case`, a `default` or a null statement (none would time a claim); a second one on a statement, or one
+  inside a statement another annotates; an unknown `bcir` attribute; a malformed field list, an unknown or repeated
+  field, a name outside the alphabet or past 63 characters, a count past 64 bits, a flag other than 0 and 1.
+- **CF-VENDORATTR, a defect at the base and closed.** Both rails read an attribute run over and dropped what it held.
+  The oracle did so at file scope and before a member, so `[[gnu::aligned(8)]]` and `[[gnu::packed]]` laid a struct
+  out at offsets Clang's are not: `sizeof` 8 where Clang's is 16 and 5. A vendor's attribute is refused alike now,
+  wherever a run is read, unless it is one of the GNU or Clang hints both rails know (`VENDOR_HINTS`: `const`,
+  `pure`, `hot`, `noinline`, `nonnull` and the like -- a promise about a function or an object, or a placement hint),
+  which is dropped as a standard one is. No production unit writes a vendor's; they use `[[nodiscard]]`.
+
+**Boundaries, the oracle's too.** R20 follows the claim graph's resources, function by function, as the oracle
+defines it: a crossing through a global between two functions is no crossing, and a store through a pointer writes
+no resource, so a device register written in one domain and read in another is not one R20 sees. Each rail still
+refuses some attribute forms in its own words, as before: one before a for-loop's first clause, one that ends a
+block, one before a block `typedef`, one as a statement expression's last, and one after a `struct` keyword or
+body, which the oracle reads and the twin refuses.
+
+The count stays 38 of 58: no unit's first refusal was an attribute.
+
 ## 5. Subsystems
 
 **Built.** Every native subsystem the build has today:

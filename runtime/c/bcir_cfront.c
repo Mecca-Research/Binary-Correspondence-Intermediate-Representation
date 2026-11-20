@@ -361,6 +361,8 @@ typedef struct {
   int typeof_row;                 /* p_typeof_expr's operand was that row */
   int step_end, step_stop;        /* a for-loop step is being read: the token its `)` is at, and the end of the piece
                                    * a statement path lowers (its `;` is that piece's end: `eat`, CF-STEP) */
+  uint32_t timing;                /* the statement being lowered carries a timing (PORT-3): 1 + its index in the
+                                   * function's `timings`, which each claim `new_claim` makes takes; 0 for none */
 } CC;
 /* The recursion-depth cap for the recursive-descent parser. Comfortably below the real native-stack
  * limit (the deepest cycle, the expression chain p_expr->...->p_primary->`(`->p_expr, is ~8 frames per
@@ -1467,23 +1469,6 @@ static void attrs(CC *c,int *packed,int *aligned){
     else break;
   }
 }
-/* Consume a C23 `[[ ... ]]` attribute run (a `[` is a single-char token, so `[[` is two adjacent `[`).
- * Sets *repro if the run names the value-neutral hint `unsequenced` or `reproducible`; every other token
- * (args, `gnu::` namespaces) is scanned over and dropped. Returns 1 if a run was consumed, else 0 (the
- * cursor is left untouched so the caller's normal parse proceeds). Matches the oracle's `_attributes`. */
-static int c23_attrs(CC *c,int *repro){
-  int any=0;
-  while(is(c,"[") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
-    c->i+=2; any=1;                                  /* consume the opening `[[` */
-    while(!(is(c,"]") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]==']')){
-      if(isk(c,T_END)){fail(c,"unterminated [[...]] attribute");return any;}
-      if(is(c,"unsequenced")||is(c,"reproducible")) *repro=1;   /* both fold to one fusion-legality flag */
-      c->i++;                                         /* skip every other token (robust to args/namespaces) */
-    }
-    c->i+=2;                                          /* eat the closing `]]` */
-  }
-  return any;
-}
 /* The attributes written AFTER a body's closing brace -- `struct S { ... } __attribute__((packed));` -- read
  * before its members are laid out: `open` is the `{`. A trailing `packed` changes where every member sits,
  * and the members are placed as they are parsed, so it cannot wait for the `}` (the twin used to read it only
@@ -1503,6 +1488,7 @@ static long long ce_dim(CC *c,int probe);   /* fwd: an array dimension, an integ
  * returns its index (-1 on error). An anonymous aggregate (no tag, e.g. `typedef struct {...} N;`)
  * gets a synthesized internal tag so a typedef can alias it. */
 static int static_assert_at(CC *c);   /* fwd: a static assertion at the cursor (CSUB-1) */
+static int c23_attrs(CC *c,int *repro);   /* fwd: the C23 `[[...]]` runs leading a declaration (PORT-3) */
 static void p_static_assert(CC *c);
 static int p_struct_body_in(CC *c);
 /* A struct or union body, its depth counted for `typeof` (`CC_TYPEOF_SCOPE`): a member's type is resolved by the
@@ -1535,6 +1521,8 @@ static int p_struct_body_in(CC *c) {
   while(!is(c,"}")&&!c->failed){
     if(static_assert_at(c)){                          /* a member declaration list takes one (C11 6.7.2.1p1) */
       p_static_assert(c); if(c->failed) return -1; S=&c->s[my]; continue; }
+    { int mr=0; (void)c23_attrs(c,&mr); if(c->failed) return -1; }   /* a member's C23 attributes, dropped as the
+                                                       * oracle's `_attributes` drops them; a timing refused (PORT-3) */
     int mpk=0,maln=0; attrs(c,&mpk,&maln);            /* member-leading `_Alignas(N)`/`aligned(N)`: over-aligns
                                                        * every declarator off this specifier (mpk ignored) */
     /* an INLINE aggregate member `struct {...}` / `union {...}`: parse + register its body, then either PROMOTE
@@ -1930,6 +1918,123 @@ static long long ce_value(CC *c){ kval v; return ce_fold(c,0,&v) ? kvalue(&v) : 
  * `_BitInt(N)`'s width, `aligned(N)` and `alignas(N)` -- 0 with it refused (the oracle's `_const_int`, CF-CONSTEXPR2):
  * `enum { W = 3 }; ... uint32_t a : W;` had been laid out with a width of 0, a member as wide as its type. */
 static int ce_int(CC *c,long long *v){ kval k; if(!ce_fold(c,0,&k)) return 0; *v=kvalue(&k); return 1; }
+/* PORT-3 -- a statement's timing, which the timing laws R19 and R20 read (`bcir_timing`): a C23 attribute
+ * `[[bcir::timing(field = value, ...)]]` (`__bcir__` and `__timing__` too) leads a statement, and every claim the statement
+ * lowers carries it (`CC.timing`). The oracle's `TIMING_*` refusals, word for word (`lower.py`). */
+#define CC_TIMING_UNKNOWN "an unknown bcir attribute"
+#define CC_ATTR_VENDOR "a vendor attribute neither rail knows to be a hint is not supported"   /* the oracle's
+                         * `ATTR_VENDOR`: `[[gnu::aligned(8)]]`, `[[gnu::packed]]` dropped had laid a member out at an
+                         * offset Clang's is not (CF-VENDORATTR) */
+/* `name` (`n` octets), its `__x__` spelling taken off, is one of `set`: the oracle's `_bare` and its sets */
+static int bare_in(const char *name, int n, const char *const *set){
+  if(n>4 && name[0]=='_' && name[1]=='_' && name[n-1]=='_' && name[n-2]=='_'){ name+=2; n-=4; }
+  for(int k=0;set[k];k++) if((int)strlen(set[k])==n && !strncmp(set[k],name,(size_t)n)) return 1;
+  return 0;
+}
+/* the GNU and Clang attributes both rails drop (the oracle's `VENDOR_PREFIXES`, `VENDOR_HINTS`): each a promise about a
+ * function or an object, or a code-placement hint -- none changes a layout, a type or what runs */
+static const char *const vendor_prefixes[]={"gnu","clang",NULL};
+static const char *const vendor_hints[]={"always_inline","artificial","cold","const","deprecated","flatten","format",
+  "hot","leaf","malloc","noinline","nonnull","noreturn","nothrow","pure","returns_nonnull","unused","used",
+  "warn_unused_result",NULL};
+#define CC_TIMING_TWICE "a statement carries one timing annotation"
+#define CC_TIMING_NESTED "a timing annotation inside a statement another one annotates"
+#define CC_TIMING_PLACE "a timing annotation leads a statement"
+#define CC_TIMING_SYNTAX "a timing annotation is a list of `field = value`"
+#define CC_TIMING_FIELD "a timing annotation names each of its fields at most once"
+#define CC_TIMING_TEXT "a timing name is a string of letters, digits, '_', '.' and '-', at most 63"
+#define CC_TIMING_COUNT "a timing count is an integer constant expression in 64 bits"
+#define CC_TIMING_FLAG "critical_path is 0 or 1"
+static int tok_text(const tok *t,const char *s){ return t->n==(int)strlen(s) && !strncmp(t->s,s,(size_t)t->n); }
+static int pun_at(CC *c,int k,char ch){ const tok *t=tat(c,c->i+k); return t->k==T_PUN && t->n==1 && t->s[0]==ch; }
+static int at_attr_run(CC *c){ return pun_at(c,0,'[') && pun_at(c,1,'['); }
+static int at_run_end(CC *c){ return pun_at(c,0,']') && pun_at(c,1,']'); }
+/* A timing name, the cursor on it: one string literal, its quotes and at most 63 letters, digits, `_`, `.` and `-`, into
+ * `out` (BCIR_TIMING_TEXT). 0 with it refused. */
+static int timing_text(CC *c,char *out){
+  const tok *t=pk(c); int n=t->n-2;
+  if(t->k!=T_STR || t->n<2 || t->s[0]!='"' || t->s[t->n-1]!='"' || n>BCIR_TIMING_TEXT-1){ fail(c,CC_TIMING_TEXT); return 0; }
+  for(int k=1;k<=n;k++){ char ch=t->s[k];
+    if(!((ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_'||ch=='.'||ch=='-')){ fail(c,CC_TIMING_TEXT); return 0; } }
+  memcpy(out,t->s+1,(size_t)n); out[n]=0; c->i++;
+  if(isk(c,T_STR)){ fail(c,CC_TIMING_TEXT); return 0; }   /* one literal: adjacent ones would be another spelling of one */
+  return 1;
+}
+/* `bcir::timing`'s arguments, the cursor after its name, into `tm` (zeroed: each field it does not name keeps the model's
+ * default): none, `()`, or `(field = value, ...)`, each field at most once. 0 with them refused. The oracle's
+ * `_timing_args`. */
+static int timing_args(CC *c,bcir_timing *tm){
+  static const char *const fields[]={"clock_domain","power_domain","sync_type","latency_cycles","min_throughput_q16",
+                                     "clock_frequency_mhz","setup_hold_margin","critical_path"};
+  unsigned seen=0;
+  memset(tm,0,sizeof *tm);
+  if(!is(c,"(")) return 1;
+  c->i++;
+  if(!is(c,")")) for(;;){
+    const tok *key=pk(c); int f=-1;
+    if(key->k!=T_ID){ fail(c,CC_TIMING_SYNTAX); return 0; }
+    for(int k=0;k<8;k++) if(tok_text(key,fields[k])) f=k;
+    if(f<0 || (seen&(1u<<f))){ fail(c,CC_TIMING_FIELD); return 0; }
+    seen|=1u<<f; c->i++;
+    if(!is(c,"=")){ fail(c,CC_TIMING_SYNTAX); return 0; }
+    c->i++;
+    if(f<3){ if(!timing_text(c,f==0?tm->clock_domain:f==1?tm->power_domain:tm->sync_type)) return 0; }
+    else { kval v; if(!ce_fold(c,0,&v)) return 0;
+      if(f==7){ if(v.p>1u){ fail(c,CC_TIMING_FLAG); return 0; } tm->critical_path=(uint8_t)v.p; }
+      else { if(!v.sgn && v.p>(unsigned long long)LLONG_MAX){ fail(c,CC_TIMING_COUNT); return 0; }
+        int64_t x=(int64_t)kvalue(&v);
+        if(f==3) tm->latency_cycles=x; else if(f==4) tm->min_throughput_q16=x;
+        else if(f==5) tm->clock_frequency_mhz=x; else tm->setup_hold_margin=x; } }
+    if(!is(c,",")) break;
+    c->i++; }
+  if(!is(c,")")){ fail(c,CC_TIMING_SYNTAX); return 0; }
+  c->i++; return 1;
+}
+/* One C23 `[[ ... ]]` run, the cursor on its `[[` (a `[` is a single-char token, so `[[` is two adjacent `[`): sets *repro if
+ * it names the value-neutral hint `unsequenced` or `reproducible`, reads PORT-3's `bcir::timing(...)` into `tm` (*has set;
+ * a second one, in this run or another, refused), and scans over and drops every other standard attribute, its
+ * arguments whatever they are (the run ends at the first `]]`). An attribute starts the run or follows a comma outside
+ * any parenthesis; one of the `bcir` prefix other than `timing` is refused, and one of any other prefix unless it is a
+ * GNU or Clang hint (CF-VENDORATTR). 0 with the run refused. The oracle's `_attribute_run`. */
+static int c23_attr_run(CC *c,int *repro,bcir_timing *tm,int *has){
+  int start=1, depth=0;
+  c->i+=2;                                           /* consume the opening `[[` */
+  while(!at_run_end(c)){
+    const tok *t=pk(c);
+    if(t->k==T_END){ fail(c,"unterminated [[...]] attribute"); return 0; }
+    if(start && t->k==T_ID && pun_at(c,1,':') && pun_at(c,2,':')){
+      if(!(tok_text(t,"bcir")||tok_text(t,"__bcir__"))){   /* another vendor's: dropped if a hint, else refused
+                                                       * (CF-VENDORATTR) */
+        const tok *nm=tat(c,c->i+3);
+        if(!(bare_in(t->s,t->n,vendor_prefixes) && nm->k==T_ID && bare_in(nm->s,nm->n,vendor_hints))){
+          fail(c,CC_ATTR_VENDOR); return 0; }
+        c->i+=4; start=0; continue; }                /* the prefix, `::` and its name; its arguments scanned below */
+      c->i+=3;                                       /* the prefix and its `::` */
+      if(!isk(c,T_ID) || !(is(c,"timing")||is(c,"__timing__"))){ fail(c,CC_TIMING_UNKNOWN); return 0; }
+      if(*has){ fail(c,CC_TIMING_TWICE); return 0; }
+      c->i++;
+      if(!timing_args(c,tm)) return 0;
+      *has=1;
+      if(!is(c,",") && !at_run_end(c)){ fail(c,CC_TIMING_SYNTAX); return 0; }
+      start=0; continue; }
+    if(is(c,"unsequenced")||is(c,"reproducible")) *repro=1;   /* both fold to one fusion-legality flag */
+    if(is(c,"(")) depth++; else if(is(c,")")) depth--;
+    start = depth==0 && is(c,",");
+    c->i++;                                          /* skip every other token (robust to args/namespaces) */
+  }
+  c->i+=2;                                           /* eat the closing `]]` */
+  return 1;
+}
+/* The C23 `[[ ... ]]` runs leading a function or a file-scope object: 1 if a run was consumed, else 0 (the cursor untouched
+ * so the caller's normal parse proceeds). A timing there appertains to no statement's claims: refused. Matches the
+ * oracle's `_attributes`. */
+static int c23_attrs(CC *c,int *repro){
+  int any=0, has=0; bcir_timing tm;
+  while(at_attr_run(c)){ int at=c->i; any=1;
+    if(!c23_attr_run(c,repro,&tm,&has)) return any;
+    if(has){ c->i=at; fail(c,CC_TIMING_PLACE); return any; } }
+  return any;
+}
 /* The reason both rails refuse a static assertion whose constant expression is zero (C11 6.7.10p2; the oracle's
  * `STATIC_ASSERT_FAILED`, CSUB-1): the message is not part of it -- the source holds it. */
 #define CC_STATIC_ASSERT "static assertion failed"
@@ -2108,6 +2213,7 @@ static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
   bcir_claim *cl=&f->claims[f->n_claims++]; memset(cl,0,sizeof *cl);
   cl->id=c->cid++;cl->opcode=opc;cl->lane=BCIR_LANE_U;cl->stride=BCIR_STRIDE_SCALAR;cl->count=1;
   cl->domain=BCIR_DOM_RAM;cl->hazard=BCIR_HZ_UNIQUE;cl->bounds=BCIR_BND_STRICT;
+  cl->timing=c->timing;                          /* the timing of the statement it lowers, if any (PORT-3) */
   if(!fits(c,cl->op,sizeof cl->op,"%s",op)) cl->op[0]=0;
   if(!strncmp(cl->op,"c.call",6) && strchr(cl->op,':')) f->named_calls=1;   /* the emit spells the callee */
   return cl;
@@ -9173,10 +9279,32 @@ static int void_read(CC *c,size_t from){
     for(int k=0;k<cl->n_rd;k++) if(void_value(c,cl->rd[k])){ fail(c,CC_VOID_VALUE); return 1; } }
   return 0;
 }
+static void p_stmt(CC *c);
+/* A statement or a block declaration C23 attribute runs lead (6.8p1, 6.7p1), the cursor on the first `[[`. Every attribute
+ * but PORT-3's timing is dropped, as at file scope. A timing leads a statement -- the claims it lowers carry it, through
+ * `CC.timing` and `new_claim` -- never a declaration, a label or a null statement, which would time none, nor one inside
+ * a statement another annotates. The oracle's `_attributed_stmt`. */
+static void p_attributed(CC *c){
+  int at=c->i, repro=0, has=0; bcir_timing tm;
+  while(at_attr_run(c)) if(!c23_attr_run(c,&repro,&tm,&has)) return;
+  if(!has){ p_stmt(c); return; }
+  int label=isk(c,T_ID) && pun_at(c,1,':') && !pun_at(c,2,':');
+  if(decl_start_tok(c,pk(c)) || static_assert_at(c) || label || is(c,";") || is(c,"case") || is(c,"default")){
+    c->i=at; fail(c,CC_TIMING_PLACE); return; }   /* it would time no claim: a declaration's, a label's (C23 6.8.1), a
+                                                 * null statement's */
+  if(c->timing){ c->i=at; fail(c,CC_TIMING_NESTED); return; }
+  bcir_func *f=c->fn;
+  if(!CC_ENSURE(c,f->timings,f->n_timings,f->cap_timings)) return;
+  f->timings[f->n_timings++]=tm;
+  c->timing=(uint32_t)f->n_timings;              /* 1 + its index: 0 is no timing */
+  p_stmt(c);
+  c->timing=0;
+}
 static void p_stmt(CC *c) {
   if(ENTER_REC(c)){ LEAVE_REC(c); return; }
   size_t from=c->fn?c->fn->n_claims:0;
-  p_stmt_inner(c);
+  if(at_attr_run(c)) p_attributed(c);            /* `[[...]] stmt` / `[[...]] T x;` (C23), PORT-3's timing among them */
+  else p_stmt_inner(c);
   if(!c->failed) (void)void_read(c,from);
   LEAVE_REC(c);
 }
@@ -9214,6 +9342,8 @@ static void p_stmt_inner(CC *c) {
     c->i++; eat(c,"(");
     int env_mark=c->nenv;             /* for-init + body decls are loop-scoped (no leak past the loop) */
     if(is(c,";")) c->i++;             /* empty init */
+    else if(at_attr_run(c)){ fail(c,"expected expression"); return; }   /* an attribute leads no for-init on either
+                                                                         * rail (the oracle reads one as an expression) */
     else p_stmt(c);                   /* init: a decl / assignment / expr (consumes its `;`) */
     marker(c,"c.loop",0,0);
     uint32_t cond;
@@ -11570,6 +11700,7 @@ static void cfront_free_func(const bcir_host_allocator *allocator, bcir_func *fn
   bcir_host_deallocate(allocator,fn->ptr_extents);
   bcir_host_deallocate(allocator,fn->qcasts);
   bcir_host_deallocate(allocator,fn->qglobals);
+  bcir_host_deallocate(allocator,fn->timings);
   bcir_host_deallocate(allocator,fn->block_types);
   names_free(allocator,fn->emit_names);
   memset(fn,0,sizeof *fn);
@@ -12598,6 +12729,19 @@ static int vn_init(vnctx *v,const bcir_func *f,bcir_host_arena *arena,size_t max
  * OUTPUT anchor (ret=...|stores=...), exactly as the Python oracle does -- so the byte-identity holds.
  * A record is its claim's op, imm and reads' value numbers, so the canon is linear in the function. An
  * allocation that failed writes `oom` and ends the function's canon (the caller refuses the canon). */
+/* A claim's timing in its canon record (PORT-3), into `out`: nothing for none -- every unit without one keeps its canon
+ * byte for byte -- else `|t:` and its eight fields in the model's order, the flag 0 or 1. Its length, or -1 when it does
+ * not fit (or its index names no timing of the function's). The oracle's `_canon_timing`. */
+static int canon_timing(const bcir_func *f,const bcir_claim *cl,char *out,size_t cap){
+  out[0]=0;
+  if(!cl->timing) return 0;
+  if(cl->timing>(uint32_t)f->n_timings) return -1;
+  const bcir_timing *t=&f->timings[cl->timing-1];
+  int n=snprintf(out,cap,"|t:%s,%lld,%lld,%d,%s,%s,%lld,%lld",t->clock_domain,(long long)t->latency_cycles,
+                 (long long)t->min_throughput_q16,t->critical_path?1:0,t->power_domain,t->sync_type,
+                 (long long)t->clock_frequency_mhz,(long long)t->setup_hold_margin);
+  return n<0||(size_t)n>=cap ? -1 : n;
+}
 static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t),
                        void *ctx,bcir_host_arena *arena){
   if(!f||!emit)return;
@@ -12630,13 +12774,15 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     int hl=snprintf(head,sizeof head,"%s|%d|",base,(int)cl->opcode);
     int tl=snprintf(tail,sizeof tail,"|%s|%d|%d",imm,(int)cl->domain,cl->is_volatile?1:0);
     if(hl<0||tl<0||(size_t)hl>=sizeof head||(size_t)tl>=sizeof tail){ emit(ctx,"overflow\n",9); return; }
-    size_t n=(size_t)hl+(size_t)tl+(np>1 ? (size_t)np-1u : 0u), w=(size_t)hl;
+    char tsuf[3*BCIR_TIMING_TEXT+4*24+16]; int xl=canon_timing(f,cl,tsuf,sizeof tsuf);   /* its timing (PORT-3) */
+    if(xl<0){ emit(ctx,"overflow\n",9); return; }
+    size_t n=(size_t)hl+(size_t)tl+(size_t)xl+(np>1 ? (size_t)np-1u : 0u), w=(size_t)hl;
     for(int k=0;k<np;k++) n+=parts[k].n;              /* each part a value number or a short token */
     char *s=(char *)vn_alloc(arena,n+1u,1u,0);
     if(!s){ emit(ctx,"oom\n",4); return; }
     memcpy(s,head,w);
     for(int k=0;k<np;k++){ if(k) s[w++]=','; memcpy(s+w,parts[k].s,parts[k].n); w+=parts[k].n; }
-    memcpy(s+w,tail,(size_t)tl); s[w+(size_t)tl]=0;
+    memcpy(s+w,tail,(size_t)tl); memcpy(s+w+(size_t)tl,tsuf,(size_t)xl); s[w+(size_t)tl+(size_t)xl]=0;
     recs[r]=s;
   }
   sort_strs(recs,tmp,(size_t)nc);

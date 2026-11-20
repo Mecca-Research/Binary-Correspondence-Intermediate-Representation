@@ -219,7 +219,26 @@ typedef struct bcir_claim {
                                * function's `qcasts` of the first of its casts, which follow one another; 0 for
                                * none. Held on the claim so that a lowering rolled back takes its casts with it.
                                * OPTIONAL annotation, digest-excluded, default 0. In the struct's tail padding. */
+  uint32_t timing;            /* the timing the timing laws R19/R20 read (PORT-3): 1 + the index in its function's
+                               * `timings` of the one a `[[bcir::timing(...)]]` statement gave it; 0 for none (the
+                               * oracle's `Claim.timing is None`). OPTIONAL annotation, excluded from the R13
+                               * provenance digest as the oracle excludes it; the cross-rail canon holds it. */
 } bcir_claim;
+
+/* A statement's timing (PORT-3): the oracle's `bcir.model.Timing`, field for field, as the law rail's `#bcir.timing`
+ * holds it -- three names of at most 63 letters, digits, `_`, `.` and `-` (the front ends refuse any other), four
+ * signed 64-bit counts and a flag. */
+#define BCIR_TIMING_TEXT 64
+typedef struct bcir_timing {
+  char     clock_domain[BCIR_TIMING_TEXT];   /* the clock net ("" = the implicit default) */
+  int64_t  latency_cycles;                   /* the stage's latency in cycles (0 = unspecified) */
+  int64_t  min_throughput_q16;               /* items per cycle, Q16 (0 = unspecified) */
+  uint8_t  critical_path;                    /* on the longest timing path */
+  char     power_domain[BCIR_TIMING_TEXT];   /* the power or voltage domain ("" = the implicit default) */
+  char     sync_type[BCIR_TIMING_TEXT];      /* "" | "synchronous" | "asynchronous" | "mixed"; R19 refuses others */
+  int64_t  clock_frequency_mhz;              /* the target clock (0 = unspecified) */
+  int64_t  setup_hold_margin;                /* extra setup/hold margin in cycles */
+} bcir_timing;
 
 /* A cast the emit puts on an operand of a call, or on its result (CF-QUALS): the callee's function type keeps a
  * qualifier below a parameter's top level, or below its return's, that the emit's own objects -- spelled without
@@ -296,6 +315,8 @@ typedef struct bcir_func {
   bcir_qcast *qcasts; int n_qcasts, cap_qcasts;           /* the casts its calls' operands take (CF-QUALS) */
   bcir_qglobal *qglobals; int n_qglobals, cap_qglobals;   /* its qualified globals, as the emit names them
                                                            * (CF-LINKEMIT) */
+  bcir_timing *timings; int n_timings, cap_timings;       /* the timings its statements carry, which its claims'
+                                                           * `timing` index (PORT-3) */
   struct bcir_emit_names *emit_names;                     /* the names its objects emit as, built once per emission
                                                            * and read by every reference (CF-NAMECACHE); NULL
                                                            * otherwise. Emit-only; owned by the lowering's allocator. */

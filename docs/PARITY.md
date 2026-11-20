@@ -421,7 +421,9 @@ The current **R1–R25** MLIR law set is negative-tested per law with
 `verify_shape_dtype.mlir` (R22–R23), and the generated `structural_corpus.mlir` (the S0-6
 structural cases of R1–R4, R6–R8, R12, R13 and the descriptor op verifiers). The Python oracle covers each applicable surface
 through its verifier and dedicated timing/lifetime/GEM-seam tests; the C frontend's
-documented twin remains scoped to R1–R18. Generated `STATUS.md` is a static fixture
+documented twin is scoped to R1–R18 and R19/R20, the timing laws over the timing a
+`[[bcir::timing(...)]]` statement gives its claims, every diagnostic the oracle's
+(PORT-3; `test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails`). Generated `STATUS.md` is a static fixture
 inventory, not an execution claim. The pretty ODS corpus must also stay clean under the
 full `-bcir-verify` (`tools/wsl/check_passes.sh`, CI `mlir-rail-validate`).
 

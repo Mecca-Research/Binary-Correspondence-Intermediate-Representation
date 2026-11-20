@@ -129,7 +129,9 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
 2. Verifier laws **R1–R25** run on the law rail and have a negative fixture per law
    (`bcir/verify` and the MLIR `-bcir-verify` pass; static negative-fixture inventory generated in
    [`STATUS.md`](STATUS.md)). R19/R20 (timing) and R21 (lifetime) ride optional claim
-   metadata and are vacuous over the scalar/C subset — the non-disturbance invariant.
+   metadata and are vacuous over the scalar/C subset — the non-disturbance invariant —
+   until a statement carries a `[[bcir::timing(...)]]` attribute, which both C front ends
+   read and the C verifier then holds R19/R20 over (PORT-3).
 3. The **entire deterministic optimizer core is MLIR-native and cross-checked against
    the oracle** — bit-exact scores across the six-target capability matrix, gated by a
    generated adversarial Python↔MLIR differential rather than curated pins.

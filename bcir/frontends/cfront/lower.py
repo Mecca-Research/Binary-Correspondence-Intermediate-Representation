@@ -399,6 +399,46 @@ CKD_RESULT_FO = (
     "an overflow builtin's result through a pointer to volatile or atomic storage is a follow-on"
 )
 
+# PORT-3 -- a statement's timing, the metadata the timing laws R19 and R20 read (`bcir.model.Timing`). A C23
+# attribute `[[bcir::timing(field = value, ...)]]` (`__bcir__` and `__timing__` too) leads a statement, and every
+# claim the statement lowers carries it; `__has_c_attribute(bcir::timing)` is 1, so a unit Clang also builds guards
+# it. The twin spells each refusal alike (`bcir_cfront.c`, `CC_TIMING_*`).
+#: the fields, the model's own: three names, four counts and a flag
+TIMING_TEXTS = ("clock_domain", "power_domain", "sync_type")
+TIMING_COUNTS = ("latency_cycles", "min_throughput_q16", "clock_frequency_mhz", "setup_hold_margin")
+TIMING_FIELDS = TIMING_TEXTS + TIMING_COUNTS + ("critical_path",)
+#: an attribute of the `bcir` prefix other than `timing`: a misspelt one would otherwise drop the laws it was for
+TIMING_UNKNOWN = "an unknown bcir attribute"
+#: ... and a vendor's that neither rail knows to be a hint: `[[gnu::aligned(8)]]` and `[[gnu::packed]]` had been dropped,
+#: a member laid out at Clang's offset of neither (CF-VENDORATTR). A GNU or Clang attribute that only promises or steers
+#: the optimizer (`VENDOR_HINTS`) is dropped as a standard one is; any other vendor's attribute is refused
+ATTR_VENDOR = "a vendor attribute neither rail knows to be a hint is not supported"
+#: the GNU and Clang attributes both rails drop, under the prefix `gnu` or `clang` (each name also `__x__`): each a
+#: promise about a function or an object, or a code-placement hint -- none changes a layout, a type or what runs
+VENDOR_PREFIXES = frozenset({"gnu", "clang"})
+VENDOR_HINTS = frozenset(
+    {
+        "always_inline", "artificial", "cold", "const", "deprecated", "flatten", "format", "hot", "leaf",
+        "malloc", "noinline", "nonnull", "noreturn", "nothrow", "pure", "returns_nonnull", "unused", "used",
+        "warn_unused_result",
+    }
+)  # fmt: skip
+#: one statement, one timing: a second in its attributes, or one inside a statement another annotates
+TIMING_TWICE = "a statement carries one timing annotation"
+TIMING_NESTED = "a timing annotation inside a statement another one annotates"
+#: ... and it leads a statement that lowers claims: before a declaration, a function, a member, a label (to which C23
+#: 6.8.1 appertains it) or a null statement it would time none
+TIMING_PLACE = "a timing annotation leads a statement"
+#: its arguments: `field = value`, comma-separated, each field once
+TIMING_SYNTAX = "a timing annotation is a list of `field = value`"
+TIMING_FIELD = "a timing annotation names each of its fields at most once"
+#: a name is one string literal of letters, digits, `_`, `.` and `-`, at most 63 of them (both rails print it in a
+#: diagnostic as the oracle's `repr` does, `'name'`)
+TIMING_TEXT = "a timing name is a string of letters, digits, '_', '.' and '-', at most 63"
+#: a count is an integer constant expression of 64 bits, as the law rail's `#bcir.timing` holds one
+TIMING_COUNT = "a timing count is an integer constant expression in 64 bits"
+TIMING_FLAG = "critical_path is 0 or 1"
+
 # ASM2 -- port-mapped I/O intrinsics. Each is a CALL expression (no new syntax), recognized at lowering
 # like `_LIBM`, and lowered to a typed, isolated, BARRIERED I/O-port edge (`c.portio.in.<w>:` /
 # `c.portio.out.<w>:`). Keyed by name: (direction, width-bytes, result-CType-name | None for the void
@@ -1778,6 +1818,7 @@ class _FuncLowerer:
         self.aggregates = aggregates
         self.rid = base_rid
         self.cid = cid  # shared mutable [next_claim_id]
+        self.timing = None  # the `bcir.model.Timing` of the statement being lowered, which each claim takes (PORT-3)
         self.genv = genv or {}  # file-scope globals: name -> (rid, CType)
         self.gres = gres or {}  # global rid -> Resource
         self.strctr = (
@@ -2053,6 +2094,7 @@ class _FuncLowerer:
                 volatile=volatile,
                 bounds_provenance=bounds_provenance,
                 callee_sig=callee_sig,
+                timing=self.timing,
             )
         )
         if op == "c.const" and tuple(imm) == (0,):
@@ -5639,6 +5681,13 @@ class _FuncLowerer:
         return block
 
     def _stmt(self, st):
+        # `[[bcir::timing(...)]] stmt`: its claims carry the timing (PORT-3)
+        if isinstance(st, cast.Timed):
+            outer, self.timing = self.timing, st.timing
+            try:
+                return self._stmt(st.stmt)
+            finally:
+                self.timing = outer
         if isinstance(st, cast.Seq):  # several declarators of one declaration
             for s in st.stmts:
                 self._stmt(s)

@@ -289,6 +289,33 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — PORT-3: the timing laws R19 and R20 on the C verifier, and a statement's timing in C source.**
+  - R19 (synchronous timing) and R20 (clock-domain crossing) had run on the oracle and the law rail only, over a
+    claim's optional timing, which no C front end could give one. Neither rail took an attribute before a statement
+    at all.
+  - A C23 attribute run now leads a statement and a block declaration on both rails, and a member's on the twin as on
+    the oracle; a standard attribute is dropped. `[[bcir::timing(field = value, ...)]]` gives every claim the
+    statement lowers the model's `Timing`. `__has_c_attribute(bcir::timing)` is 1 on both preprocessors, so a unit
+    Clang builds too guards it. The cross-rail canon holds each claim's timing (`|t:...`); a unit without one keeps
+    its canon byte for byte.
+  - `bcir_verify_unit` refuses a unit that breaks either law, in the oracle's words, and `bcir_verify_timing` lists
+    every diagnostic. The oracle's pipeline runs `verify_timing` per function into its verdict, where it had run
+    none. `bcir-cc` refuses such a unit, naming the law.
+  - **CF-VENDORATTR, a defect at the base and closed.** Both rails dropped every attribute a run held; on the oracle
+    `[[gnu::aligned(8)]]` and `[[gnu::packed]]` laid a struct out at offsets Clang's are not (`sizeof` 8 where Clang's
+    is 16 and 5). A vendor's attribute is refused alike now, unless it is a GNU or Clang hint both rails know
+    (`gnu::const`, `gnu::hot`), which is dropped as a standard one is.
+  - **Evidence.** `test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails`: 26 units
+    lower digest-equal with each rail's emit run as Clang's build; 7 units break R19 or R20 and both verdicts refuse
+    them, the twin's every diagnostic the oracle's; 36 malformed or misplaced timings are refused alike in one set of
+    words. `test_has_c_attribute_answers_the_timing_attribute_alone_on_both_rails` beside it, and
+    `test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning`: 7 vendor forms refused alike,
+    3 units of hints lowered alike, `cfront_reproducible.c`'s `gnu::const` among them.
+  - R20 follows the claim graph's resources, function by function, as the oracle defines it: a crossing between two
+    functions through a global, or through memory a pointer reaches, is not one it sees.
+  - The ratchet stays at 38 of 58.
+  - **Standing faults.** `cfront-timing.json`, 30, each swept RED.
+
 - **2026-11-20 — CSUB-3a: `<stdckdint.h>` on both rails.**
   - Both rails read `<stdckdint.h>` as Clang and GCC write it: `ckd_add(R, A, B)` is
     `__builtin_add_overflow((A), (B), (R))`, and `ckd_sub` and `ckd_mul` alike. The standard-header test holds each

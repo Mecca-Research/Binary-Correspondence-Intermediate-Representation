@@ -1,11 +1,12 @@
 """The C-frontend pipeline — the six-artifact gate the ladder requires, end to end:
 
     C source ── parse ──▶ claim graph ── K_BCIR ──▶ plan ── emit ──▶ verified C ── clang ──▶ ≡ check
-                                  └────────────── R1–R18 verifier checkpoint ──────────────┘
+                                  └────────────── R1–R20 verifier checkpoint ──────────────┘
 
 `compile_unit` returns every artifact for a translation unit: the parsed C, the lowered claim graph
-+ K_BCIR plan + `bcir-explain` text per function, the emitted C, the R1–R18 diagnostics (R18 via the
-real `plan_composite` call-graph machinery), and the Clang behaviour-equivalence verdict (which skips
++ K_BCIR plan + `bcir-explain` text per function, the emitted C, the R1–R20 diagnostics (R18 via the
+real `plan_composite` call-graph machinery, R19/R20 over the timing a `[[bcir::timing(...)]]` statement gives its
+claims, PORT-3), and the Clang behaviour-equivalence verdict (which skips
 cleanly without a C compiler, so the structural artifacts still run in the quick tier).
 """
 
@@ -24,7 +25,14 @@ from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
 from ...toolchain import host_link_args
-from ...verify import Diagnostic, cfront_unit_claim_ids_unique, verify, verify_lifetime, verify_plan
+from ...verify import (
+    Diagnostic,
+    cfront_unit_claim_ids_unique,
+    verify,
+    verify_lifetime,
+    verify_plan,
+    verify_timing,
+)
 from .abi import abi_contract_for, verify_abi_contract, HOST, target as resolve_target
 from .clex import CLexError
 from .cparse import CParseError, parse_unit, parse_with_recovery
@@ -59,12 +67,12 @@ class CompileResult:
         None  # escape.EscapeResult: footprints, escape verdicts, narrowed indirect calls
     )
     ipo: dict = field(default_factory=dict)  # inter-procedural plan: worst/expected/leaves/reused
-    diagnostics: list = field(default_factory=list)  # R1–R18 Diagnostics (empty == clean)
+    diagnostics: list = field(default_factory=list)  # R1–R20 Diagnostics (empty == clean)
     lifetime_diagnostics: list = field(
         default_factory=list
     )  # R21 use-after-free / double-free (§5.12) --
     #     ADVISORY: a smart-lowering law over the optional `claim.lifetime` (malloc/free), NOT part of the
-    #     frontend pass/fail (`is_clean`), exactly as R19/R20 timing are advisory. Empty == no dangling access.
+    #     frontend pass/fail (`is_clean`); R19/R20 are in the verdict (PORT-3). Empty == no dangling access.
     lowering_diagnostics: list = field(
         default_factory=list
     )  # §5.12 item 4: cfront-emit lowering faithfulness
@@ -231,7 +239,9 @@ def compile_unit(
 
     # --- per-function: plan, verify (R1–R9), emit, explain ---
     for name, lf in lowered.functions.items():
-        diags = verify(lf.module)
+        # R19/R20 (PORT-3): the timing laws over the timing a `[[bcir::timing(...)]]` statement gave its claims --
+        # vacuous without one, as every unit was before -- in the verdict, as `-bcir-verify` holds them on the law rail
+        diags = verify(lf.module) + verify_timing(lf.module)
         plan = optimize(lf.module, h, theta, policy)
         diags += verify_plan(lf.module, plan, h, theta=theta, policy=policy)
         res.plans[name] = plan
@@ -242,7 +252,7 @@ def compile_unit(
         res.diagnostics += [Diagnostic(d.law, f"{name}: {d.message}") for d in diags]
         # R21 lifetime (§5.12): an ADVISORY pass over the optional malloc/free `claim.lifetime` -- a
         # use-after-free / double-free a C program would have left UB. Kept OUT of `res.diagnostics`
-        # (and thus `is_clean`): like the R19/R20 timing laws, it never changes the frontend verdict.
+        # (and thus `is_clean`): unlike the R19/R20 timing laws above (PORT-3), it never changes the verdict.
         res.lifetime_diagnostics += [
             Diagnostic(d.law, f"{name}: {d.message}") for d in verify_lifetime(lf.module)
         ]

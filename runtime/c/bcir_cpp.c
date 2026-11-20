@@ -207,6 +207,25 @@ static int is_defined(CppState *state, const char *n) {
 }
 
 /* __has_attribute(x): the L8 ABI attributes (GCC __x__ spelling accepted), conservatively. */
+/* `__has_c_attribute`'s operand, `s` (`n` octets), names PORT-3's attribute: `bcir::timing`, each name also as `__x__`
+ * (C23 6.7.13.2), with any space around the names but none inside the `::` -- 1 for it, as Clang answers for a vendor
+ * attribute it implements; the standard attributes each rail drops are reported absent. The oracle's
+ * `_TIMING_ATTRIBUTE`. */
+static int ta_space(char ch){ return ch==' '||ch=='\t'||ch=='\n'||ch=='\r'||ch=='\f'||ch=='\v'; }   /* Python's ASCII `\s` */
+static int ta_word(char ch){ return (ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_'; }
+static int timing_attribute(const char *s, size_t n){
+  size_t k=0, a, b;
+  while(k<n && ta_space(s[k])) k++;
+  a=k; while(k<n && ta_word(s[k])) k++;
+  if(!((k-a==4 && !memcmp(s+a,"bcir",4)) || (k-a==8 && !memcmp(s+a,"__bcir__",8)))) return 0;
+  while(k<n && ta_space(s[k])) k++;
+  if(k+2>n || s[k]!=':' || s[k+1]!=':') return 0;
+  k+=2; while(k<n && ta_space(s[k])) k++;
+  b=k; while(k<n && ta_word(s[k])) k++;
+  if(!((k-b==6 && !memcmp(s+b,"timing",6)) || (k-b==10 && !memcmp(s+b,"__timing__",10)))) return 0;
+  while(k<n && ta_space(s[k])) k++;
+  return k==n;
+}
 static int has_attribute(const char *n) {
   char b[64]; int j = 0;
   for (const char *p = n; *p && j < 63; p++) b[j++] = *p;
@@ -1448,13 +1467,13 @@ static int eval_if(CppState *state, const char *expr, const char *const *dirs, i
     if(k=='i'&&(!strcmp(t,"__has_attribute")||!strcmp(t,"__has_builtin")||
                 !strcmp(t,"__has_c_attribute"))){
       /* feature-test: only the L8 ABI attributes are honoured (no builtins, no [[...]] attrs). */
-      char nm[256]=""; int j=i, attr=!strcmp(t,"__has_attribute");
-      if(next_is(expr,&j,'(')){ int depth=1; int first=1;   /* the operand's tokens through `t`, whose name is read */
-        while(depth){int ak=ntok(state,expr,&j,t,sizeof t); if(!ak)break;
-          if(!strcmp(t,"("))depth++; else if(!strcmp(t,")")){depth--; if(!depth)break;}
+      char nm[256]=""; int j=i, attr=!strcmp(t,"__has_attribute"), cattr=!strcmp(t,"__has_c_attribute"), timing=0;
+      if(next_is(expr,&j,'(')){ int depth=1; int first=1, open=j;   /* the operand's tokens through `t`, whose name is read */
+        while(depth){int close=j, ak=ntok(state,expr,&j,t,sizeof t); if(!ak)break;
+          if(!strcmp(t,"("))depth++; else if(!strcmp(t,")")){depth--; if(!depth){ timing=cattr && timing_attribute(expr+open,(size_t)(close-open)); break;}}
           else if(first&&ak=='i'){strncpy(nm,t,sizeof nm-1);nm[sizeof nm-1]=0;first=0;} }
         i=j; }
-      int yes = attr && has_attribute(nm);
+      int yes = (attr && has_attribute(nm)) || timing;
       { char bit[2]={(char)(yes?'1':'0'),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
     if(k=='i'&&!strcmp(t,"__has_include")){
       /* resolve the header against the include search path (the raw <...>/"..." argument). */
