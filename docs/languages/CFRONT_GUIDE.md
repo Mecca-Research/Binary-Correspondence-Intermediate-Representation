@@ -584,7 +584,13 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - A character constant C does not define or the rails do not read: no character (`''`), an escape C does not define
   (`'\q'`) or past its code unit (`'\x100'`, and `L'\xffffffff'` where `wchar_t` holds 16 bits), a universal
   character name (`'\u0041'`), two characters behind a prefix (`u8'ab'`): `unsupported character constant`. A
-  floating constant with a C23 digit separator (`1e+5'0`) is read by neither rail -- a recorded follow-up.
+  literal whose quote never closes: `unterminated character constant` or `unterminated string literal`.
+- A C23 digit separator a constant does not admit, one not between two digits of its part (6.4.4.1, 6.4.4.2): behind a
+  base prefix (`0x'1`), beside a `.`, an exponent's letter or a suffix (`1.'5`, `1'e5`, `1'u`, `1.5'f`), or beside
+  another `'`: `invalid integer literal` or `invalid floating constant`, the spelling quoted. A `'` is a number's only
+  before a digit or a nondigit (6.4.8), so `1'.5` is `1` and an open character constant, and `1'e+5` is `1'e`, `+` and
+  `5`, as Clang and GCC read them. Every constant Clang takes reads on both rails, in an exponent too (`1e1'0`,
+  `0x1'0p1'0`), its emit spelled without the separator (CF-DIGITSEP).
 - A file-scope initializer C refuses (an excess entry, a string too long for its array, a designator outside its
   object) or that overrides a subobject a brace list or a string initialized, and an initialized file-scope array
   of more than three dimensions. A block-scope `_Thread_local` object that is not `static` (C11 6.7.1p3).

@@ -14038,6 +14038,228 @@ def test_an_integer_constant_no_type_holds_is_refused_on_both_rails():
             )
 
 
+# C23's digit separators, read by one grammar on every rail (CF-DIGITSEP): a `'` is a pp-number's only before a digit
+# or a nondigit (6.4.8, `pp-number ' digit`, `pp-number ' nondigit`, the two one step), and a constant's only between
+# two digits of its part (6.4.4.1, 6.4.4.2: `digit-sequence '? digit`). Each probe's expansion is Clang's (`clang
+# -std=c23 -E -P`; GCC 13 reads each alike): the oracle had taken any `'` into a number, so `F(1',')` passed two
+# arguments.
+_DIGITSEP_PROBES = (
+    ("F(1',')", "[ 1 ',' ]"),  # one argument: `1`, then the character constant `','`
+    ("1'e+X", "1'e + 9"),  # a sign after `'e` is no exponent's
+    ("1'0e+X", "1'0e+X"),  # ... and after the `e` of a digit's it is
+    ("0x1'e+X", "0x1'e + 9"),
+    ("1'X", "1'X"),  # `'X` goes on with the number: no macro is named
+    ("1.'X", "1.'X"),
+    ("F(1'')", "[ 1 '' ]"),  # no separator before a `'`: `1`, then `''`
+    ("T(0xca'fe'u)", "\"0xca'fe'u\""),
+    # an open character constant is one token to the end of the line, its prefix with it: no macro is named
+    ("L'a", "L'a"),
+    ("u8'a", "u8'a"),
+)
+# The constants Clang and GCC take: each lowers alike and runs as Clang's build of it ...
+_DIGITSEP_INTS = ("1'000", "0x1'f", "0'7", "0b1'0", "1'2'3ull", "1'0u", "0xca'feu", "0xe'e")
+_DIGITSEP_FLOATS = (
+    "1'0.5",
+    "1.0'5",
+    "1e1'0",
+    "0x1'0p1'0",
+    "0x1.0'8p1",
+    "1'0.2'5e-1'0",
+    "0xe'ep1",
+    "0'1.5",
+)
+# ... and the units they refuse, each refused alike on both rails in the oracle's words: a separator beside no two
+# digits of its part (behind a base prefix, beside an exponent's letter, a `.` or a suffix), a `'` that is no
+# separator and so opens a character constant that never closes, and one that runs a macro's arguments out
+_DIGITSEP_INT_UNIT = "#include <stdint.h>\nuint64_t f(uint64_t s) {{ return s + {lit}; }}\n"
+_DIGITSEP_FLOAT_UNIT = "double f(double x) {{ return x + {lit}; }}\n"
+_DIGITSEP_REFUSED = (
+    (_DIGITSEP_INT_UNIT.format(lit="1'u"), 'invalid integer literal "1\'u"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="0xca'fe'u"), "invalid integer literal \"0xca'fe'u\"", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="0x'1"), 'invalid integer literal "0x\'1"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="0b'1"), 'invalid integer literal "0b\'1"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="1'_0"), 'invalid integer literal "1\'_0"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="1'c"), 'invalid integer literal "1\'c"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="1_0"), "invalid integer literal '1_0'", "PARSE"),
+    # a spelling is named by its first 48 characters, quoted as Python's repr quotes them: `"` where they hold a `'`
+    (
+        _DIGITSEP_INT_UNIT.format(lit="1'" + "0" * 60 + "'u"),
+        "invalid integer literal \"1'" + "0" * 46 + '"',
+        "PARSE",
+    ),
+    (
+        _DIGITSEP_INT_UNIT.format(lit="1" + "0" * 60 + "'u"),
+        "invalid integer literal '1" + "0" * 47 + "'",
+        "PARSE",
+    ),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1e'5"), 'invalid integer literal "1e\'5"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="0x1p'1"), 'invalid integer literal "0x1p\'1"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1'e5"), 'invalid floating constant "1\'e5"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1.'5"), 'invalid floating constant "1.\'5"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1.5'f"), 'invalid floating constant "1.5\'f"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1e5'f"), 'invalid floating constant "1e5\'f"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="0x1.'8p1"), 'invalid floating constant "0x1.\'8p1"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="0x1p1'f"), 'invalid floating constant "0x1p1\'f"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1'.5"), "unterminated character constant", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="1'0'"), "unterminated character constant", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="0'"), "unterminated character constant", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="L'a"), "unterminated character constant", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="u8'a"), "unterminated character constant", "PARSE"),
+    ('const char *p = "ab;\n', "unterminated string literal", "PARSE"),
+    ('const char *p = u8"ab;\n', "unterminated string literal", "PARSE"),
+    ("#define S(x) #x\nconst char *p = S(1'c');\n", "unterminated macro argument list", "CPP"),
+    ("#define S(x) #x\nconst char *p = S(');\n", "unterminated macro argument list", "CPP"),
+    ('#define S(x) #x\nconst char *p = S("ab);\n', "unterminated macro argument list", "CPP"),
+    ("#if 1'c'\n#endif\nint x;\n", 'invalid integer literal "1\'c"', "CPP"),
+    ("#if 1'u == 1\n#endif\nint x;\n", 'invalid integer literal "1\'u"', "CPP"),
+    ("#if 0x'1\n#endif\nint x;\n", 'invalid integer literal "0x\'1"', "CPP"),
+)
+
+
+def _clang_c23_accepts(src: str) -> "bool | None":
+    """Whether Clang compiles `src` as C23 (`-fsyntax-only`); None where the host has no Clang."""
+    clang = shutil.which("clang")
+    if clang is None:
+        return None
+    r = subprocess.run(
+        [clang, "-std=c23", "-fsyntax-only", "-x", "c", "-"],
+        input=src,
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0
+
+
+def test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail():
+    """CF-DIGITSEP. C23 admits a `'` into a pp-number only as `pp-number ' digit` or `pp-number ' nondigit` (6.4.8), and
+    into a constant only between two digits of its part (6.4.4.1, 6.4.4.2). Every scanner had read it its own way:
+    both preprocessors took any `'` into a number, so `F(1',')` passed two arguments and `1'c'` was one number where
+    Clang and GCC read `1'c` and an unterminated `'`; both lexers dropped each `'` before reading the digits, so `1'u`,
+    `0x'1`, `1''0`, `1'.5` and `1.5'f` lowered; `1e1'0` was refused on both, and `0x1'0p1'0` on the twin alone. And the
+    oracle cut a lone quote off as a token of its own, so `S(')` stringized where the twin and both compilers ran out
+    of the argument list. Now each probe expands to Clang's tokens on both rails; each constant Clang takes lowers alike
+    and runs as Clang's build of it, its emit spelled without the separator, which C11 reads as a quote; and each unit
+    Clang refuses is refused alike, in one set of words."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = "#define S(x) #x\n#define T(x) S(x)\n#define F(a) [a]\n#define X 9\n#define L 7\n#define u8 7\n"
+    probes = head + "".join(
+        f"probe{k} {form}\n" for k, (form, _want) in enumerate(_DIGITSEP_PROBES)
+    )
+
+    def expansions(text: str) -> dict:
+        out = {}
+        for ln in text.splitlines():
+            toks = _cpp._tokens(ln)
+            if toks and toks[0].startswith("probe"):
+                out[int(toks[0][5:])] = toks[1:]
+        return out
+
+    want = {k: _cpp._tokens(w) for k, (_f, w) in enumerate(_DIGITSEP_PROBES)}
+    assert expansions(_cpp.preprocess(probes)) == want
+    clang = shutil.which("clang")
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "probes.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(probes)
+        if exe is not None:  # the twin's preprocessor, through `bcir-cc -E`
+            run = subprocess.run([_build_bcir_cc(d), "-E", path], capture_output=True, text=True)
+            assert run.returncode == 0 and expansions(run.stdout) == want, run.stdout + run.stderr
+        if clang is not None:
+            run = subprocess.run(
+                [clang, "-std=c23", "-E", "-P", path], capture_output=True, text=True
+            )
+            assert run.returncode == 0 and expansions(run.stdout) == want, run.stdout + run.stderr
+
+    def c11(text: str) -> str:
+        """Clang's verdict on `text` as C11 (`-fsyntax-only`), whose lexer reads a `'` as a quote: "" accepted."""
+        run = subprocess.run(
+            [clang, "-std=c11", "-fsyntax-only", "-I", _C, "-x", "c", "-"],
+            input=text,
+            capture_output=True,
+            text=True,
+        )
+        return "" if run.returncode == 0 else run.stderr[-800:]
+
+    for lit in _DIGITSEP_INTS + _DIGITSEP_FLOATS:
+        src = (_DIGITSEP_INT_UNIT if lit in _DIGITSEP_INTS else _DIGITSEP_FLOAT_UNIT).format(
+            lit=lit
+        )
+        assert _clang_c23_accepts(src) in (True, None), lit
+        _lowers_alike(exe, src)
+        _summary, r, entry = _oracle(src)
+        emits = [("oracle", "\n".join(r.emitted.values()))]
+        if exe is not None:
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "u.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(src)
+                emits.append(("twin", _c_run(exe, path)[1]))
+        for rail, emit in emits:  # each runs as Clang's build of the source, and is C11's
+            if _CC:
+                assert _equiv(src, emit, entry) == "MATCH", (lit, rail, emit)
+            if clang is not None:
+                assert c11("#include <stdint.h>\n" + emit) == "", (lit, rail)
+    # a floating constant a global is initialized with, spelled in each rail's linkable emit without the separator
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    src = "double g0 = 1'0.5, g1 = -2'5.0e-1'0;\ndouble f(double x) { return x + g0 + g1; }\n"
+    _summary, r, _entry = _oracle(src)
+    linkables = [("oracle", emit_linkable(r.lowered, r.emitted))]
+    if exe is not None:
+        linkables.append(("twin", _twin_linkable_of(src)))
+    for rail, linkable in linkables:
+        assert re.search(r"\bg0 = 10\.5;", linkable) and re.search(
+            r"\bg1 = -25\.0e-10;", linkable
+        ), (rail, linkable)
+        if clang is not None:
+            assert c11(linkable) == "", rail
+    for src, why, phase in _DIGITSEP_REFUSED:
+        assert _clang_c23_accepts(src) in (False, None), src
+        _refused_alike(exe, src, why, phase=phase)
+    # ... and each lexer's own rule, at its own entry: the preprocessor ends a number before a `'` that is no
+    # pp-number's and spaces the two apart, so through it neither lexer meets one. `clex.tokenize` is the oracle's
+    # entry; `bcir_cfront_compile` the twin's, which takes preprocessed text and is what a caller of the frontend
+    # alone uses. Each reads `1` and an open character constant, as the preprocessor does, not one floating constant.
+    from bcir.frontends.cfront.clex import CLexError, tokenize
+
+    lexed = ("uint32_t f(void) { return 1'.5; }\n", "double g(void) { return 0x1'.8p1; }\n")
+    for text in lexed:
+        try:
+            tokenize(text)
+        except CLexError as e:
+            assert str(e) == "unterminated character constant", (text, str(e))
+        else:
+            raise AssertionError(f"the oracle's lexer read {text!r}")
+    if clang is None:
+        return
+    units = ", ".join(
+        '"' + t.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"' for t in lexed
+    )
+    driver = (
+        '#include <string.h>\n#include "bcir_cfront.h"\nint main(void){\n'
+        f"  static const char *const units[] = {{{units}}};\n"
+        "  for (int k = 0; k < 2; k++) { bcir_cfront_result r; int rc = bcir_cfront_compile(units[k], &r);\n"
+        '    int ok = rc != 0 && !strcmp(r.diag, "unterminated character constant"); bcir_cfront_free(&r);\n'
+        "    if (!ok) return k + 1; }\n  return 0;\n}\n"
+    )
+    with tempfile.TemporaryDirectory() as d:
+        path, exe_path = os.path.join(d, "lexed.c"), os.path.join(d, "lexed")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(driver)
+        srcs = [
+            os.path.join(_C, f)
+            for f in ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c")
+        ]
+        build = subprocess.run(
+            [clang, "-std=c11", "-O1", "-I", _C, *srcs, path, "-o", exe_path],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, build.stderr[-1500:]
+        run = subprocess.run([exe_path], capture_output=True, text=True)
+        assert run.returncode == 0, ("the twin's lexer", run.returncode)
+
+
 # CF-GARRAY: file-scope arrays and character tables pass through cfront as local ones do. Each function writes the
 # globals, so the driver runs the original and the emit from one saved state and compares what each returns and
 # leaves behind.

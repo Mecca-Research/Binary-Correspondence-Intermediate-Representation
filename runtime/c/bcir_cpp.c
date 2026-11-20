@@ -210,12 +210,20 @@ static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
                                                           * e/E/p/P binary/decimal exponent's +/- sign, and C23's
                                                           * `'` separators (6.4.8), read as the oracle's `_TOKEN_RE`
                                                           * reads them: the twin had ended the number at one and read
-                                                          * a character constant from it (CF-PPARITH) */
-    while (idc((unsigned char)s[*i]) || s[*i] == '.' || s[*i] == '\'') {
+                                                          * a character constant from it (CF-PPARITH). A `'` is the
+                                                          * number's only before a digit or a nondigit (`pp-number '
+                                                          * digit`, `pp-number ' nondigit`), taken with it as one step,
+                                                          * so a sign after `'e` is no exponent's: any `'` had been, so
+                                                          * `1'c'` was one number where Clang and GCC read `1'c` and an
+                                                          * unterminated `'` (CF-DIGITSEP) */
+    while (idc((unsigned char)s[*i]) || s[*i] == '.' || (s[*i] == '\'' && idc((unsigned char)s[*i+1]))) {
       char d = s[*i];
       if (j < cap - 1) out[j++] = d; else cpp_limit(state, "preprocessor token too long");
       (*i)++;
-      if ((d=='e'||d=='E'||d=='p'||d=='P') && (s[*i]=='+'||s[*i]=='-')) {
+      if (d == '\'') {
+        if (j < cap - 1) out[j++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
+        (*i)++;
+      } else if ((d=='e'||d=='E'||d=='p'||d=='P') && (s[*i]=='+'||s[*i]=='-')) {
         if (j < cap - 1) out[j++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
         (*i)++;
       }
@@ -1127,7 +1135,7 @@ static ppv lit(CE *expression, const char *s) {
   CppState *state=expression->state;
   if(why){
     if(!state->limit_error){
-      if(why==int_bad) snprintf(state->constant_error,sizeof state->constant_error,"%s '%.48s'",why,s);
+      if(why==int_bad) lit_why(state->constant_error,sizeof state->constant_error,why,s,(int)strlen(s));
       else if(why==int_bad_suffix) snprintf(state->constant_error,sizeof state->constant_error,"%s '%.*s' on integer constant",why,L.nsuf,L.suf);
       else snprintf(state->constant_error,sizeof state->constant_error,"%s",why);
       cpp_limit(state,state->constant_error); }

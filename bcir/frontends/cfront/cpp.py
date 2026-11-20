@@ -110,11 +110,17 @@ _PUNCT = [
 #: ASCII (CF-PPLIMITS): `\w` and `\d` had taken every Unicode letter and digit, so `café` was one name here and `caf`
 #: and two bytes on the twin; and a character no alternative matched was dropped -- `x + caf€` lowered as `x + caf` --
 #: where the twin hands each such byte on as a token of its own.
+#: A quote with no closing one takes the rest of the text, as the twin's `ntok_quoted` and Clang and GCC read it (C11
+#: 6.4p3 leaves a lone `'` or `"` undefined): the oracle had cut a lone quote off as a token of its own, so `S(')`
+#: stringized to `"'"` where the twin and both compilers ran out of the argument list (CF-DIGITSEP). And a C23 digit
+#: separator is a pp-number's only as `pp-number ' digit` or `pp-number ' nondigit` (6.4.8), the `'` and the character
+#: after it one step, so a sign after `'e` is no exponent's: `[\w.']` had taken any `'`, so `F(1',')` passed two
+#: arguments and `1'c'` was one number, where Clang and GCC read `1` and `','`, and `1'c` and an unterminated `'`.
 _TOKEN_RE = re.compile(
-    r'"(?:\\.|[^"\\])*"'  # string
-    r"|'(?:\\.|[^'\\])*'"  # char
-    r"|(?:u8|[LuU])'(?:\\.|[^'\\])*'"  # a prefixed char: one token (C11 6.4.4.4), its `L` no macro (CF-PPARITH)
-    r"|\.?\d(?:[eEpP][-+]|[\w.'])*"  # pp-number (C23 ' seps; ints, hex/bin, floats w/ exp+suffix)
+    r'"(?:\\.|[^"\\])*(?:"|\\)?'  # string, or an unterminated one to the end (and a backslash ending it)
+    r"|'(?:\\.|[^'\\])*(?:'|\\)?"  # char, likewise
+    r"|(?:u8|[LuU])'(?:\\.|[^'\\])*(?:'|\\)?"  # a prefixed char: one token (C11 6.4.4.4), its `L` no macro (CF-PPARITH)
+    r"|\.?\d(?:[eEpP][-+]|'[A-Za-z0-9_]|[\w.])*"  # pp-number (6.4.8: ints, hex/bin, floats w/ exp+suffix, C23 seps)
     r"|[A-Za-z_]\w*"  # identifier
     rf"|{'|'.join(re.escape(p) for p in _PUNCT)}"  # the punctuators, longest first
     r"|\\"  # a stray backslash is its own token (a path in a stringize arg `#x` -> `"C:\\tmp"`)

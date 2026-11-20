@@ -126,20 +126,27 @@ def _alnum(c: str) -> bool:
     return _alpha(c) or _digit(c)
 
 
+def _sep(src: str, j: int, n: int) -> bool:
+    """Whether `src[j]` is a `'` a number goes on through (C23 6.4.8, as the preprocessor's `_TOKEN_RE` reads one): one
+    before a digit or a nondigit. Whether it is a digit separator, between two digits of its part, `separators_ok` asks
+    of the whole constant; any `'` had been taken, so `1'.5` lowered as 1.5 (CF-DIGITSEP; the twin's `lex_sep`)."""
+    return src[j] == "'" and j + 1 < n and (_alnum(src[j + 1]) or src[j + 1] == "_")
+
+
 def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
     """If `src[i:]` begins a *decimal* floating literal (`1.5` / `.5` / `1.` / `1e10` / `1.5e-3` /
     `3.14f`), return its end index, else None. A bare integer (no `.` and no exponent) returns None
     so it lexes as an INT; hex floats (`0x1p4`) are handled separately by `_scan_hex_float`."""
     j = i
     has_digit = False
-    while j < n and (_digit(src[j]) or src[j] == "'"):
+    while j < n and (_digit(src[j]) or _sep(src, j, n)):
         j += 1
         has_digit = True
     has_dot = False
     if j < n and src[j] == ".":
         has_dot = True
         j += 1
-        while j < n and (_digit(src[j]) or src[j] == "'"):
+        while j < n and (_digit(src[j]) or _sep(src, j, n)):
             j += 1
             has_digit = True
     has_exp = False
@@ -150,7 +157,7 @@ def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
         if k < n and _digit(src[k]):
             has_exp = True
             j = k
-            while j < n and _digit(src[j]):
+            while j < n and (_digit(src[j]) or _sep(src, j, n)):
                 j += 1
     if not has_digit or not (has_dot or has_exp):  # no fraction/exponent -> not a float
         return None
@@ -159,7 +166,7 @@ def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
     return j
 
 
-_HEXD = "0123456789abcdefABCDEF'"  # hex digits (with the C23 ' separator)
+_HEXD = "0123456789abcdefABCDEF"  # hex digits (a C23 ' separator is `_sep`'s)
 
 
 def _scan_hex_float(src: str, i: int, n: int) -> int | None:
@@ -171,13 +178,13 @@ def _scan_hex_float(src: str, i: int, n: int) -> int | None:
         return None
     j = i + 2
     start = j
-    while j < n and src[j] in _HEXD:  # the integer part of the significand
+    while j < n and (src[j] in _HEXD or _sep(src, j, n)):  # the integer part of the significand
         j += 1
     has_sig = j > start
     if j < n and src[j] == ".":  # an optional fractional part
         j += 1
         fstart = j
-        while j < n and src[j] in _HEXD:
+        while j < n and (src[j] in _HEXD or _sep(src, j, n)):
             j += 1
         has_sig = has_sig or j > fstart
     if not has_sig or j >= n or src[j] not in "pP":  # need digits AND the binary exponent
@@ -185,11 +192,11 @@ def _scan_hex_float(src: str, i: int, n: int) -> int | None:
     j += 1
     if j < n and src[j] in "+-":  # an optionally-signed exponent
         j += 1
-    estart = j
-    while j < n and (_digit(src[j]) or src[j] == "'"):
-        j += 1
-    if j == estart:  # the exponent needs at least one digit
+    # the exponent needs a digit first, as a decimal one does (the twin's lexer)
+    if j >= n or not _digit(src[j]):
         return None
+    while j < n and (_digit(src[j]) or _sep(src, j, n)):
+        j += 1
     if j < n and src[j] in "fFlL":  # f/F (float) or l/L (long double) suffix
         j += 1
     return j
@@ -253,11 +260,8 @@ def tokenize(src: str) -> list[Tok]:
                 j = q + 1
                 while j < n and src[j] != quote:
                     j += 2 if (src[j] == "\\" and j + 1 < n) else 1
-                if j >= n:
-                    raise CLexError(
-                        f"unterminated {'string' if quote == chr(34) else 'character'} literal",
-                        pos=i,
-                    )
+                if j >= n:  # an open one, in the plain one's words (CF-DIGITSEP; the twin's lexer)
+                    raise CLexError(_OPEN_STRING if quote == '"' else _OPEN_CHAR, pos=i)
                 toks.append(Tok("STRING" if quote == '"' else "CHAR", src[i : j + 1], i))
                 i = j + 1
                 continue
@@ -276,6 +280,7 @@ def tokenize(src: str) -> list[Tok]:
             end = _scan_decimal_float(src, i, n)
             if end is not None:
                 _too_long("a floating constant", src[i:end], i)
+                _float_separators(src[i:end], i)
                 toks.append(Tok("FLOAT", src[i:end], i))
                 i = end
                 continue
@@ -283,6 +288,7 @@ def tokenize(src: str) -> list[Tok]:
             end = _scan_hex_float(src, i, n)  # only matches when a `p` exponent is present
             if end is not None:
                 _too_long("a floating constant", src[i:end], i)
+                _float_separators(src[i:end], i)
                 toks.append(Tok("FLOAT", src[i:end], i))
                 i = end
                 continue
@@ -290,7 +296,8 @@ def tokenize(src: str) -> list[Tok]:
             j = i
             if src[j : j + 2] in ("0x", "0X", "0b", "0B"):
                 j += 2
-            while j < n and (_alnum(src[j]) or src[j] == "'"):  # digits, suffix, C23 separators
+            # digits, a suffix, C23 separators: a pp-number's characters (the twin's `is_idc` and `lex_sep`)
+            while j < n and (_alnum(src[j]) or src[j] == "_" or _sep(src, j, n)):
                 j += 1
             toks.append(Tok("INT", src[i:j], i))
             i = j
@@ -300,7 +307,7 @@ def tokenize(src: str) -> list[Tok]:
             while j < n and src[j] != '"':
                 j += 2 if (src[j] == "\\" and j + 1 < n) else 1  # skip an escaped char as a unit
             if j >= n:
-                raise CLexError("unterminated string literal", pos=i)
+                raise CLexError(_OPEN_STRING, pos=i)
             toks.append(Tok("STRING", src[i : j + 1], i))  # text includes the surrounding quotes
             i = j + 1
             continue
@@ -309,7 +316,7 @@ def tokenize(src: str) -> list[Tok]:
             while j < n and src[j] != "'":
                 j += 2 if (src[j] == "\\" and j + 1 < n) else 1  # skip an escaped char as a unit
             if j >= n:
-                raise CLexError("unterminated character constant", pos=i)
+                raise CLexError(_OPEN_CHAR, pos=i)
             toks.append(Tok("CHAR", src[i : j + 1], i))  # text includes the surrounding quotes
             i = j + 1
             continue
@@ -461,6 +468,41 @@ def str_units(spelling: str, unit_bytes) -> tuple[str, list[int]]:
 _BASE_DIGITS = {16: "0123456789abcdefABCDEF", 10: "0123456789", 8: "01234567", 2: "01"}
 
 
+def separators_ok(text: str) -> bool:
+    """Whether each C23 digit separator of the constant `text` stands between two digits of its part (6.4.4.1p1,
+    6.4.4.2p1: `digit-sequence '? digit`, and its hexadecimal and binary kin): a significand's digits are hexadecimal
+    behind `0x`, else decimal -- an octal constant's `0` its first digit (`0'7`) -- and an exponent's, past `e`/`E`
+    (past `p`/`P` behind `0x`), decimal. A `'` behind the base prefix, beside a `.`, a sign, an exponent's
+    letter, a suffix or another `'`, or at either end, is none: every `'` had been dropped before the digits were read,
+    so `1'u`, `0x'1`, `1''0` and `1.'5` lowered where Clang and GCC refuse them (CF-DIGITSEP; the twin's
+    `digit_seps_ok`)."""
+    hexa = text[:2] in ("0x", "0X")
+    # (a binary or octal constant's digits are decimal here: one its base lacks is refused as the digits are read, in
+    # the same words; and a base prefix's letter is no digit, so `0x'1` and `0b'1` have none before their `'`)
+    digits = _BASE_DIGITS[16 if hexa else 10]
+    exponent = "pP" if hexa else "eE"
+    for k, ch in enumerate(text):
+        if ch in exponent:
+            digits = _BASE_DIGITS[10]
+        elif ch == "'":
+            if not (0 < k < len(text) - 1 and text[k - 1] in digits and text[k + 1] in digits):
+                return False
+    return True
+
+
+#: The reason both rails refuse a floating constant whose separator stands beside no two digits of its part, where it
+#: is lexed (`separators_ok`; the twin's `BCIR_BAD_FLT`).
+FLOAT_INVALID = "invalid floating constant"
+#: ... and a literal with no closing quote (the twin's `BCIR_OPEN_CHR` and `BCIR_OPEN_STR`)
+_OPEN_CHAR = "unterminated character constant"
+_OPEN_STRING = "unterminated string literal"
+
+
+def _float_separators(text: str, pos: int) -> None:
+    if not separators_ok(text):
+        raise CLexError(f"{FLOAT_INVALID} {text[:48]!r}", pos=pos)
+
+
 def int_suffix_ok(suffix: str) -> bool:
     """Whether `suffix` -- an integer constant's trailing run of `u`/`U`/`l`/`L` -- is one C spells (C11 6.4.4.1p1):
     at most one `u` or `U`, first or last, around nothing, one `l` or `L`, or `ll` or `LL` -- never `lL`, `uu` or
@@ -475,11 +517,14 @@ def int_suffix_ok(suffix: str) -> bool:
 
 
 def int_literal_parts(text: str) -> "tuple[int, bool, str]":
-    """An integer constant (C11 6.4.4.1) as (its value, whether it is decimal, its suffix): the C23 `'`
-    digit separators dropped, the trailing run of `u`/`U`/`l`/`L` its suffix, then `0x` hex, `0b` binary,
-    a leading `0` octal, else decimal. Each digit is checked against its base, so a malformed pp-number the
-    lexer took as INT (`9a`, `08`, `0b2`, and `0o17`, which Python's `int` would read as octal) is a clean
-    CLexError, never a value -- the twin's `int_literal` reads the constant the same way."""
+    """An integer constant (C11 6.4.4.1) as (its value, whether it is decimal, its suffix): its C23 `'`
+    digit separators each between two digits (`separators_ok`) and dropped, the trailing run of `u`/`U`/`l`/`L`
+    its suffix, then `0x` hex, `0b` binary, a leading `0` octal, else decimal. Each digit is checked against its
+    base, so a malformed pp-number the lexer took as INT (`9a`, `08`, `0b2`, and `0o17`, which Python's `int`
+    would read as octal) is a clean CLexError, never a value -- the twin's `int_literal` reads the constant the
+    same way."""
+    if not separators_ok(text):
+        raise CLexError(f"invalid integer literal {text[:48]!r}")
     t = text.replace("'", "")
     end = len(t)
     while end and t[end - 1] in "uUlL":
@@ -496,7 +541,7 @@ def int_literal_parts(text: str) -> "tuple[int, bool, str]":
     else:
         base, digits = 10, body
     if not digits or any(ch not in _BASE_DIGITS[base] for ch in digits):
-        raise CLexError(f"invalid integer literal {text!r}")
+        raise CLexError(f"invalid integer literal {text[:48]!r}")
     return int(digits, base), base == 10, suffix
 
 

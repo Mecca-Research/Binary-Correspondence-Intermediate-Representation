@@ -473,6 +473,17 @@ static void type_layout(const CC *c, const bcir_ctype *ty, int si, int *sz, int 
 }
 
 static int is_idc(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9');}
+/* Whether q[0] is a `'` a number goes on through (C23 6.4.8, as the preprocessor's `ntok` reads one): one before a
+ * digit or a nondigit. Whether it is a digit separator, between two digits of its part, `digit_seps_ok` asks of the
+ * whole constant; any `'` had been taken, so `1'.5` lowered as 1.5 (CF-DIGITSEP; the oracle's `clex._sep`). */
+static int lex_sep(const char *q){return q[0]=='\'' && is_idc((unsigned char)q[1]);}
+/* A floating constant's spelling, its C23 separators dropped, into b (the lexer bounds a spelling at
+ * BCIR_CIR_IDENT_MAX characters): what its claim names and the emit writes, which C11 reads -- `1'0.5` had been
+ * written as itself, which C11 reads as `1` and an open character constant (CF-DIGITSEP; the oracle's parser drops
+ * them from `cast.FloatLit`). */
+static int flt_spelling(const char *s, int n, char *b, int cap){
+  int k=0; for(int j=0;j<n;j++) if(s[j]!='\'' && k<cap-1) b[k++]=s[j];
+  b[k]=0; return k; }
 static int is_id0(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z');}
 
 /* An integer constant's reader, `int_literal`, lives in bcir_intlit.h, which the preprocessor's `#if` reads through too
@@ -599,6 +610,13 @@ static void fail(CC *c,const char *m);
 #define BCIR_STR(x) BCIR_STR2(x)
 #define BCIR_LONG_ID "an identifier longer than " BCIR_STR(BCIR_CIR_IDENT_MAX) " characters is not supported"
 #define BCIR_LONG_FLT "a floating constant longer than " BCIR_STR(BCIR_CIR_IDENT_MAX) " characters is not supported"
+/* A floating constant whose C23 separator stands beside no two digits of its part (`digit_seps_ok`; the oracle's
+ * `clex.FLOAT_INVALID`), and a literal with no closing quote, refused where they are lexed in the oracle's words: the
+ * twin had read an open character constant as `unsupported character constant`, and an open string to the end of the
+ * unit, refused later as a bare `;` (CF-DIGITSEP). */
+#define BCIR_BAD_FLT "invalid floating constant"
+#define BCIR_OPEN_CHR "unterminated character constant"
+#define BCIR_OPEN_STR "unterminated string literal"
 static void lex(CC *c, const char *src) {
   const char *p=src;
   static const char *pu[]={"<<",">>","->","==","!=","<=",">=","&&","||",
@@ -620,7 +638,8 @@ static void lex(CC *c, const char *src) {
       else if (p[1]=='"'||p[1]=='\'') qp=p+1;
       if (qp){ char q=*qp; t->s=p; const char *r=qp+1;
         while(*r&&*r!=q){ if(*r=='\\'&&r[1]) r+=2; else r++; }
-        if(*r==q) r++; t->n=(int)(r-p); p=r;
+        if(*r!=q){ fail(c,q=='"'?BCIR_OPEN_STR:BCIR_OPEN_CHR); break; }
+        r++; t->n=(int)(r-p); p=r;
         if (q=='"'){ t->k=T_STR; }
         else { const char *why=char_value(cc_abi(c),t->s,t->n,&t->v); t->k=T_INT; if(why){ fail(c,why); break; } }
         c->nt++; continue; }
@@ -633,14 +652,15 @@ static void lex(CC *c, const char *src) {
     if ((( *p>='0'&&*p<='9') && !(p[0]=='0'&&((p[1]|0x20)=='x'||(p[1]|0x20)=='b')))
         || (*p=='.'&&p[1]>='0'&&p[1]<='9')) {
       const char *q=p; int hasdig=0,hasdot=0,hasexp=0;
-      while((*q>='0'&&*q<='9')||*q=='\''){q++;hasdig=1;}
-      if(*q=='.'){hasdot=1;q++; while((*q>='0'&&*q<='9')||*q=='\''){q++;hasdig=1;}}
+      while((*q>='0'&&*q<='9')||lex_sep(q)){q++;hasdig=1;}
+      if(*q=='.'){hasdot=1;q++; while((*q>='0'&&*q<='9')||lex_sep(q)){q++;hasdig=1;}}
       if(hasdig&&((*q|0x20)=='e')){ const char *r=q+1; if(*r=='+'||*r=='-')r++;
-        if(*r>='0'&&*r<='9'){hasexp=1;q=r; while(*q>='0'&&*q<='9')q++;}}
+        if(*r>='0'&&*r<='9'){hasexp=1;q=r; while((*q>='0'&&*q<='9')||lex_sep(q))q++;}}
       if(hasdig&&(hasdot||hasexp)){
         if(*q=='f'||*q=='F'||*q=='l'||*q=='L')q++;
         t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;
         if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_FLT); break; }
+        if(!digit_seps_ok(t->s,t->n)){ char m[96]; lit_why(m,sizeof m,BCIR_BAD_FLT,t->s,t->n); fail(c,m); break; }
         c->nt++;continue; }
     }
     /* a hex float literal: 0x<hex>[.<hex>]p[+/-]<dec>[f/F/l/L] -- the binary exponent is mandatory,
@@ -648,20 +668,21 @@ static void lex(CC *c, const char *src) {
     if (p[0]=='0' && (p[1]|0x20)=='x') {
       const char *q=p+2; int hd=0;
       #define _ISHEX(ch) (((ch)>='0'&&(ch)<='9')||(((ch)|0x20)>='a'&&((ch)|0x20)<='f'))
-      while(_ISHEX(*q)||*q=='\''){q++;hd=1;}
-      if(*q=='.'){q++; while(_ISHEX(*q)||*q=='\''){q++;hd=1;}}
+      while(_ISHEX(*q)||lex_sep(q)){q++;hd=1;}
+      if(*q=='.'){q++; while(_ISHEX(*q)||lex_sep(q)){q++;hd=1;}}
       #undef _ISHEX
       if(hd && (*q|0x20)=='p'){ const char *r=q+1; if(*r=='+'||*r=='-')r++;
-        if(*r>='0'&&*r<='9'){ q=r+1; while(*q>='0'&&*q<='9')q++;
+        if(*r>='0'&&*r<='9'){ q=r+1; while((*q>='0'&&*q<='9')||lex_sep(q))q++;
           if(*q=='f'||*q=='F'||*q=='l'||*q=='L')q++;
           t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;
           if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_FLT); break; }
+          if(!digit_seps_ok(t->s,t->n)){ char m[96]; lit_why(m,sizeof m,BCIR_BAD_FLT,t->s,t->n); fail(c,m); break; }
           c->nt++;continue; } }
     }
-    if (*p>='0'&&*p<='9'){t->k=T_INT;t->s=p;while(is_idc(*p)||*p=='\'')p++;t->n=(int)(p-t->s);
+    if (*p>='0'&&*p<='9'){t->k=T_INT;t->s=p;while(is_idc(*p)||lex_sep(p))p++;t->n=(int)(p-t->s);
       intlit L; const char *why=int_literal(t->s,t->n,&L);
       if(why){ char m[96];                               /* refused where it is lexed (the oracle's `parse_int_literal`) */
-        if(why==int_bad) snprintf(m,sizeof m,"%s '%.*s'",why,t->n<48?t->n:48,t->s);
+        if(why==int_bad) lit_why(m,sizeof m,why,t->s,t->n);
         else if(why==int_bad_suffix) snprintf(m,sizeof m,"%s '%.*s' on integer constant",why,L.nsuf,L.suf);
         else snprintf(m,sizeof m,"%s",why);
         fail(c,m); break; }
@@ -669,10 +690,12 @@ static void lex(CC *c, const char *src) {
       c->nt++;continue;}
     if (*p=='"'){t->k=T_STR;t->s=p;p++;                /* string literal (escapes consumed as a unit) */
                  while(*p&&*p!='"'){ if(*p=='\\'&&p[1]) p+=2; else p++; }
-                 if(*p=='"')p++; t->n=(int)(p-t->s); c->nt++; continue;}
+                 if(*p!='"'){ fail(c,BCIR_OPEN_STR); break; }
+                 p++; t->n=(int)(p-t->s); c->nt++; continue;}
     if (*p=='\''){t->k=T_INT;t->s=p;p++;               /* character constant -> a folded int const */
                   while(*p&&*p!='\''){ if(*p=='\\'&&p[1]) p+=2; else p++; }
-                  if(*p=='\'')p++; t->n=(int)(p-t->s);
+                  if(*p!='\''){ fail(c,BCIR_OPEN_CHR); break; }
+                  p++; t->n=(int)(p-t->s);
                   { const char *why=char_value(cc_abi(c),t->s,t->n,&t->v); if(why){ fail(c,why); break; } }
                   c->nt++; continue;}
     if((p[0]=='<'||p[0]=='>')&&p[1]==p[0]&&p[2]=='='){   /* <<= / >>= -- 3-char shift-compound-assign */
@@ -5812,7 +5835,8 @@ static uint32_t p_primary(CC *c) {
     int isf = t.n>0 && (t.s[t.n-1]=='f'||t.s[t.n-1]=='F');   /* f/F -> float(4) */
     int isl = t.n>0 && (t.s[t.n-1]=='l'||t.s[t.n-1]=='L');   /* l/L -> long double, else double(8) */
     uint32_t r=tempf(c, isf?4:isl?cc_abi(c)->long_double_size:8);
-    char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.fconst:%.*s",t.n,t.s);
+    char sp[BCIR_CIR_IDENT_MAX+1]; int sn=flt_spelling(t.s,t.n,sp,(int)sizeof sp);
+    char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.fconst:%.*s",sn,sp);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;} return call_value(c,r);}
   if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
     venv sv; if(!lit_venv(c,&sv)) return 0;    /* full spelling kept in result-owned metadata; dedup; cap lifted */
@@ -11165,12 +11189,13 @@ static int lk_render(CC *c, int a, int b, int depth, ctext *t){
   lk_strip(c,&a,&b);
   if(b<=a) return 0;
   const tok *t0=&c->t[a];
-  if(b-a==1 && t0->k==T_FLT){ ctext_putn(c,t,t0->s,(size_t)t0->n); return 1; }   /* a floating constant */
+  char sp[BCIR_CIR_IDENT_MAX+1];                         /* a floating constant's spelling, separators dropped */
+  if(b-a==1 && t0->k==T_FLT){ ctext_putn(c,t,sp,(size_t)flt_spelling(t0->s,t0->n,sp,(int)sizeof sp)); return 1; }
   if(tok_is(t0,"-") || tok_is(t0,"+")){                  /* ... signed */
     int x=a+1, y=b; lk_strip(c,&x,&y);
     if(y-x==1 && c->t[x].k==T_FLT){
       if(tok_is(t0,"-")) ctext_putn(c,t,"-",1);
-      ctext_putn(c,t,c->t[x].s,(size_t)c->t[x].n); return 1; } }
+      ctext_putn(c,t,sp,(size_t)flt_spelling(c->t[x].s,c->t[x].n,sp,(int)sizeof sp)); return 1; } }
   { int all=1; for(int k=a; k<b && all; k++) all=c->t[k].k==T_STR;
     if(all){ for(int k=a; k<b; k++){ if(k>a) ctext_putn(c,t," ",1); ctext_putn(c,t,c->t[k].s,(size_t)c->t[k].n); }
       return 1; } }                                      /* a string literal */

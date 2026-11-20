@@ -2450,8 +2450,10 @@ class _Parser:
             )
         if self.at("CHAR"):  # a character constant: its value, typed by its prefix (CF-CONSTEXPR2)
             return cast.IntLit(*char_constant(self.nxt().text, self.abi))
-        if self.at("FLOAT"):  # a floating-point literal (1.5 / 3.14f)
-            return cast.FloatLit(self.nxt().text)
+        # a floating-point literal (1.5 / 3.14f), its spelling without C23 separators: what its claim names and
+        # the emit writes, which C11 reads as `1` and an open `'` (CF-DIGITSEP; the twin's `flt_spelling`)
+        if self.at("FLOAT"):
+            return cast.FloatLit(self.nxt().text.replace("'", ""))
         if self.at("STRING"):
             text = self.nxt().text
             while self.at("STRING"):  # adjacent literals concatenate (phase 6),

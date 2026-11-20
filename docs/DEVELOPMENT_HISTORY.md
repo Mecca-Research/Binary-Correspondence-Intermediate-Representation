@@ -289,6 +289,47 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — C23's digit separators, read by one grammar on every rail (CF-DIGITSEP).**
+  - C23 admits a `'` into a pp-number only as `pp-number ' digit` or `pp-number ' nondigit` (6.4.8), and into a
+    constant only between two digits of its part (6.4.4.1, 6.4.4.2). Four scanners had read it four ways:
+    - both preprocessors (`_TOKEN_RE`, `ntok`) took any `'` into a number, so `F(1',')` passed two arguments and
+      `1'c'` was one number, where Clang and GCC read `1` and `','`, and `1'c` and an unterminated `'`;
+    - both lexers dropped each `'` before reading the digits, so `1'u`, `0x'1`, `1''0`, `1'.5` and `1.5'f` lowered;
+      `1e1'0` was refused on both, `0x1'0p1'0` on the twin alone, and `0x1p'1` lowered on the oracle alone.
+  - The rails now share each rule. A `'` goes on through a number only before a digit or a nondigit, the two one
+    step, so a sign after `'e` is no exponent's (Clang 18 and 23 and GCC 13 read `1'e+X` so). One predicate on each
+    rail (`clex.separators_ok`, `digit_seps_ok` in `bcir_intlit.h`) holds a constant's separators between two digits
+    of their part, for the lexer and the `#if` evaluator alike. A misplaced one refuses the constant as `invalid
+    integer literal` or `invalid floating constant`, its spelling quoted as Python's `repr` quotes it and cut at 48
+    characters on both rails: the twin had quoted `1e'5` with `'`.
+  - Found on the way, in the same family:
+    - The oracle cut an unterminated quote off as a token of its own, so `S(')` stringized to `"'"` where the twin,
+      Clang and GCC ran out of the argument list. An open quote now takes the rest of the text on both rails.
+    - The twin's lexer named an open character constant `unsupported character constant` and read an open string
+      to the end of the unit, refused later as a bare `;`. Both now give the oracle's words, which name an open
+      prefixed character constant as the plain one's.
+    - A floating constant's spelling carried its separators into each rail's emit and linkable emit, which C11 reads
+      as `1` and an open character constant. The parser (`cast.FloatLit`) and the twin (`flt_spelling`) now drop
+      them.
+  - Left as it was, documented in `clex.parse_int_literal`: the oracle refuses a malformed integer or character
+    constant where the parser reads it, the twin where it lexes it. A unit with two errors can therefore name a
+    different first one on each rail (`return 1'c';` holds a bad constant and an open quote). The witnesses hold
+    one error each.
+  - **Evidence.** `test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail`:
+    - each probe expands to Clang's tokens on both rails;
+    - each constant Clang takes lowers alike and runs, on each rail's emit, as Clang's C23 build of the source, the
+      emit compiling as C11;
+    - each unit Clang refuses is refused alike.
+
+    `test_the_preprocessors_give_one_answer_on_generated_macro_programs` and the `_PPARITH_*` separator cases stay
+    green.
+    The preprocessor ends a number before a `'` that is no pp-number's and spaces the two apart, so through it
+    neither lexer meets one. Each lexer's own rule is therefore witnessed at its own entry: `clex.tokenize`, and the
+    twin's `bcir_cfront_compile`.
+  - **Standing faults.** `cfront-digitsep.json`, 41, each swept RED. Two of them first survived, because they were
+    checked only through the preprocessor; the lexer-entry witness above catches both. `cfront-pparith.json`'s PO17
+    and PT23 are re-anchored to the new tokenizer lines and swept RED again.
+
 - **2026-11-20 — The cfront digest holds a claim's volatile bit.**
   - The cross-rail structural canon, the oracle's `cfront_structural_canon` and the twin's `bcir_cfront_digest`,
     adds a sixth field to each claim's record: `<op>|<opcode>|<reads>|<imm>|<domain>|<volatile>`. Before, two claim
