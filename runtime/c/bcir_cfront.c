@@ -8059,6 +8059,7 @@ typedef struct {            /* one object or subobject the walk initializes (the
   int ptee_char;            /* IK_SCAL (and IK_ARR's element): a pointer, one level, to plain `char` -- the one slot a
                              * string literal's address initializes in a static's image (KV_STRSLOT; CSUB-2) */
   bcir_ctype slot;          /* IK_SCAL (and IK_ARR's element): the declared type a stored value converts to */
+  int vol;                  /* IK_SCAL (and IK_ARR's element): a volatile slot, whose store is a volatile access */
 } iunit;
 typedef struct { iunit u; int idx, count, flat, top; } ifrm;   /* idx: the next subobject; count < 0: inferred */
 typedef struct { uint32_t rid; int top_array, top_n, inferred, rng0, un0;
@@ -8084,10 +8085,11 @@ static void iunit_of_field(CC *c, iunit *u, const field *F, int base_off){
   if(farr(F)){ u->k=IK_ARR; u->sidx=F->elem_sidx; u->nd=F->nadims>0?F->nadims:1;
     if(F->nadims>0){ for(int d=0;d<3;d++) u->dims[d]=F->adims[d]; } else u->dims[0]=F->arr_count;
     u->es=F->size; u->size=F->arr_count*F->size; u->is_bool=F->is_bool; u->is_atomic=F->is_atomic;
-    u->slot=field_slot(F); u->ptee_char=field_ptee_char(F); return; }
+    u->slot=field_slot(F); u->ptee_char=field_ptee_char(F); u->vol=F->is_volatile; return; }
   if(F->sidx>=0){ u->k=IK_AGG; u->sidx=F->sidx; u->size=c->s[F->sidx].size; return; }
   u->k=IK_SCAL; u->size=F->size; u->bit_w=F->bit_w; u->bit_off=F->bit_off; u->abytes=F->access_bytes;
   u->is_bool=F->is_bool; u->is_atomic=F->is_atomic; u->slot=field_slot(F); u->ptee_char=field_ptee_char(F);
+  u->vol=F->is_volatile;
 }
 /* Element `i` of the array `a`: a row of a multi-dimensional array, else a struct or scalar element. */
 static void iunit_elem(iunit *e, const iunit *a, int i){
@@ -8231,6 +8233,8 @@ static void init_store(CC *c, iwalk *W, const iunit *u, uint32_t v, int indexed)
     if(kc){kc->n_wr=1;kc->wr[0]=ic;kc->n_imm=1;kc->imm[0]=u->size>0?u->off/u->size:0;}
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=access_bnd(c,rid);   /* §5.12 */
+      mark_access(c,cl,u->k==IK_SCAL && u->vol);     /* a volatile element: its store is a volatile
+                                                           * access, as the oracle's `_write` makes it (CSUB-2e) */
       const bcir_resource *ar=res_of(c->fn,rid); mark_atomic(cl,ar && ar->is_atomic);}   /* `_Atomic` elements */
     return; }
   uint32_t val=v;
@@ -8249,6 +8253,7 @@ static void init_store(CC *c, iwalk *W, const iunit *u, uint32_t v, int indexed)
     cl->bounds=BCIR_BND_ASSUMED;
     if(u->bit_w){cl->imm[2]=2;cl->n_imm=3;}           /* a bitfield UNIT store: `_v` takes the unit's full type */
     else if(u->is_bool){cl->imm[2]=1;cl->n_imm=3;}     /* a _Bool slot normalizes the value */
+    mark_access(c,cl,u->k==IK_SCAL && u->vol);       /* a volatile slot (CSUB-2e) */
     mark_atomic(cl,u->is_atomic && !u->bit_w);}        /* an `_Atomic` slot: an atomic store */
 }
 /* The code-unit width of a string-literal token's prefix: plain/u8 1, u 2, U 4, L the target's wchar_t. */
@@ -8448,6 +8453,7 @@ static iunit iunit_array(const bcir_ctype *ty, int si, int es, const int *dims, 
   iunit u; memset(&u,0,sizeof u); u.k=IK_ARR; u.sidx=ty->kind==1?si:-1; u.nd=nd<1?1:nd;
   for(int d=0;d<3 && d<u.nd;d++) u.dims[d]=dims[d];
   u.es=es; u.slot=*ty; u.slot.nadims=0; u.is_bool=ty->is_bool; u.is_atomic=ty->is_atomic; u.ptee_char=ctype_ptee_char(ty);
+  u.vol=ty->is_volatile;
   u.size=es; for(int d=0; d<u.nd; d++) u.size*=u.dims[d];
   return u;
 }
@@ -8455,7 +8461,7 @@ static iunit iunit_array(const bcir_ctype *ty, int si, int es, const int *dims, 
 static iunit iunit_scalar(CC *c, const bcir_ctype *ty){
   iunit u; memset(&u,0,sizeof u); u.k=IK_SCAL; u.sidx=-1; u.slot=*ty; u.slot.nadims=0;
   u.size=ty->kind==2?cc_abi(c)->pointer_size:ty->size; u.is_bool=ty->is_bool; u.is_atomic=ty->is_atomic;
-  u.ptee_char=ctype_ptee_char(ty);
+  u.ptee_char=ctype_ptee_char(ty); u.vol=ty->is_volatile;
   return u;
 }
 /* A static's image rendered as its declaration's initializer (the oracle's `_render_image`) -- the brace list both
@@ -12323,7 +12329,9 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     if(cl->opcode==BCIR_OP_NOP) continue; cidx[j++]=(int)i;
     for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k];
       if(writer_index(&v,rid)<0) writer_add(&v,rid,(int)i); } }
-  /* build each non-NOP claim's record, "<op>|<opcode>|<reads>|<imm>|<domain>" */
+  /* build each non-NOP claim's record, "<op>|<opcode>|<reads>|<imm>|<domain>|<volatile>" -- the volatile bit is the
+   * claim's own: a store the emit spells through the object's typed pointer is volatile whatever the bit says, so
+   * nothing but the claim graph held it (CSUB-2e) */
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
     char base[BCIR_VN_OP], head[BCIR_VN_OP+16], imm[BCIR_VN_IMM], tail[BCIR_VN_IMM+16];
     canon_op(cl,base);
@@ -12332,7 +12340,7 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     if(vn_commutative(base)) sort_toks(parts,np);     /* commutative: sort; else POSITIONAL */
     vn_imm(f,cl,imm,sizeof imm);                      /* the semantic imm (member offset / bitfield layout) */
     int hl=snprintf(head,sizeof head,"%s|%d|",base,(int)cl->opcode);
-    int tl=snprintf(tail,sizeof tail,"|%s|%d",imm,(int)cl->domain);
+    int tl=snprintf(tail,sizeof tail,"|%s|%d|%d",imm,(int)cl->domain,cl->is_volatile?1:0);
     if(hl<0||tl<0||(size_t)hl>=sizeof head||(size_t)tl>=sizeof tail){ emit(ctx,"overflow\n",9); return; }
     size_t n=(size_t)hl+(size_t)tl+(np>1 ? (size_t)np-1u : 0u), w=(size_t)hl;
     for(int k=0;k<np;k++) n+=parts[k].n;              /* each part a value number or a short token */

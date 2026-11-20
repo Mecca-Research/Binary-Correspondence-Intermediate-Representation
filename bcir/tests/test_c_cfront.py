@@ -12601,7 +12601,7 @@ def test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails():
     inner = num("c.bin.sub(in:p0,in:p1)")
     canon = cfront_structural_canon(compile_unit(pin, check_clang=False).lowered)
     assert canon == (
-        f"c.bin.sub|4|{inner},in:p0||0\nc.bin.sub|4|in:p0,in:p1||0\n"
+        f"c.bin.sub|4|{inner},in:p0||0|0\nc.bin.sub|4|in:p0,in:p1||0|0\n"
         f"ret={num(f'c.bin.sub({inner},in:p0)')}|stores=\n@\n"
     ), canon
     if exe:
@@ -13561,6 +13561,9 @@ _CSUB2V_LOWERED = (
     "struct dv { uint32_t v; volatile uint32_t r; }; struct e { uint32_t n; struct dv *p; };\n"
     "uint32_t f(struct e *t, uint32_t i) { uint32_t a = t[i].p->r++; return a + ++t[i].p->v; }",
     "volatile uint32_t gv; uint32_t f(uint32_t k) { gv++; return gv + k; }",
+    # a volatile array's and a volatile member's initializer: each store a volatile access (the twin's were not)
+    "uint32_t f(uint32_t s) { volatile uint32_t st[4] = {s & 6u, s & 2u, s | 1u, 1u}; return st[s & 3u]; }",
+    "struct d2 { volatile uint32_t r; uint32_t x; }; uint32_t f(uint32_t s) { struct d2 v = {s, 2u}; return v.r + v.x; }",
     "uint32_t f(uint32_t k) { volatile uint32_t x = k; x++; return x; }",
     "uint32_t f(uint32_t k) { static volatile uint32_t t; t = k; uint32_t a = ++t; return a + t--; }",
     "volatile uint16_t g16; uint32_t f(uint32_t k) { g16 = (uint16_t)k; g16++; --g16; return g16--; }",

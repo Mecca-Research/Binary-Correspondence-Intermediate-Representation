@@ -1381,6 +1381,62 @@
    "path": "runtime/c/bcir_cfront.c",
    "old": "  if(plv_volatile(c,lv)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return nw; }   /* re-read: a second",
    "new": "  if(0){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return nw; }   /* re-read: a second"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V26 twin: the store of `gv++;` not a device access (the claim's volatile bit, which the canon now holds)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  bcir_claim *cp=new_claim(c,\"c.copy\",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}\n  mark_obj_write(c,cp,v);\n",
+   "new": "  bcir_claim *cp=new_claim(c,\"c.copy\",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}\n"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V27 twin: the store of a step through a pointer sum to volatile storage not a device access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    mark_access(c,cl,index_elem_vol(c,&pv));                     /* a volatile element: the write a device sees */",
+   "new": "    /* unmarked */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V28 twin: the store of a volatile element's step not a device access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    mark_access(c,cl,index_elem_vol(c,v));                 /* a volatile element: the write a device sees */",
+   "new": "    /* unmarked */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V29 twin: a volatile array's initializer stores not device accesses",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      mark_access(c,cl,u->k==IK_SCAL && u->vol);     /* a volatile element: its store is a volatile",
+   "new": "      /* unmarked */ (void)0;     /* a volatile element: its store is a volatile"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V30 twin: a volatile member's initializer store not a device access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    mark_access(c,cl,u->k==IK_SCAL && u->vol);       /* a volatile slot (CSUB-2e) */",
+   "new": "    /* unmarked */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V31 oracle canon: a claim's volatile bit left out of the record",
+   "path": "bcir/verify/__init__.py",
+   "old": "                int(c.domain),\n                int(bool(c.volatile)),\n",
+   "new": "                int(c.domain),\n                0,\n"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V32 twin canon: a claim's volatile bit left out of the record",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "int tl=snprintf(tail,sizeof tail,\"|%s|%d|%d\",imm,(int)cl->domain,cl->is_volatile?1:0);",
+   "new": "int tl=snprintf(tail,sizeof tail,\"|%s|%d|%d\",imm,(int)cl->domain,0);"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V33 oracle: a named volatile object's write not a volatile access",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        return {\"domain\": Domain.MMIO, \"lane\": Lane.H, \"hazard\": \"barriered\", \"volatile\": True}",
+   "new": "        return {\"domain\": Domain.MMIO, \"lane\": Lane.H, \"hazard\": \"barriered\"}"
   }
  ]
 }

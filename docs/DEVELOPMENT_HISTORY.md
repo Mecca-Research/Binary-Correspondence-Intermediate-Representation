@@ -289,6 +289,23 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — The cfront digest holds a claim's volatile bit.**
+  - The cross-rail structural canon, the oracle's `cfront_structural_canon` and the twin's `bcir_cfront_digest`,
+    adds a sixth field to each claim's record: `<op>|<opcode>|<reads>|<imm>|<domain>|<volatile>`. Before, two claim
+    graphs differing only in whether a claim is a volatile access digested the same. A store the emit spells through
+    the object's typed pointer (`c[k] = v`, `gv = v`) is volatile whatever the bit says, so nothing but the claim
+    graph held the bit, and three of CSUB-2e's standing faults had to be retired for want of a witness.
+  - **What the bit found.** The twin's initializer stores into volatile storage were plain claims: the brace
+    initializer of a volatile array (`volatile uint32_t st[4] = {...}`, in `cfront_railsplit.c`) and of a volatile
+    member (`struct d { volatile uint32_t r; } v = {s}`). The oracle marks each as the volatile write it is.
+    `init_store` now marks them from the slot's own qualifier (`iunit.vol`).
+  - **Evidence.** The canon is byte-identical on both rails over the whole fixture corpus
+    (`test_python_canon_equals_c_twin_canon_byte_for_byte_on_the_corpus`), and the volatile gate's rows are all 0.
+    `test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails` pins the new field.
+  - **Standing faults.** `cfront-csub2.json` gains 8, CS2V26–CS2V33, each swept RED: the three retired marks (a
+    named object's write, a pointer sum's and an element's step store), the two initializer marks, the bit dropped
+    from either canon, and the oracle's named write unmarked.
+
 - **2026-11-16 — CSUB-2e, second slice: volatile objects stepped, and reached through a pointer sum.**
   - A step of a volatile scalar is one read and one write on both rails. The oracle takes it in `_incdec_value`. The
     twin takes it on its deref, element, member, element-field, loaded-pointer, named-value and statement paths,
