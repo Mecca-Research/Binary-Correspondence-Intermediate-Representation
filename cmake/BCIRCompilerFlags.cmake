@@ -59,9 +59,14 @@ function(bcir_c_target target)
   target_compile_options(${target} PRIVATE ${BCIR_C_WARNINGS})
 endfunction()
 
-# The C++ seam's standard and warnings.
+# A C++ unit's standard and warnings: the seam's C++17, or the standard its manifest entry names
+# (`cxx_standard`, the hosted solver library's 23) as the optional second argument.
 function(bcir_cxx_target target)
-  set_target_properties(${target} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  set(_std 17)
+  if(ARGC GREATER 1 AND NOT "${ARGV1}" STREQUAL "")
+    set(_std ${ARGV1})
+  endif()
+  set_target_properties(${target} PROPERTIES CXX_STANDARD ${_std} CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
   target_compile_options(${target} PRIVATE ${BCIR_CXX_WARNINGS})
 endfunction()
 

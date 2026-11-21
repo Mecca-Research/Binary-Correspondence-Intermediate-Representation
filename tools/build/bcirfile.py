@@ -341,9 +341,11 @@ def generate(
 
     # --- the C++ seam ---
     if cxx:
-        cxx_flags = ["-std=c++17", "-O2", "-Wall", "-Wextra", "-Wpedantic", "-Werror"]
         for kind in ("seam_libraries", "seam_tests"):
             for name, unit in manifest[kind].items():
+                # the seam's C++17, or the unit's `cxx_standard` (the hosted solver library's 23)
+                std = f"-std=c++{unit.get('cxx_standard', 17)}"
+                cxx_flags = [std, "-O2", "-Wall", "-Wextra", "-Wpedantic", "-Werror"]
                 objs = [
                     compile_c(name, f"{CPP_DIR}/{s}", cxx_flags, cxx_unit=True)
                     for s in unit["sources"]

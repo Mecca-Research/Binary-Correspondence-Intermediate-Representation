@@ -478,6 +478,7 @@ _MODULES = [
     "bcir.tests.test_c_emit",
     "bcir.tests.test_cpp_jer_simd",
     "bcir.tests.test_cpp_jer_index",
+    "bcir.tests.test_cpp_exact",
     "bcir.tests.test_asn1_simd_hosts",
     "bcir.tests.test_asn1_graph",
     "bcir.tests.test_asn1_program",

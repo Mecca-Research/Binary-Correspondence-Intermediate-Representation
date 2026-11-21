@@ -13,7 +13,8 @@
     "compiler's spelling, in every build the repository times (M18);",
     "the decode and train kernels' library (bcir_streampack) and the harness holding them to the",
     "one-chain loops (test_decode) pass -ffp-contract=off, as every build of those sources must (M17);",
-    "`max_len` is libFuzzer's -max_len, absent when unbounded. `sections` are the gate sections that",
+    "`max_len` is libFuzzer's -max_len, absent when unbounded; `cxx_standard`, on seam units only, is a C++ unit's",
+    "standard, 17 (the seam's, when absent) or 23 (the hosted solver library and what links it). `sections` are the gate sections that",
     "moved into tools/c/sections/*.sh (BUILD-2): the script and the binaries it takes, in order --",
     "manifest harnesses, `tools` (bcir-cc, for the sections that drive it; a script that compiles what",
     "it emits takes the compiler as CC) or `variants`. A variant is a harness rebuilt with its whole library closure:",
@@ -264,14 +265,17 @@
     "bcir_jer_index": {
       "sources": ["bcir_jer_index.cpp", "bcir_jer_simd.cpp"],
       "libraries": ["bcir_asn1", "bcir_base"]
-    }
+    },
+    "bcir_solver": {"sources": ["bcir_exact.cpp"], "cxx_standard": 23}
   },
   "seam_tests": {
     "test_orchestrator": {"sources": ["test_orchestrator.cpp"], "libraries": ["bcir_seam"]},
     "test_handoff_cpp": {"sources": ["test_handoff.cpp"], "libraries": ["bcir_seam"]},
     "test_artifact_bundle_cpp": {"sources": ["test_artifact_bundle.cpp"], "libraries": ["bcir_artifact", "bcir_base"]},
     "test_jer_index": {"sources": ["test_jer_index.cpp"], "libraries": ["bcir_jer_index"]},
-    "test_jer_simd": {"sources": ["test_jer_simd.cpp"], "libraries": ["bcir_jer_index"]}
+    "test_jer_simd": {"sources": ["test_jer_simd.cpp"], "libraries": ["bcir_jer_index"]},
+    "test_exact": {"sources": ["test_exact.cpp"], "libraries": ["bcir_solver"], "cxx_standard": 23},
+    "fuzz_exact": {"sources": ["fuzz_exact.cpp"], "libraries": ["bcir_solver"], "cxx_standard": 23}
   },
   "variants": {
     "test_decoder_train_c11": {"of": "test_decoder_train", "standard": 11},
@@ -472,7 +476,8 @@
     "cpp-jer-index": {"script": "tools/cpp/check_jer_index.sh", "labels": ["cpp"]},
     "cpp-jer-simd": {"script": "tools/cpp/check_jer_simd.sh", "labels": ["cpp"]},
     "cpp-handoff": {"script": "tools/cpp/check_handoff.sh", "labels": ["cpp"]},
-    "cpp-sycl": {"script": "tools/cpp/check_sycl.sh", "labels": ["cpp"]}
+    "cpp-sycl": {"script": "tools/cpp/check_sycl.sh", "labels": ["cpp"]},
+    "cpp-solver": {"script": "tools/cpp/check_solver.sh", "labels": ["cpp"]}
   },
   "freestanding_checks": [
     "bcir_runtime.c", "bcir_sha256.c", "bcir_ed25519.c", "bcir_plan_sign.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",

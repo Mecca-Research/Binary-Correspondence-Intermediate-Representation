@@ -289,6 +289,44 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-20 — PORT-5: the hosted C++ solver library, and `gem.exact` in it at parity.**
+  - The GEM+ solver portfolio (N5 of the native port audit) had no native form. `runtime/cpp/bcir_exact.cpp` is the
+    hosted solver library's foundation and its first solver, behind a C ABI (`bcir_exact.h`): records in, a
+    placement and its certificate out, a status for every refusal. It is C++23 -- the manifest now names a C++
+    unit's standard, `cxx_standard`, 17 when absent -- and every allocation goes through the caller's
+    `bcir_host_allocator`, one arena per phase. Inside, a failure is a value (`bcir::expected`, `std::expected`
+    where the standard library has it); the C entry point catches what the standard library may throw. The object
+    exports one strong symbol and constructs no global state.
+  - The solver is `exact_schedule`'s branch-and-bound step for step: the root bound stack, the node bound, the twin
+    and empty-stream symmetry rules, the child order, the stack discipline, the budget the phases share and the
+    pending phases after a stop. A run spends the oracle's expansions and stops where it stops. The heuristic
+    placement each phase starts from is the caller's (the artifact's `schedule_eft`), and the façade checks that it
+    is a schedule of the phase spanning the heuristic, since the search returns it certified when nothing beats it.
+  - **What the gates found.** The allocation-failure campaign's first run crashed inside the standard library:
+    `std::pmr::unsynchronized_pool_resource` (libstdc++ 13, and 16 under Clang 23) does not survive its upstream
+    refusing its first allocation -- the next allocation reads a pool it never finished building. Reproduced in
+    isolation, so the library's arena is its own: `phase_arena`, power-of-two classes over the caller's allocator,
+    unchanged by a refused refill. The fuzzer then found an input outside the oracle's domain, a claim the tail and
+    a wave stream could both take, for which the work bound is no bound. The oracle's dispatch never gives one, and
+    the façade refuses it.
+  - **Evidence.** `test_cpp_exact.py`: `test_exact FILE` prints the oracle's text over 7,430 runs -- the six-job
+    fixture under every fourth duration vector, 240 random modules on two targets and one to three domains, 60 on
+    targets whose bandwidth knee is below their domains (8 and 128), the quality corpus, five budgets from 0 to
+    past closing -- and every placement it returns is checked by code that shares nothing with the solver.
+    `test_exact.cpp` holds every refusal, the budget's stops and pending phases, determinism and each of a run's
+    allocations refused in turn (NOMEM, nothing live). `fuzz_exact.cpp` holds the façade's invariants under
+    libFuzzer, ASan and UBSan, and replays a fixed stream where libFuzzer is absent. `tools/cpp/check_solver.sh`
+    (CTest `cpp-solver`, the library's gate) builds it all warning-clean under C++23 without RTTI on GCC 13, Clang 18
+    and Clang 23 and runs it.
+  - **Standing faults.** `cpp-exact.json`, 25, each swept RED. Five more survived as equivalent mutants and were
+    dropped: a phase after a stop searched with the budget it has left, which is none; a stopped phase's bound
+    without the root, which every stack bound already holds; a tie taking the incumbent and a child at the
+    incumbent's bound kept, which pruning never lets reach the comparison; and the root's early close, which the
+    first pop makes anyway. The sweep also found two contract cases refused for a second reason and a corpus thin
+    in phases whose knee is below their domains; both were fixed before the faults were re-swept. The inventory
+    gains its second C++ twin. Not yet wired into a planning path: when a planner takes a native solver, its plan
+    goes to the C verifier's R9 and the pack's R10/R11, as the port audit's rule 5 says.
+
 - **2026-11-20 — PORT-4: the event transducer in C.**
   - Driver-packet ingestion had no executable transducer or grammar-to-claims parser in C (N4 of the native port
     audit). `bcir_etl.c` ports the three oracle modules, freestanding: the finite-state transducer (`etl.fsm`), the

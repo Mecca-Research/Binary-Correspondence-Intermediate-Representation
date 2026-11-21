@@ -239,7 +239,9 @@ containers by hand for code that never runs on a target.
    (BKPI/BKPR), so a C or Python caller never sees a C++ type. It is standalone like the seam,
    not part of the MLIR cmake, and built by BCIR Make and CMake from `runtime/manifest.json`.
 3. **Arena memory and value errors**: `pmr` only, `std::expected` at every fallible call, no
-   exception across the façade, no global state.
+   exception across the façade, no global state. A standard pool resource is not a given: PORT-5's
+   allocation campaign found libstdc++'s `unsynchronized_pool_resource` (13 through 16) broken by a
+   refused upstream allocation, so the library's arena (`phase_arena`) is its own.
 4. **Parity before trust.** Each solver reproduces the oracle over a generated corpus before
    any certificate names it. It runs under ASan/UBSan, gets a fuzzer at the façade and joins
    the allocation-failure campaign, exactly as a C twin does.
@@ -257,7 +259,7 @@ containers by hand for code that never runs on a target.
 | **PORT-3** (**landed 2026-11-20**: R19/R20 in `bcir_verify.c`, the oracle's words for every diagnostic; `[[bcir::timing(...)]]` gives a statement's claims their timing on both C front ends, the canon holding it; a vendor's `[[...]]` attribute, which both rails had dropped, refused alike unless it is a known hint) | The C verifier's R19/R20 | With driver row 1 |
 | **PORT-4** (**landed 2026-11-20**: `bcir_etl.c` -- the transducer, the event descriptors and the mini-ROP grammar, freestanding, every output in a buffer the caller sized -- behind `bcir-etl`, every verdict the oracle's over 601 programs, 312 machines and 300 descriptors; the oracle's parser now refuses with a verdict where it had raised `KeyError`, taken a count past 64 bits or let a second statement replace the first; 70 twinned modules became 73) | N4, the event transducer in C | With the UART event-driven slices |
 | ECN in `cgen` | N3 | Inside the interface phase, IF-5 |
-| **PORT-5** | The C++ solver library's foundation: the façade, the arena and error conventions, and the first solver (`gem.exact`) at parity | After the interface phase's stage A |
+| **PORT-5** (**landed 2026-11-20**: `runtime/cpp/bcir_exact.cpp` behind `bcir_exact.h`, C++23 -- the façade, one arena per phase over the caller's allocator, failures as values -- with `exact_schedule`'s search expansion for expansion over 7,430 runs; libstdc++'s pool resource failed the allocation campaign, so the arena is the library's own) | The C++ solver library's foundation: the façade, the arena and error conventions, and the first solver (`gem.exact`) at parity | After the interface phase's stage A |
 | **PORT-6 to PORT-9** | N5's remaining solvers (CXX3), the incremental engine (N6, CXX4), the memory fabric's planning (N9, CXX6) and N7, the ASN.1 host compiler (CXX5) | Alternating with the foundation and driver work |
 | **PORT-10** | N8, a native kernel lowering in MLIR | Behind a GO/STOP written after PORT-5 |
 | Tier 3 | N10–N14 | Each with its consumer |
