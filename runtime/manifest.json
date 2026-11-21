@@ -78,11 +78,13 @@
     },
     "bcir_digest": {
       "class": "freestanding_core",
-      "sources": ["bcir_digest_hw.c"]
+      "sources": ["bcir_digest_hw.c"],
+      "libraries": ["bcir_base"]
     },
     "bcir_tokload": {
       "class": "freestanding_core",
-      "sources": ["bcir_tokload.c"]
+      "sources": ["bcir_tokload.c"],
+      "libraries": ["bcir_digest", "bcir_rng", "bcir_base"]
     },
     "bcir_asn1": {
       "class": "freestanding_core",
