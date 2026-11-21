@@ -37,11 +37,31 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from ..model import Claim, Domain, Lane, Opcode, StrideClass
 
 _Q8 = 256
 _MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+
+#: The bounded JSON reader's limits for a persisted manifest (the `JerLimits` fields), field for field the C
+#: twin's `bcir_devman_limits` (runtime/c/bcir_devman.c), so both rails read an envelope through one reader:
+#: three levels of nesting are all the schema has, 256 elements an array bound the banks, a row and the rows,
+#: and 18 digits an integer, so every integer either rail admits is an int64.
+MANIFEST_LIMITS = MappingProxyType(
+    {
+        "input_bytes": _MAX_MANIFEST_BYTES,
+        "depth": 8,
+        "nodes": 1 << 18,
+        "members": 64,
+        "elements": 256,
+        "string_bytes": 4096,
+        "number_bytes": 64,
+        "integer_digits": 18,
+        "exponent_magnitude": 4096,
+        "work": 1 << 25,
+    }
+)
 
 # The MEMORY tiers D-R2 governs. MMIO is exempt (measured: drivers mix MMIO/RAM in
 # plain load/store claims by design; the R3 rail owns register-access ordering).
@@ -425,8 +445,18 @@ def load_device_manifest(
             out[key] = value
         return out
 
+    def not_json(name):
+        raise ValueError(f"{name!r} is not a JSON token")  # NaN and Infinity (ECMA-404 clause 8)
+
     try:
-        doc = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
+        # the one reader both rails use: the bounded scan under MANIFEST_LIMITS (depth, nodes, members,
+        # elements, string and number lengths, work, no escaped lone surrogate), then UTF-8, then the grammar
+        from ..asn1.jer_bounded import JerLimits, scan  # lazy: the reader is a large import
+
+        scan(raw, JerLimits(**MANIFEST_LIMITS))
+        doc = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=unique_object, parse_constant=not_json
+        )
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise ValueError(f"malformed device manifest: {exc}") from exc
     if not isinstance(doc, dict):
@@ -466,7 +496,12 @@ def load_device_manifest(
         or expect_cal_gen < 0
     ):
         raise ValueError("expect_cal_gen must be a non-negative integer")
-    if expect_cal_gen is not None and doc.get("cal_gen") != expect_cal_gen:
+    # compared only when it is an integer: a bool or a float is refused as a type below, on both rails
+    if (
+        expect_cal_gen is not None
+        and type(doc.get("cal_gen")) is int
+        and doc["cal_gen"] != expect_cal_gen
+    ):
         raise ValueError(
             f"device manifest is STALE: authored under cal_gen "
             f"{doc.get('cal_gen')}, the live table is cal_gen "

@@ -159,6 +159,8 @@ echo "[c-runtime] DMA programs from strided views (N12): test_dma's contracts, a
 show_section dma || exit 1
 echo "[c-runtime] serving control plane (N10): test_serve's contracts, and its page tables and constrained steps == the oracle's"
 show_section serve || exit 1
+echo "[c-runtime] device manifests bound at instantiation (N11): test_devman's contracts, and its loads, probes and bound admissions == the oracle's"
+show_section devman || exit 1
 
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1

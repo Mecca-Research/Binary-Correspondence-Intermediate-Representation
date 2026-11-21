@@ -83,6 +83,9 @@
       "construct": "a call of 18 arguments (`bcir_tensor_attention_backward_contract_variant_ws_pool`), past the claim graph's 16 reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS); then threads, SIMD and bf16",
       "rung": "CSUB-6"
     },
+    "bcir_devman.c": {
+      "verdict": "clean"
+    },
     "bcir_diag.c": {
       "verdict": "clean"
     },

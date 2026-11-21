@@ -289,6 +289,45 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-21 — N11: device manifests bound at instantiation, in freestanding C.**
+  - Tier 3 of the native port audit: an instance binds its device's static hardware schema (D-R1) from the persisted
+    envelope the planner was given when it starts, rather than from a header generated per device.
+    `runtime/c/bcir_devman.c` is the twin of `load_device_manifest`, `check_device_manifest` and `probe_agree`
+    (`bcir/kbcir/device_manifest.py`). One JSON reader on both rails, as the tokenizers have: the bounded JER reader
+    under one limits profile (`MANIFEST_LIMITS` on the oracle's, `bcir_devman_limits` on this rail) -- three levels
+    of nesting are all the schema has, 256 elements an array bound the banks, a row and the rows, 18 digits an
+    integer, so every integer either rail admits is an int64 -- then UTF-8, then the grammar, with no member name
+    repeated and no NaN. Then the oracle's laws in its order, each refusal its own code with the bank or row it
+    names; the digest re-derived over `json.dumps(..., sort_keys=True)`, which the C writes octet for octet,
+    ASCII-escaped as Python escapes it (the short escapes, `\u` in lowercase hex, an astral code point as its
+    surrogate pair, DEL escaped); `check_device_manifest`'s consistency laws as bits. The binding is the bank
+    table `bcir_dma_admit` and `bcir_kv_init` take, and `probe_agree`'s veto: what a probe observed equals the
+    manifest or the instance refuses to run; discovery never steers.
+  - **The oracle's two changes.** `load_device_manifest` reads through the bounded reader, so the oracle now
+    refuses, as malformed, what the reader refuses and `json.loads` took: NaN, an escaped lone surrogate, an
+    integer past 18 digits, an array past 256 elements, nesting past 8 -- each of which it refused later before
+    (as a type, the digest or a bank's shape) or, for a lone surrogate in a name, carried into the digest. And the
+    calibration generation is compared with the caller's only when it is an integer: a `true` or a `3.0` is
+    refused as a type, not as stale. Both are refusals moved earlier or renamed; no envelope the oracle loaded is
+    refused, and none it refused now loads.
+  - **Evidence.** `test_c_devman.py`: over 40 generated manifests -- names with quotes, backslashes, control
+    characters, DEL, non-ASCII and astral code points, every domain, capacities to 10^17 -- saved as the oracle
+    saves them and respelled (other key orders, compact, raw UTF-8), loaded with and without the expected target
+    and generation, and 55 to 59 mutations of each reaching every refusal -- 2,706 envelopes, 2,473 refused -- `test_devman FILE` gives
+    `load_device_manifest`'s verdict for every envelope: the banks and the re-derived digest, or the refusal, its
+    bank or row and each consistency kind. Each of 240 generated views against the bound table gets `check_strided_view`'s
+    verdict bit for bit, and each of 160 probes `probe_agree`'s vetoes and message count. `test_devman.c` holds what the
+    oracle cannot state: a short workspace or bank table -- the workspace asked for only after the scan, sized by
+    what it counted, so a short one never hides the reader's refusal, and the smallest that loads never written
+    past -- a tile past 32 bits, a known envelope's digest, every NULL. A libFuzzer target, `fuzz_devman`, re-seals a tampered envelope's digest to reach the laws and the
+    binding, and holds whatever loads to them. 1,000,000 runs from saved envelopes, no finding. The `devman` section runs the comparison.
+  - **Standing faults.** `devman.json`, 40, each swept RED. `bcir_devman.c` compiles clean under `bcir-cc` (the
+    ratchet: 45 of 67 units). On the way: DV2 (the scan skipped) first survived, the parse enforcing most of
+    the same limits; an envelope past the scan's node bound now separates them, and that case showed the
+    workspace was asked for before the scan, so the C answered SPACE where the oracle answered malformed.
+  - **What stays the oracle's.** `move_cost`, `move_claim` and `check_bank_moves` are the planner's: they price and
+    check claims, which an instance does not plan.
+
 - **2026-11-21 — N10: the serving loop's control plane in freestanding C.**
   - Tier 3 of the native port audit, the part of serving that needs no hardware: what a native server runs beside
     the decoder's numerics, which stay `bcir_decode.c`'s and `bcir_llama.c`'s. `runtime/c/bcir_serve.c` is the twin

@@ -95,6 +95,11 @@
       "sources": ["bcir_serve.c"],
       "libraries": ["bcir_dma"]
     },
+    "bcir_devman": {
+      "class": "freestanding_core",
+      "sources": ["bcir_devman.c"],
+      "libraries": ["bcir_asn1", "bcir_dma", "bcir_base"]
+    },
     "bcir_asn1": {
       "class": "freestanding_core",
       "sources": [
@@ -220,6 +225,7 @@
     "test_tokload": {"sources": ["test_tokload.c"], "libraries": ["bcir_tokload", "bcir_digest", "bcir_rng", "bcir_base"]},
     "test_dma": {"sources": ["test_dma.c"], "libraries": ["bcir_dma"]},
     "test_serve": {"sources": ["test_serve.c"], "libraries": ["bcir_serve", "bcir_dma"]},
+    "test_devman": {"sources": ["test_devman.c"], "libraries": ["bcir_devman", "bcir_asn1", "bcir_dma", "bcir_base"]},
     "test_train": {"sources": ["test_train.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_train_stream": {"sources": ["test_train_stream.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_telemetry_frame": {"sources": ["test_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
@@ -287,6 +293,7 @@
     "fuzz_binrec": {"sources": ["fuzz_binrec.c"], "libraries": ["bcir_streampack"], "max_len": "64"},
     "fuzz_etl": {"sources": ["fuzz_etl.c"], "libraries": ["bcir_etl"], "max_len": "4096"},
     "fuzz_tokload": {"sources": ["fuzz_tokload.c"], "libraries": ["bcir_tokload", "bcir_digest", "bcir_rng", "bcir_base"], "max_len": "4096"},
+    "fuzz_devman": {"sources": ["fuzz_devman.c"], "libraries": ["bcir_devman", "bcir_asn1", "bcir_dma", "bcir_base"], "max_len": "4096"},
     "fuzz_asn1_streampack": {"sources": ["fuzz_asn1_streampack.c"], "libraries": ["bcir_asn1", "bcir_base"], "max_len": "8192"}
   },
   "seam_libraries": {
@@ -398,6 +405,7 @@
     "tokload": {"script": "tools/c/sections/tokload.sh", "harnesses": ["test_tokload", "bcir-tokload"]},
     "dma": {"script": "tools/c/sections/dma.sh", "harnesses": ["test_dma"]},
     "serve": {"script": "tools/c/sections/serve.sh", "harnesses": ["test_serve"]},
+    "devman": {"script": "tools/c/sections/devman.sh", "harnesses": ["test_devman"]},
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},
@@ -526,6 +534,7 @@
     "bcir_shard_manifest.c", "bcir_kplan.c", "bcir_artifact_bundle.c", "bcir_asn1.c",
     "bcir_asn1_streampack.c", "bcir_per.c", "bcir_per_plan.c", "bcir_oer.c", "bcir_xer.c", "bcir_jer.c",
     "bcir_emit.c", "bcir_sp_listing.c", "bcir_ab_listing.c", "bcir_etl.c", "bcir_rng.c",
-    "bcir_digest_hw.c", "bcir_tokload.c", "bcir_dma.c", "bcir_serve.c"
+    "bcir_digest_hw.c", "bcir_tokload.c", "bcir_dma.c", "bcir_serve.c",
+    "bcir_devman.c"
   ]
 }

@@ -1,0 +1,292 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_devman:_CC",
+  "bcir.tests.test_c_devman:test_the_c_twin_holds_its_contracts",
+  "bcir.tests.test_c_devman:test_the_c_twin_binds_manifests_as_the_oracle_loads_them"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV1 the 16 MiB bound never checked",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (len > BCIR_DEVMAN_MAX_BYTES) return BCIR_DEVMAN_ERR_SIZE;\n  layout L;",
+   "new": "  layout L;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV2 the scan skipped",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  bcir_jer_status js = bcir_jer_scan(data, len, &lim, stack, lim.depth, &scanned, &jd);",
+   "new": "  bcir_jer_status js = BCIR_JER_OK;\n  (void)scanned;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV3 a repeated member name admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "          return SINK_DUPLICATE;",
+   "new": "          (void)0;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV4 a fraction read as an integer",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (t[j] == '.' || t[j] == 'e' || t[j] == 'E') {",
+   "new": "    if (t[j] == 'e' || t[j] == 'E') {"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV5 a negative integer read as positive",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  *value = neg ? -v : v;",
+   "new": "  *value = v;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV6 an array root admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (!root || root->kind != N_OBJ) return BCIR_DEVMAN_ERR_ROOT;",
+   "new": "  if (!root) return BCIR_DEVMAN_ERR_ROOT;\n  if (root->kind != N_OBJ) return BCIR_DEVMAN_ERR_KIND;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV7 any kind admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (!is_str(&b, member(&b, root, \"kind\"), \"bcir.device_manifest\")) return BCIR_DEVMAN_ERR_KIND;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV8 a newer schema called unsupported",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (schema->ival > (int64_t)BCIR_DEVMAN_SCHEMA) return BCIR_DEVMAN_ERR_SCHEMA_NEWER;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV9 an older schema admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (schema->ival != (int64_t)BCIR_DEVMAN_SCHEMA) return BCIR_DEVMAN_ERR_SCHEMA;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV10 an extra field admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  int all = root->count == 8u;",
+   "new": "  int all = root->count >= 8u;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV11 the target never compared",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (expect_target_len &&\n",
+   "new": "  if (0 && expect_target_len &&\n"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV12 a stale generation admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (has_expect_cal_gen && cal->kind == N_INT && (cal->ival < 0 || (uint64_t)cal->ival != expect_cal_gen))",
+   "new": "  if (has_expect_cal_gen && cal->kind == N_INT && cal->ival < 0)"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV13 a non-integer generation compared",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (has_expect_cal_gen && cal->kind == N_INT && (cal->ival < 0 || (uint64_t)cal->ival != expect_cal_gen))",
+   "new": "  if (has_expect_cal_gen && (cal->kind != N_INT || cal->ival < 0 || (uint64_t)cal->ival != expect_cal_gen))"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV14 a negative generation admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (device->kind != N_STR || target->kind != N_STR || cal->kind != N_INT || cal->ival < 0 ||",
+   "new": "  if (device->kind != N_STR || target->kind != N_STR || cal->kind != N_INT ||"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV15 a bank of four fields admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (!x || x->kind != N_ARR || x->count != 5u) return BCIR_DEVMAN_ERR_BANK_SHAPE;",
+   "new": "    if (!x || x->kind != N_ARR || x->count < 4u) return BCIR_DEVMAN_ERR_BANK_SHAPE;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV16 a bank name of another type admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (nm->kind != N_STR) return BCIR_DEVMAN_ERR_BANK_TYPES;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV17 the domain's bound one past",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (domain < 0 || domain >= (int64_t)BCIR_DEVMAN_DOMAINS) return BCIR_DEVMAN_ERR_DOMAIN;",
+   "new": "    if (domain < 0 || domain > (int64_t)BCIR_DEVMAN_DOMAINS) return BCIR_DEVMAN_ERR_DOMAIN;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV18 a distance of another type admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "      if (b.nodes[c].kind != N_INT) return BCIR_DEVMAN_ERR_DISTANCE;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV19 an uppercase digest admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (!((hex[k] >= '0' && hex[k] <= '9') || (hex[k] >= 'a' && hex[k] <= 'f'))) return BCIR_DEVMAN_ERR_DIGEST_FORM;",
+   "new": "    if (!((hex[k] >= '0' && hex[k] <= '9') || (hex[k] >= 'a' && hex[k] <= 'f') || (hex[k] >= 'A' && hex[k] <= 'F'))) return BCIR_DEVMAN_ERR_DIGEST_FORM;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV20 the digest never compared",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "      return BCIR_DEVMAN_ERR_TAMPERED;\n    }",
+   "new": "      (void)0;\n    }"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV21 the digest's keys out of order",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  put(&h, \", \\\"device\\\": \");",
+   "new": "  put(&h, \", \\\"devise\\\": \");"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV22 DEL written unescaped",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    } else if (cp >= 0x20u && cp <= 0x7Eu) {",
+   "new": "    } else if (cp >= 0x20u && cp <= 0x7Fu) {"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV23 an astral code point not split into surrogates",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    } else if (cp > 0xFFFFu) {",
+   "new": "    } else if (cp > 0x10FFFFu) {"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV24 a tab written raw",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "cp == '\\n' ? \"\\\\n\" : cp == '\\r' ? \"\\\\r\"\n                      : cp == '\\t' ? \"\\\\t\"",
+   "new": "cp == '\\n' ? \"\\\\n\" : cp == '\\r' ? \"\\\\r\"\n                      : cp == 1u ? \"\\\\t\""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV25 a negative written unsigned",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (v < 0) buf[--n] = '-';\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV26 an empty device admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (m->device_len == 0) bits |= BCIR_DEVMAN_BAD_DEVICE;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV27 no bank admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (n == 0) return bits | BCIR_DEVMAN_BAD_NO_BANKS;",
+   "new": "  if (n == 0) return bits;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV28 duplicate bank names admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "          bits |= BCIR_DEVMAN_BAD_DUPLICATE;",
+   "new": "          (void)0;"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV29 a zero capacity admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (b->capacity < 1) bits |= BCIR_DEVMAN_BAD_CAPACITY;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV30 a zero tile admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (b->native_tile < 1) bits |= BCIR_DEVMAN_BAD_TILE;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV31 an alignment of 3 admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    else if (b->align & (b->align - 1)) bits |= BCIR_DEVMAN_BAD_ALIGN_POW2;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV32 a ragged matrix admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (m->row_off[r + 1u] - m->row_off[r] != n) square = 0;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV33 a nonzero diagonal admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (d[(size_t)i * n + i] != 0) bits |= BCIR_DEVMAN_BAD_DIAGONAL;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV34 a zero distance admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "      if (i != j && d[(size_t)i * n + j] < 1) bits |= BCIR_DEVMAN_BAD_DISTANCE;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV35 an asymmetric matrix admitted",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "      if (d[(size_t)i * n + j] != d[(size_t)j * n + i]) bits |= BCIR_DEVMAN_BAD_ASYMMETRIC;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV36 the binding's alignment taken from the tile",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    out[i].align = (uint32_t)m->banks[i].align;",
+   "new": "    out[i].align = (uint32_t)m->banks[i].native_tile;"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "DV37 a tile past 32 bits bound",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if ((uint64_t)m->banks[i].native_tile > UINT32_MAX || (uint64_t)m->banks[i].align > UINT32_MAX)\n      return BCIR_DEVMAN_ERR_WIDTH;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV38 a probe's capacity never compared",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "    if (obs[k].has_capacity && obs[k].capacity != (uint64_t)m->banks[i].capacity) {",
+   "new": "    if (0 && obs[k].has_capacity) {"
+  },
+  {
+   "expects": "test_the_c_twin_binds_manifests_as_the_oracle_loads_them",
+   "label": "DV39 an unknown bank steers instead of vetoing",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "      bits |= BCIR_DEVMAN_PROBE_UNKNOWN;\n      count++;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "DV40 a short workspace taken",
+   "path": "runtime/c/bcir_devman.c",
+   "old": "  if (!plan(len, scanned, &L) || work_len < L.total) return BCIR_DEVMAN_ERR_SPACE;",
+   "new": "  if (!plan(len, scanned, &L) || work_len + 4096u < L.total) return BCIR_DEVMAN_ERR_SPACE;"
+  }
+ ]
+}
