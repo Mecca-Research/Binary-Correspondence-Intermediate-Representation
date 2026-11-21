@@ -289,6 +289,19 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-21 — PORT-10: the GO/STOP for a native kernel lowering in MLIR (N8). STOP.**
+  - The port audit put N8 behind a GO/STOP written after PORT-5;
+    [`BCIR_N8_NATIVE_LOWERING_GO_STOP_2026-11-21.md`](research/BCIR_N8_NATIVE_LOWERING_GO_STOP_2026-11-21.md) is
+    it. The lowering it would port is one claim wide (`lower_contract`); the C backend is already a second path to
+    LLVM, held to one alias-fact set by `alias.backends.disagree`; and no slice the master roadmap schedules
+    generates code at run time. A native emitter would be a third realization of a one-claim contract for no
+    consumer.
+  - It reopens when a runtime consumer is scheduled (driver roadmap §7.5's small verifiable slices), when the
+    lowering contract widens past the straight-line claim, or when the Python emitter is scheduled for retirement
+    (CXX7), and the record says what PORT-10 contains then.
+  - Where the rest of the PORT order stands: PORT-6's first slice landed (`kbcir.csp`); PORT-7 (N6) and PORT-8
+    (N9's planning half) are not started; PORT-9 (N7) waits on IF-1 and IF-2, as the audit's N7 row says.
+
 - **2026-11-21 — PORT-6, first slice: the exact finite-domain solver (`kbcir.csp`) in the hosted C++ library.**
   - G28's integer CSP / ILP rail -- the one exact rail a problem spanning schedule and memory has -- ran in Python
     only. `runtime/cpp/bcir_csp.cpp` behind `bcir_csp.h` is `csp.solve` node for node: bounds consistency on each
