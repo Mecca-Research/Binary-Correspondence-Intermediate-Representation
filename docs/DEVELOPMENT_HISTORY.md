@@ -289,6 +289,37 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-21 — N10: the serving loop's control plane in freestanding C.**
+  - Tier 3 of the native port audit, the part of serving that needs no hardware: what a native server runs beside
+    the decoder's numerics, which stay `bcir_decode.c`'s and `bcir_llama.c`'s. `runtime/c/bcir_serve.c` is the twin
+    of `PagedKV`'s registry acts (`bcir/frontends/models/paged_kv.py`) and of the token schema
+    (`bcir/frontends/models/serve.py`). The page table: construction is allocation, each page a strided view
+    admitted against its bank by `bcir_dma_admit` (D-R4, N12's admission) before any token flows, the first page
+    refused named with its admission's bits and nothing written; a row past the capacity refused
+    (`gem.kv_cache`'s law); each row bumping the `data_gen` of the page that owns it (R11's currency); eviction,
+    refused while the session is live because attention is full-context, bumping the page's `map_gen` and freeing
+    its view. The schema: `check_token_dfa`'s verdict as bits, one per kind of message, and one constrained step,
+    `_masked_argmax` and the state's edge -- ties to the lowest id, a NaN never displacing the token before it,
+    a state that admits no token refused as a deadlock. The DFA has one spelling in C, runs of (token, successor)
+    delimited by offsets, each run ascending, so a repeated token is adjacent to its twin and the oracle's
+    first-entry edge map is the reader's; a falling run and offsets that delimit no runs are refused, neither of
+    which the oracle's tuples can spell. Freestanding, no heap, no recursion; page arithmetic past 64 bits is a
+    refusal.
+  - **Evidence.** `test_c_serve.py`: over 160 generated decoders (one to three layers, MHA and GQA) on generated
+    manifests, `test_serve FILE` gives PagedKV's construction refusal for refusal (every kind reached, 78 tables
+    refused at a page's view) and its state after each of 1,078 rows, 115 evictions and every refused row, lookup and
+    eviction of sessions driven past their capacity; over 400 generated schemas (202 admitted, 198 refused, every
+    kind of message but the two bounds, which the contracts hold), `check_token_dfa`'s verdict, 1,200 constrained
+    steps -- the oracle's token and successor -- and 105 deadlocks, over logits with ties, infinities and NaNs. `test_serve.c` holds what the oracle
+    cannot state: too few page records say how many are needed and write nothing, page arithmetic past 64 bits,
+    the schema's layout and order, its transition bound at 2^20 and one past it, every NULL. The `serve` section
+    runs both. Not reachable through either rail, and so not faulted: a row into an evicted page (eviction waits
+    for a complete session, which takes no more rows).
+  - **Standing faults.** `serve.json`, 34, each swept RED. `bcir_serve.c` compiles clean under `bcir-cc` (the
+    ratchet: 44 of 66 units).
+  - **What stays the oracle's.** The session modules, the split and batch certificates, the streaming broker and
+    the provenance manifest are planning and records over the claim graph, not the serving loop's run-time path.
+
 - **2026-11-21 — PORT-10: the GO/STOP for a native kernel lowering in MLIR (N8). STOP.**
   - The port audit put N8 behind a GO/STOP written after PORT-5;
     [`BCIR_N8_NATIVE_LOWERING_GO_STOP_2026-11-21.md`](research/BCIR_N8_NATIVE_LOWERING_GO_STOP_2026-11-21.md) is

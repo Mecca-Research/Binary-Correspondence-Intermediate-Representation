@@ -157,6 +157,8 @@ echo "[c-runtime] native data loader: test_tokload's contracts, and bcir-tokload
 show_section tokload || exit 1
 echo "[c-runtime] DMA programs from strided views (N12): test_dma's contracts, and its admissions and rings == the oracle's"
 show_section dma || exit 1
+echo "[c-runtime] serving control plane (N10): test_serve's contracts, and its page tables and constrained steps == the oracle's"
+show_section serve || exit 1
 
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1

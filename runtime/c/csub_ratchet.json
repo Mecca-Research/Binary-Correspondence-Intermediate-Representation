@@ -215,6 +215,9 @@
     "bcir_runtime_channel.c": {
       "verdict": "clean"
     },
+    "bcir_serve.c": {
+      "verdict": "clean"
+    },
     "bcir_sha256.c": {
       "verdict": "clean"
     },

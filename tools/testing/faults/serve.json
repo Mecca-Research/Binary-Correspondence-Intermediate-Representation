@@ -1,0 +1,250 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_serve:_CC",
+  "bcir.tests.test_c_serve:test_the_c_twin_holds_its_contracts",
+  "bcir.tests.test_c_serve:test_the_c_twin_pages_and_constrains_as_the_oracle_does"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV1 the capacity's upper bound never checked",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (capacity < 1u || capacity > BCIR_KV_MAX_CONTEXT) return BCIR_KV_ERR_CAPACITY;",
+   "new": "  if (capacity < 1u) return BCIR_KV_ERR_CAPACITY;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV2 a page larger than the capacity admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (page_size < 1u || page_size > capacity) return BCIR_KV_ERR_PAGE_SIZE;",
+   "new": "  if (page_size < 1u) return BCIR_KV_ERR_PAGE_SIZE;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV3 the registry's own RIDs given to pages",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (base_rid < BCIR_KV_MIN_RID) return BCIR_KV_ERR_RID;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV4 the bank looked up after the page count",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (bank >= n_banks) return BCIR_KV_ERR_BANK;\n  uint32_t n_pages = capacity / page_size + (capacity % page_size != 0u);\n  if (n_pages > BCIR_KV_MAX_PAGES) return BCIR_KV_ERR_PAGES;",
+   "new": "  uint32_t n_pages = capacity / page_size + (capacity % page_size != 0u);\n  if (n_pages > BCIR_KV_MAX_PAGES) return BCIR_KV_ERR_PAGES;\n  if (bank >= n_banks) return BCIR_KV_ERR_BANK;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV5 a last partial page dropped",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  uint32_t n_pages = capacity / page_size + (capacity % page_size != 0u);",
+   "new": "  uint32_t n_pages = capacity / page_size;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV6 the RID range never checked",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (base_rid > UINT32_MAX - (n_pages - 1u)) return BCIR_KV_ERR_RID_RANGE;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "SV7 too few page records not refused",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (max_pages < n_pages) {\n    if (bad_page) *bad_page = n_pages;\n    return BCIR_KV_ERR_SPACE;\n  }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV8 a row of one K and one V only",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  nt.row_elems = bad ? 0 : 2u * (elems ? elems : 1u);",
+   "new": "  nt.row_elems = bad ? 0 : (elems ? elems : 1u);"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "SV9 page arithmetic past 64 bits admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "    unsigned bits = BCIR_DMA_BAD_OVERFLOW;\n    if (!bad) {",
+   "new": "    unsigned bits = 0;\n    if (1) {"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV10 a page's view never admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "      bits = bcir_dma_admit(&v, banks, n_banks);",
+   "new": "      bits = 0;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV11 a write past the capacity accounted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (t->pos >= t->capacity) return BCIR_KV_ERR_FULL;\n",
+   "new": "  if (t->pos >= t->capacity) t->pos = t->capacity - 1u;\n"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV12 a row accounted in the next page",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  bcir_kv_page *pg = &t->pages[t->pos / t->page_size];",
+   "new": "  bcir_kv_page *pg = &t->pages[(t->pos + 1u) / t->page_size < t->n_pages ? (t->pos + 1u) / t->page_size : t->pos / t->page_size];"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV13 a row never bumps its page",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  pg->data_gen++;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV14 a position at the capacity given a page",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (pos >= t->capacity) return BCIR_KV_ERR_POS;",
+   "new": "  if (pos > t->capacity) return BCIR_KV_ERR_POS;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV15 eviction of a live session",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (t->pos < t->capacity) return BCIR_KV_ERR_LIVE;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV16 a page evicted twice",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (!pg->live) return BCIR_KV_ERR_EVICTED;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV17 eviction never bumps the map generation",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  pg->map_gen++;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV18 a page past the table evicted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (p >= t->n_pages) return BCIR_KV_ERR_NO_PAGE;\n  if (t->pos < t->capacity) return BCIR_KV_ERR_LIVE;",
+   "new": "  if (t->pos < t->capacity) return BCIR_KV_ERR_LIVE;\n  if (p > t->n_pages) return BCIR_KV_ERR_NO_PAGE;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV19 an empty vocabulary admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (vocab_size < 1u) return BCIR_DFA_BAD_VOCAB;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV20 a schema with no state admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (n < 1u) return BCIR_DFA_BAD_EMPTY;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV21 the start state never checked",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (d->start >= n) bits |= BCIR_DFA_BAD_START;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "SV22 the transition bound one past",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "    if (transitions > BCIR_DFA_MAX_TRANSITIONS) {",
+   "new": "    if (transitions > BCIR_DFA_MAX_TRANSITIONS + 1u) {"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "SV23 a repeat counted as a transition",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "      if (e == lo || d->tokens[e] != d->tokens[e - 1u]) transitions++;",
+   "new": "      transitions++;"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "SV24 a falling run admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "      if (e > lo && tok < d->tokens[e - 1u]) {\n        bits |= BCIR_DFA_BAD_ORDER;\n        continue;\n      }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV25 a duplicate token admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "        if (tok < vocab_size) bits |= BCIR_DFA_BAD_DUPLICATE;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV26 a duplicate's second edge read",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "        continue;\n      }\n      if (tok >= vocab_size) bits |= BCIR_DFA_BAD_TOKEN;",
+   "new": "      }\n      if (tok >= vocab_size) bits |= BCIR_DFA_BAD_TOKEN;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV27 a token past the vocab admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "      if (tok >= vocab_size) bits |= BCIR_DFA_BAD_TOKEN;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV28 an edge to no state admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "      if (d->next[e] >= n) bits |= BCIR_DFA_BAD_TARGET;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "SV29 the layout's falling offsets admitted",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "    if (d->offsets[s + 1u] < d->offsets[s]) return BCIR_DFA_BAD_LAYOUT;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV30 a deadlock emits a token",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  if (lo == hi) return BCIR_DFA_ERR_DEADLOCK; /* refuse rather than emit off the schema */\n",
+   "new": "  if (lo == hi) { *token = 0; *next = 0; return BCIR_DFA_OK; }\n"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV31 ties broken to the highest id",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "    if (logits[d->tokens[e]] > logits[d->tokens[best]]) best = e;",
+   "new": "    if (logits[d->tokens[e]] >= logits[d->tokens[best]]) best = e;"
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV32 a NaN wins",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "    if (logits[d->tokens[e]] > logits[d->tokens[best]]) best = e;",
+   "new": "    if (!(logits[d->tokens[e]] <= logits[d->tokens[best]])) best = e;"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "SV33 a token past the logits read",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "    if (d->tokens[e] >= vocab) return BCIR_DFA_ERR_ARG;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_pages_and_constrains_as_the_oracle_does",
+   "label": "SV34 the successor not the chosen entry's",
+   "path": "runtime/c/bcir_serve.c",
+   "old": "  *next = d->next[best];",
+   "new": "  *next = d->next[lo];"
+  }
+ ]
+}
