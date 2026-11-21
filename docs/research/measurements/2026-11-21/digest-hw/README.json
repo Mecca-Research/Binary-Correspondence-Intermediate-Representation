@@ -1,0 +1,43 @@
+{
+ "what": "The hardware digests (runtime/c/bcir_digest_hw.c): SHA-256 on SHA-NI and CRC-32 by carry-less-multiply folding, against the portable code (bcir_sha256.c, bcir_crc32.h's slicing-by-8), each over 1 MiB 64 times, three runs: test_digest_hw --bench",
+ "host": "Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPU, a virtual machine (sha_ni, pclmulqdq, ssse3, sse4_1 in /proc/cpuinfo); Linux 6.18; gcc 13.3, -std=c11 -O2",
+ "tree": "8092ada3ad4ab8e79c1045ba8fd5660fe6f02185 plus the slice that adds bcir_digest_hw.c",
+ "class": "wall",
+ "method": "clock() around 64 digests of one 1 MiB buffer per path, in one process; MB/s = 64 MiB / seconds. Process CPU time on a shared virtual machine: the wall class, INDICATIVE only and never a gate",
+ "results_mb_per_s": {
+  "sha256 portable": [
+   218,
+   195,
+   233
+  ],
+  "sha256 sha256:sha-ni": [
+   1354,
+   1305,
+   1211
+  ],
+  "crc32 portable": [
+   1905,
+   1970,
+   2018
+  ],
+  "crc32 crc32:pclmulqdq": [
+   21924,
+   24271,
+   24910
+  ]
+ },
+ "ratio_range": {
+  "sha256 sha-ni / portable": [
+   5.2,
+   6.9
+  ],
+  "crc32 pclmulqdq / portable": [
+   10.9,
+   13.1
+  ]
+ },
+ "not_measured": "the ARMv8 SHA-2 and CRC32 paths (no AArch64 host here; CI's ubuntu-24.04-arm runner holds them to hashlib and zlib natively, not to a time), and short inputs, where the CRC's fold does not run (under 64 bytes) and the SHA-256 path takes only whole blocks",
+ "records": {
+  "bench.txt": "the three runs' output, verbatim"
+ }
+}

@@ -317,11 +317,11 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **4916** across 345 files |
+| Static Python `test_*` function inventory | **4920** across 346 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **134** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **134** files; 421 `expected-error` markers |
-| Static runtime C source/header inventory (`runtime/c/`) | **463** files |
+| Static runtime C source/header inventory (`runtime/c/`) | **466** files |
 | Verifier-law negative-fixture tag inventory | **R1–R25** (25/25 present) |
 | Registered hardware-channel inventory | **9** (cpu, fpga, gpu, memory, storage) |
 | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 | R22 | R23 | R24 | R25 |
@@ -357,9 +357,9 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/BCIR_Repo_Structure.md** (236L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · 8. Change-placement rules
 - **docs/BCIR_TARGET_ACCESS.md** (133L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
 - **docs/BCIR_UNIVERSAL_INTERFACE_ROADMAP.md** (489L): 1. Reuse the implemented foundation · 2. Four compatibility contracts · 3. Interface description and registry design · 4. Provider and frontend portfolio · 5. IPC: the service contract above the selected transport · 6. ABNF and internet protocol interfaces · 7. Cryptographic syntax and provider integration · 8. Compiler, ML and TMSAO integration · 9. Gateable implementation order · 10. Conformance and performance qualification · Source ledger
-- **docs/DEVELOPMENT_HISTORY.md** (10641L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
+- **docs/DEVELOPMENT_HISTORY.md** (10667L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
 - **docs/ONBOARDING_DEEP_DIVE.md** (320L): 1. Read this first · 2. The three implementation rails · 3. From source to execution · 4. Core semantic and optimizer packages · 5. Frontends, lowering, and machine boundary · 6. Runtime memory and ownership · 7. Models, training, and BCIRQ8 · 8. Drivers, kernel, telemetry, and IPC · 9. Current evidence boundary · 10. Validation workflow · 11. Reading and change-placement map
-- **docs/PARITY.md** (525L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
+- **docs/PARITY.md** (526L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
 - **docs/PERFORMANCE_AUDIT.md** (149L): 1. Gate and evidence contract · 2. Defects and bottlenecks found · 3. Local before/after evidence · 4. What remains hardware- and workload-gated
 - **docs/RELEASE_NOTES_0.3b.md** (147L): Candidate baseline already landed · Release blockers · Explicit non-goals · Candidate validation
 - **docs/REPO_CURRENT_STATE_AUDIT.md** (434L): Snapshot · Confirmed strengths · GEM+ and the TMSAO ladder (2026-10) · Confirmed limitations · Recommended next milestones · Changelog

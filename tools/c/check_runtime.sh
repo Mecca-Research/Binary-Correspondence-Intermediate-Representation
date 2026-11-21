@@ -151,6 +151,8 @@ echo "[c-runtime] event transducer (PORT-4): test_etl's contracts, and bcir-etl'
 show_section etl || exit 1
 echo "[c-runtime] counter-based RNG (Philox4x32-10): test_rng's known answers and contracts, and its answers == the oracle's"
 show_section rng || exit 1
+echo "[c-runtime] hardware digests: SHA-256 and CRC-32 on SHA-NI / ARMv8 SHA-2 and carry-less multiply / ARMv8 CRC32, == the portable code, hashlib and zlib"
+show_section digest_hw || exit 1
 
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1

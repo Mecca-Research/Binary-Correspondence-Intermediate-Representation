@@ -86,6 +86,9 @@
     "bcir_diag.c": {
       "verdict": "clean"
     },
+    "bcir_digest_hw.c": {
+      "verdict": "clean"
+    },
     "bcir_ed25519.c": {
       "verdict": "clean"
     },

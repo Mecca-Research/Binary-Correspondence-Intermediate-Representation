@@ -302,6 +302,32 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
   - Where the rest of the PORT order stands: PORT-6's first slice landed (`kbcir.csp`); PORT-7 (N6) and PORT-8
     (N9's planning half) are not started; PORT-9 (N7) waits on IF-1 and IF-2, as the audit's N7 row says.
 
+- **2026-11-21 — The hardware digests: SHA-256 and CRC-32 on the CPU's own instructions.**
+  - CRC-SLICE took the portable half of the digest work; this is the hardware half the C subset audit names.
+    `runtime/c/bcir_digest_hw.c` computes the SHA-256 of `bcir_sha256.c` on SHA-NI or the ARMv8 SHA-2
+    instructions, and the CRC-32 of `bcir_crc32.h` by carry-less-multiply folding (Gopal et al., Intel, 2009:
+    four lanes of sixty-four bytes down to sixteen, which the slicing-by-8 table reduces) or the ARMv8 CRC32
+    instructions. The portable code stays the reference and the default: every existing call site keeps it, and a
+    caller opts in with the mask `bcir_digest_probe` returns (CPUID; Linux's auxiliary vector on AArch64), so no
+    call probes and nothing is global. Freestanding. Under `bcir-cc`, which predefines neither `__GNUC__` nor an
+    architecture, the unit is its portable branch and compiles clean (the ratchet: 41 of 62 units); the vector
+    code stays behind the fallback boundary.
+  - **Evidence.** `test_c_digest_hw.py`: the fold's four constants are x^544, x^480, x^160 and x^96 modulo the
+    polynomial, derived and read out of the source (and the published pair); every path the probe reports, one at
+    a time and together, answers as `hashlib` and `zlib` do over every length to 300 bytes and longer messages from
+    running CRC states, and a witness build shows the forced path did the work and a bit the build does not carry
+    ran nothing; the probe's mask is the one `/proc/cpuinfo` gives. `test_digest_hw` runs FIPS 180-4's vectors
+    (the million `a` in uneven pieces) and zlib's check value on every path, and each path against the portable
+    code from every alignment and every split of an update. The `digest_hw` section runs both. On this host
+    (an x86-64 VM; [`measurements/2026-11-21/digest-hw/`](research/measurements/2026-11-21/digest-hw/README.json),
+    wall class, indicative): SHA-NI 5.2 to 6.9 times the portable SHA-256, the fold 10.9 to 13.1 times the CRC.
+    The AArch64 paths are compiled here by Clang 18 and 23 and run natively on CI's ARM runner; no AArch64 time
+    is claimed.
+  - **Standing faults.** `digest-hw.json`, 16, each swept RED: the SHA-NI byte order, schedule, round pairing,
+    feed-forward and state lanes; the length's bulk blocks and a buffered block skipped; the fold's state, its
+    constants, its high halves, its lanes' order, its reduction and its threshold; the probe's PCLMULQDQ bit; a
+    bit the build does not carry run. An AArch64-only fault cannot be swept on this host and is not claimed.
+
 - **2026-11-21 — The counter-based RNG: Philox4x32-10 in freestanding C, and its oracle.**
   - The C rail had no random-number generator; native weight initialization, sampling, dropout and shuffling all
     went through Python (the C subset audit's first native addition). `runtime/c/bcir_rng.c` is Philox4x32-10 --
