@@ -39,7 +39,8 @@ One-claim deltas of the planner audit fixture (the delta-ratio row's own deltas)
 - **No consumer re-plans natively from declared deltas.** The deltas v0 admits are claim and resource
   replacements under a fixed (h, Θ, policy); a change of Θ is a new plan. The on-target re-planning the
   roadmaps name -- N14's budgeted selection under a live Θ -- re-plans on a change of Θ, which v0 does not
-  carry as a delta, and N14 has not landed.
+  carry as a delta, and N14 had not landed when this was decided. It has since landed in C; see §4's third
+  condition.
 - **The native engine would be a fourth spelling.** The planner exists in the oracle, in C
   (`bcir_kplan.c`) and in MLIR (`-bcir-plan`, the min-plus path `optimize` runs). AGENTS.md's port rule
   forbids a fourth copy of an algorithm with a C twin and an MLIR pass; a native incremental planner would
@@ -61,8 +62,10 @@ planner's whole plan.
 2. **Modules grow past the C whole plan's budget**: at about 0.32 µs a claim, a 1 ms re-planning budget
    holds to some 3,000 claims and a 10 ms one to some 31,000; a module past the stated budget's size with
    deltas to apply reopens it.
-3. **Deltas carry Θ.** When N14's budgeted DP lands on both rails (the planner records carrying a budget)
-   and a v1 delta carries a change of Θ, on-target re-planning becomes the delta chain's own consumer.
+3. **Deltas carry Θ.** N14's budgeted DP landed in C on 2026-11-21 (`bcir_kp_plan_budgeted`, beside the
+   oracle's `optimize_constrained` and the law rail's `-bcir-rcsp`). The caps are the planner's argument, so
+   the planner records carry no budget. When a v1 delta carries a change of Θ, on-target re-planning becomes
+   the delta chain's own consumer.
 
 ## 5. What GO will contain
 

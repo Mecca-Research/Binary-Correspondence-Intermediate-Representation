@@ -1,0 +1,138 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.planner_fixtures:compiler",
+  "bcir.tests.test_c_rcsp:test_the_budgeted_planner_holds_its_api_laws",
+  "bcir.tests.test_c_rcsp:test_the_c_planner_plans_under_a_budget_as_the_oracle_does"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC1 a label dominated on the score alone",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "  for (uint32_t t = 0; t < B->k; t++)\n    if (kp_lt(b[2u + t], a[2u + t])) return 0;\n  return 1;\n}",
+   "new": "  return 1;\n}"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC2 a label dominated on the resources alone",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "  if (kp_lt(b[0], a[0])) return 0;\n  for (uint32_t t = 0; t < B->k; t++)\n    if (kp_lt(b[2u + t], a[2u + t])) return 0;",
+   "new": "  for (uint32_t t = 0; t < B->k; t++)\n    if (kp_lt(b[2u + t], a[2u + t])) return 0;"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC3 a tie kept twice",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "    if (kp_dominates(B, kp_lab(B, e), nw)) return 1;",
+   "new": "    if (kp_dominates(B, kp_lab(B, e), nw) && !kp_dominates(B, nw, kp_lab(B, e))) return 1;"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC4 a label at the cap cut",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "        if (kp_lt(B->cap[t], nw[2u + t])) over = 1; /* R(pi) would exceed B: cut */",
+   "new": "        if (!kp_lt(nw[2u + t], B->cap[t])) over = 1; /* R(pi) would exceed B: cut */"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC5 the fused memory discount left off the resources",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "      rf[t] = d == D_MEMORY ? kp_shr8(kp_mul(base[D_MEMORY], 192u)) : v;",
+   "new": "      rf[t] = v;"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC6 the hot machine's heat left off the resources",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "      if (hot && (d == D_THERMAL || d == D_POWER)) v = kp_shr8(kp_mul(v, 320u));",
+   "new": "      (void)hot;"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC7 every wide pair fused",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "      int fuse = wide && specs[i].width > 1u && shares;",
+   "new": "      int fuse = wide && specs[i].width > 1u;"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC8 the sink's last tie taken",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "      if (kp_lex_lt(B, kp_lab(B, e), kp_lab(B, best))) best = e;",
+   "new": "      if (!kp_lex_lt(B, kp_lab(B, best), kp_lab(B, e))) best = e;"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC9 the sink's tie broken without the resources",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "  for (uint32_t t = 0; t < B->k; t++)\n    if (!kp_eq(a[2u + t], b[2u + t])) return kp_lt(a[2u + t], b[2u + t]);\n  return 0;",
+   "new": "  return 0;"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC10 the plan's rows read off the wrong label",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "      x->s[x->L.chosen + j] = (uint8_t)(meta >> 32);",
+   "new": "      x->s[x->L.chosen + j] = (uint8_t)(kp_lab(B, best)[1].lo >> 32);"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC11 the infeasible claim misnamed",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "          if (infeasible) *infeasible = CL_ID(cl);",
+   "new": "          if (infeasible) *infeasible = CL_ID(kp_claim(x, 0));"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC12 a pruned label's slot left in place",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "    if (kp_dominates(B, nw, kp_lab(B, e))) continue;",
+   "new": "    if (kp_lt(nw[0], kp_lab(B, e)[0]) && 0) continue;"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC13 the edge's score the plain one when fused",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "      nw[0] = kp_add(pl ? pl[0] : kp_u(0), fuse ? fused : plain);",
+   "new": "      nw[0] = kp_add(pl ? pl[0] : kp_u(0), plain);"
+  },
+  {
+   "expects": "test_the_c_planner_plans_under_a_budget_as_the_oracle_does",
+   "label": "RC14 a label's row width taken as narrow",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "                 ((uint64_t)(specs[i].width > 1u) << 40);",
+   "new": "                 ((uint64_t)(specs[i].width > 1u && 0) << 40);"
+  },
+  {
+   "expects": "test_the_budgeted_planner_holds_its_api_laws",
+   "label": "RC15 falling dimensions taken",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "    if (caps[t].dim >= (uint32_t)D_N || (t && caps[t].dim <= caps[t - 1u].dim)) bad = 1;",
+   "new": "    if (caps[t].dim >= (uint32_t)D_N) bad = 1;"
+  },
+  {
+   "expects": "test_the_budgeted_planner_holds_its_api_laws",
+   "label": "RC16 a dimension past cost.DIMS taken",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "    if (caps[t].dim >= (uint32_t)D_N || (t && caps[t].dim <= caps[t - 1u].dim)) bad = 1;",
+   "new": "    if (caps[t].dim > (uint32_t)D_N || (t && caps[t].dim <= caps[t - 1u].dim)) bad = 1;"
+  },
+  {
+   "expects": "test_the_budgeted_planner_holds_its_api_laws",
+   "label": "RC17 full label storage written past",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "  if (B->n == B->max) return 0;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_budgeted_planner_holds_its_api_laws",
+   "label": "RC18 a refused budgeted plan's output left",
+   "path": "runtime/c/bcir_kplan.c",
+   "old": "        if (bst != BCIR_OK) {\n          kp_zero(out, cap);\n          return bst;",
+   "new": "        if (bst != BCIR_OK) {\n          return bst;"
+  }
+ ]
+}

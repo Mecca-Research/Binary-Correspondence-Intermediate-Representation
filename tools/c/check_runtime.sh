@@ -163,6 +163,8 @@ echo "[c-runtime] device manifests bound at instantiation (N11): test_devman's c
 show_section devman || exit 1
 echo "[c-runtime] telemetry export, the Prometheus exposition (N13): test_prom's contracts, and its text == the oracle's octet for octet"
 show_section prom || exit 1
+echo "[c-runtime] budgeted planning (N14): the budgeted planner's API laws, and its plans under budgets == the oracle's (kbcir.rcsp)"
+show_section rcsp || exit 1
 
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1

@@ -890,8 +890,166 @@ static int kp_shares_reads(const kp_ctx *x, uint32_t a, uint32_t b) {
   return 0;
 }
 
+/* ---- the budgeted label DP (kbcir.rcsp, N14) ------------------------------------------------
+ * optimize_constrained's labels over the same offer: per realization a slot of non-dominated
+ * (score, tracked resources) labels, each extending a label of the column before; an extension
+ * past a cap is cut, a dominated label pruned (rcsp._insert: stable, a tie keeps the first). A
+ * label is 2 + k 128-bit words in the caller's storage: the score, a meta word (the parent label,
+ * the row, whether the row is wide) and the k tracked resources, in the caps' dimension order. */
+
+#define KP_SOURCE 0xFFFFFFFFu
+
+typedef struct kp_budget {
+  uint32_t k;
+  uint8_t dim[BCIR_KP_BUDGET_MAX];
+  kp_u128 cap[BCIR_KP_BUDGET_MAX];
+  kp_u128 *lab;
+  size_t n, max;          /* labels held; the most the storage holds */
+  size_t prev_lo, prev_hi; /* the column before's labels */
+} kp_budget;
+
+static kp_u128 *kp_lab(const kp_budget *B, size_t i) { return B->lab + i * (2u + B->k); }
+
+static int kp_dominates(const kp_budget *B, const kp_u128 *a, const kp_u128 *b) {
+  if (kp_lt(b[0], a[0])) return 0;
+  for (uint32_t t = 0; t < B->k; t++)
+    if (kp_lt(b[2u + t], a[2u + t])) return 0;
+  return 1;
+}
+
+/* rcsp._insert into the slot [slot, n): 0 when the storage is full */
+static int kp_insert(kp_budget *B, size_t slot, const kp_u128 *nw) {
+  if (!B->lab) return 0;
+  size_t words = 2u + B->k;
+  for (size_t e = slot; e < B->n; e++)
+    if (kp_dominates(B, kp_lab(B, e), nw)) return 1;
+  size_t j = slot;
+  for (size_t e = slot; e < B->n; e++) {
+    if (kp_dominates(B, nw, kp_lab(B, e))) continue;
+    if (j != e) {
+      kp_u128 *dst = kp_lab(B, j);
+      const kp_u128 *src = kp_lab(B, e);
+      for (size_t w = 0; w < words; w++) dst[w] = src[w];
+    }
+    j++;
+  }
+  B->n = j;
+  if (B->n == B->max) return 0;
+  kp_u128 *end = kp_lab(B, B->n);
+  for (size_t w = 0; w < words; w++) end[w] = nw[w];
+  B->n++;
+  return 1;
+}
+
+static int kp_lex_lt(const kp_budget *B, const kp_u128 *a, const kp_u128 *b) {
+  if (!kp_eq(a[0], b[0])) return kp_lt(a[0], b[0]);
+  for (uint32_t t = 0; t < B->k; t++)
+    if (!kp_eq(a[2u + t], b[2u + t])) return kp_lt(a[2u + t], b[2u + t]);
+  return 0;
+}
+
+static bcir_status kp_run(const bcir_kp_input *in, kp_budget *B, void *scratch, size_t scratch_len,
+                          uint8_t *out, size_t cap, size_t *out_len, uint32_t *infeasible);
+
 bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch, size_t scratch_len,
                          uint8_t *out, size_t cap, size_t *out_len) {
+  return kp_run(in, NULL, scratch, scratch_len, out, cap, out_len, NULL);
+}
+
+size_t bcir_kp_label_bytes(size_t n_caps, size_t labels) {
+  if (n_caps > BCIR_KP_BUDGET_MAX) return 0;
+  size_t stride = (2u + n_caps) * sizeof(kp_u128);
+  if (labels > (SIZE_MAX - 16u) / stride) return 0;
+  return labels * stride + 16u; /* the storage's own alignment */
+}
+
+bcir_status bcir_kp_plan_budgeted(const bcir_kp_input *in, const bcir_kp_cap *caps, size_t n_caps,
+                                  void *scratch, size_t scratch_len, void *labels,
+                                  size_t labels_len, uint8_t *out, size_t cap, size_t *out_len,
+                                  uint32_t *infeasible_claim, size_t *labels_kept) {
+  if (out_len) *out_len = 0;
+  if (infeasible_claim) *infeasible_claim = KP_SOURCE;
+  if (labels_kept) *labels_kept = 0;
+  kp_budget B;
+  kp_zero((uint8_t *)&B, sizeof B);
+  /* the caps: at most one a dimension, ascending (rcsp.Budget sorts them), each a cost.DIMS index */
+  int bad = n_caps > BCIR_KP_BUDGET_MAX || (n_caps && !caps);
+  for (size_t t = 0; !bad && t < n_caps; t++)
+    if (caps[t].dim >= (uint32_t)D_N || (t && caps[t].dim <= caps[t - 1u].dim)) bad = 1;
+  if (bad) {
+    if (out && cap) kp_zero(out, cap);
+    return BCIR_ERR_PLANNER;
+  }
+  B.k = (uint32_t)n_caps;
+  for (size_t t = 0; t < n_caps; t++) {
+    B.dim[t] = (uint8_t)caps[t].dim;
+    B.cap[t] = kp_u(caps[t].cap);
+  }
+  size_t stride = (2u + n_caps) * sizeof(kp_u128);
+  if (!labels) {
+    if (out && cap) kp_zero(out, cap);
+    return BCIR_ERR_NOSPACE;
+  }
+  size_t pad = (size_t)((16u - ((uintptr_t)labels & 15u)) & 15u);
+  B.lab = (kp_u128 *)(void *)((uint8_t *)labels + (labels_len >= pad ? pad : 0u));
+  B.max = labels_len >= pad ? (labels_len - pad) / stride : 0u;
+  if (B.max > (size_t)KP_SOURCE - 1u) B.max = (size_t)KP_SOURCE - 1u; /* a parent is a u32 */
+  if (B.max < 2u) {
+    if (out && cap) kp_zero(out, cap);
+    return BCIR_ERR_NOSPACE;
+  }
+  bcir_status st = kp_run(in, &B, scratch, scratch_len, out, cap, out_len, infeasible_claim);
+  if (labels_kept) *labels_kept = B.n;
+  return st;
+}
+
+/* One column of the label DP: the slots of `rows` realizations, extending the column before's
+ * labels (the source's, for the first). 0 when the storage runs out. */
+static int kp_label_column(kp_ctx *x, kp_budget *B, uint32_t pos, const uint8_t *cl, uint32_t bw,
+                           uint32_t lat, unsigned mode, const kp_spec *specs, unsigned rows,
+                           int shares) {
+  if (!B->lab) return 0; /* bcir_kp_plan_budgeted never runs without storage */
+  size_t lo = B->n;
+  kp_u128 nw[2u + BCIR_KP_BUDGET_MAX], rp[BCIR_KP_BUDGET_MAX], rf[BCIR_KP_BUDGET_MAX];
+  for (unsigned i = 0; i < rows; i++) {
+    kp_u128 base[D_N], plain, fused;
+    int hot = x->hot && specs[i].width >= 16u;
+    kp_base(x, cl, &specs[i], bw, lat, mode, base);
+    kp_edge(x, base, hot, &plain, &fused);
+    /* the coupled resources: x1.25 thermal/power for wide SIMD on a hot machine; x0.75 memory
+     * after a vector predecessor sharing a read (the fused edge) */
+    for (uint32_t t = 0; t < B->k; t++) {
+      unsigned d = B->dim[t];
+      kp_u128 v = base[d];
+      if (hot && (d == D_THERMAL || d == D_POWER)) v = kp_shr8(kp_mul(v, 320u));
+      rp[t] = v;
+      rf[t] = d == D_MEMORY ? kp_shr8(kp_mul(base[D_MEMORY], 192u)) : v;
+    }
+    size_t slot = B->n, plo = pos ? B->prev_lo : 0, phi = pos ? B->prev_hi : 1;
+    for (size_t p = plo; p < phi; p++) {
+      const kp_u128 *pl = pos ? kp_lab(B, p) : 0;
+      int wide = pl ? (int)((pl[1].lo >> 40) & 1u) : 0;
+      int fuse = wide && specs[i].width > 1u && shares;
+      nw[0] = kp_add(pl ? pl[0] : kp_u(0), fuse ? fused : plain);
+      int over = 0;
+      for (uint32_t t = 0; t < B->k; t++) {
+        nw[2u + t] = kp_add(pl ? pl[2u + t] : kp_u(0), fuse ? rf[t] : rp[t]);
+        if (kp_lt(B->cap[t], nw[2u + t])) over = 1; /* R(pi) would exceed B: cut */
+      }
+      if (over) continue;
+      nw[1].lo = (uint64_t)(pl ? (uint32_t)p : KP_SOURCE) | ((uint64_t)i << 32) |
+                 ((uint64_t)(specs[i].width > 1u) << 40);
+      nw[1].hi = 0;
+      if (!kp_insert(B, slot, nw)) return 0;
+    }
+  }
+  B->prev_lo = lo;
+  B->prev_hi = B->n;
+  return 1;
+}
+
+static bcir_status kp_run(const bcir_kp_input *in, kp_budget *B, void *scratch, size_t scratch_len,
+                          uint8_t *out, size_t cap, size_t *out_len, uint32_t *infeasible) {
   if (out_len) *out_len = 0;
   size_t need = 0;
   if (!in || !in->data || !out_len) {
@@ -1024,6 +1182,23 @@ bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch, size_t scratch_
       int shares = pos > 0 && kp_shares_reads(x, prev_claim, c);
       unsigned nxt = cur ^ 1u;
       S32_SET(x->L.node_start, pos, node);
+      if (B) {
+        bcir_status bst = BCIR_OK;
+        if (!kp_label_column(x, B, pos, cl, bw, lat, mode, specs, rows, shares)) {
+          bst = BCIR_ERR_NOSPACE;
+        } else if (B->prev_lo == B->prev_hi) { /* rcsp.Infeasible: no label survives this claim */
+          if (infeasible) *infeasible = CL_ID(cl);
+          bst = BCIR_ERR_INFEASIBLE;
+        }
+        if (bst != BCIR_OK) {
+          kp_zero(out, cap);
+          return bst;
+        }
+        prev_rows = rows;
+        node += rows;
+        prev_claim = c;
+        continue;
+      }
       for (unsigned i = 0; i < rows; i++) {
         kp_u128 base[D_N], plain, fused;
         kp_base(x, cl, &specs[i], bw, lat, mode, base);
@@ -1069,7 +1244,21 @@ bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch, size_t scratch_
 
   /* SINK: the first last-column row with the least distance; then the path, backwards. */
   kp_u128 score = kp_u(0);
-  if (in->n_claims) {
+  if (in->n_claims && B) {
+    /* the least (score, resources) of the last column, the first on a tie; then its parents */
+    size_t best = B->prev_lo;
+    for (size_t e = B->prev_lo + 1u; e < B->prev_hi; e++)
+      if (kp_lex_lt(B, kp_lab(B, e), kp_lab(B, best))) best = e;
+    const kp_u128 *won = kp_lab(B, best);
+    score = won[0];
+    size_t e = best;
+    for (uint32_t j = in->n_claims; j-- > 0;) {
+      const kp_u128 *lab = kp_lab(B, e);
+      uint64_t meta = lab[1].lo;
+      x->s[x->L.chosen + j] = (uint8_t)(meta >> 32);
+      e = (size_t)(uint32_t)meta;
+    }
+  } else if (in->n_claims) {
     unsigned b = 0;
     for (unsigned i = 1; i < prev_rows; i++)
       if (kp_lt(dist[cur][i], dist[cur][b])) b = i;

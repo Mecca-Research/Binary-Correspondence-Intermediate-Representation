@@ -412,6 +412,7 @@
     "serve": {"script": "tools/c/sections/serve.sh", "harnesses": ["test_serve"]},
     "devman": {"script": "tools/c/sections/devman.sh", "harnesses": ["test_devman"]},
     "prom": {"script": "tools/c/sections/prom.sh", "harnesses": ["test_prom"]},
+    "rcsp": {"script": "tools/c/sections/rcsp.sh", "harnesses": ["test_kplan"]},
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},

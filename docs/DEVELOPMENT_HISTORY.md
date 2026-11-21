@@ -289,6 +289,47 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-21 — N14: budgeted planning in the C planner.**
+  - Tier 3 of the native port audit: on-target re-planning under a budget, `min M(pi) s.t. R(pi, Theta) <= B`.
+    `bcir_kp_plan_budgeted` (`runtime/c/bcir_kplan.c`) is the twin of `kbcir.rcsp.optimize_constrained`. It runs
+    over the C planner's own offer and edges, with the min-plus relaxation replaced, when caps are given, by the
+    oracle's label DP:
+    - per realization, the non-dominated (score, tracked resources) labels extending the column before's;
+    - an extension past a cap cut;
+    - a dominated label pruned, with ties keeping the first;
+    - the plan the last column's least (score, resources) label.
+
+    The resources are coupled as the oracle couples them: x1.25 heat and power for wide SIMD on a hot machine,
+    x0.75 memory on a vector edge sharing a read operand. The realization is written by the planner's one writer, so its BKPR is the
+    record the oracle encodes.
+
+    The caps are the caller's argument, never a BKPI field, so the record and both its encoders are unchanged.
+    The earlier note that N14 needed the records to carry a budget was wrong. `BCIR_ERR_INFEASIBLE` (26,
+    appended) names `rcsp.Infeasible`, with the claim no label survives. `*labels_kept` reports the labels the
+    plan kept.
+  - **Evidence.** `test_c_rcsp.py` draws 500 cases from the planner corpus: every example program and generated
+    module under every target, Theta and policy. Each case is planned five ways: with no cap, under three budgets
+    of one to three capped dimensions scaled from the unconstrained plan's own resources, and under one cap at a
+    point of the oracle's own Pareto front. That is 2,500 plans:
+    - 1,188 planned, each `optimize_constrained`'s BKPR octet for octet, 135 of them where the budget binds;
+    - 1,312 refused as infeasible at the oracle's claim;
+    - every one keeping the oracle's labels, 228,251 in all, counted off `rcsp._insert`'s slot lists;
+    - with no cap, each `bcir_kp_plan`'s plan byte for byte.
+
+    `test_kplan --api-budget` holds what the oracle cannot state, each refusal zeroing the output:
+    - too many caps;
+    - a dimension past `cost.DIMS`, or falling or repeated dimensions;
+    - label storage absent, or short of the plan's columns.
+
+    The `rcsp` section runs both.
+  - **Standing faults.** `rcsp.json`, 18, each swept RED. The first sweep left RC12 standing: a dominated label
+    kept in its slot changes no plan, because the least label is the same. The planner now reports the labels
+    it kept, and the test holds that count to the oracle's. The planner's own table (`planner.json`) was still
+    swept RED over the edited unit. `bcir_kplan.c` still compiles clean under `bcir-cc`.
+  - **What it reopens.** PORT-7's third condition (deltas that carry Theta) now has its budgeted DP in the
+    oracle, the law rail and C. A delta chain re-planning under a budget remains a consumer to be named before
+    N6 is reopened.
+
 - **2026-11-21 — N13: the telemetry export's Prometheus exposition, in freestanding C.**
   - Tier 3 of the native port audit: the body a native telemetry or ledger service returns to `GET /metrics`.
     `runtime/c/bcir_prom.c` is the twin of `to_prometheus` (`bcir/telemetry_export.py`), octet for octet: the
