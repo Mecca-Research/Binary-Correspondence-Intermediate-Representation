@@ -628,11 +628,11 @@ else
   echo "  FAIL: the SYCL backend differential oracle did not compile or agree"; exit 1
 fi
 
-# The hosted C++ solver library (PORT-5, runtime/cpp/bcir_exact.cpp): C++23 behind a C ABI, built
+# The hosted C++ solver library (runtime/cpp: PORT-5's bcir_exact.cpp, PORT-6's bcir_csp.cpp): C++23 behind C ABIs, built
 # warning-clean without RTTI, one exported symbol and no global state, its contracts (every
-# allocation refused in turn), ASan + UBSan and a bounded libFuzzer run over the facade. Its parity
-# with bcir/gem/exact.py is bcir/tests/test_cpp_exact.py's. Self-skips with no C++23 compiler.
-echo "[c-runtime] hosted C++ solver library: the exact scheduler behind its C ABI (tools/cpp/check_solver.sh)"
+# allocation refused in turn), ASan + UBSan and a bounded libFuzzer run over each facade. Their parity
+# with the oracle is bcir/tests/test_cpp_exact.py's and test_cpp_csp.py's. Self-skips with no C++23 compiler.
+echo "[c-runtime] hosted C++ solver library: each solver behind its C ABI (tools/cpp/check_solver.sh)"
 if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
   echo "  SKIP hosted C++ solver library (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as cpp-solver)"
 elif bash "${ROOT}/tools/cpp/check_solver.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then

@@ -1,0 +1,223 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_cpp_csp:_CXX",
+    "bcir.tests.test_cpp_csp:test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+    "bcir.tests.test_cpp_csp:test_the_facades_contracts_hold",
+    "bcir.tests.test_cpp_csp:test_a_malformed_problem_is_the_tools_and_a_refusal_a_status"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C1 floor division rounds toward zero",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "  if (a % b != 0 && ((a < 0) != (b < 0))) q--;",
+      "new": "  (void)0;"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C2 a row's mins are taken at the wrong end",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    mins.push_back(c > 0 ? c * lo[v] : c * hi[v]);",
+      "new": "    mins.push_back(c > 0 ? c * hi[v] : c * lo[v]);"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C3 a row never narrows an upper bound",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "      if (bound < hi[v]) { hi[v] = bound; moved = 1; }",
+      "new": "      if (false) { hi[v] = bound; moved = 1; }"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C4 a row never narrows a lower bound",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "      if (bound > lo[v]) { lo[v] = bound; moved = 1; }",
+      "new": "      if (false) { lo[v] = bound; moved = 1; }"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C5 an equality is read as <= alone",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "  if (op == BCIR_CSP_GE || op == BCIR_CSP_EQ) {",
+      "new": "  if (op == BCIR_CSP_GE) {"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C6 a compulsory part needs a strict overlap",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (t.d > 0 && hi[t.s] < lo[t.s] + t.d) w.parts.push_back(Part{i, hi[t.s], lo[t.s] + t.d});",
+      "new": "    if (t.d > 0 && hi[t.s] + 1 < lo[t.s] + t.d) w.parts.push_back(Part{i, hi[t.s], lo[t.s] + t.d});"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C8 a task's own part blocks it",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    sweep(w, i, c.capacity, false);",
+      "new": "    sweep(w, SIZE_MAX, c.capacity, false);"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C9 the forward scan overshoots by one",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "      t = last + 1;",
+      "new": "      t = last + 2;"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C10 the backward scan never narrows",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (t < hi[s]) { hi[s] = t; moved = 1; }",
+      "new": "    if (false) { hi[s] = t; moved = 1; }"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C11 the energy check is dropped",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (groups > 1 && sum > high - low) return -1;",
+      "new": "    if (false) return -1;"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C12 a rectangle pair's address order is never enforced",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "        if (below && !above) moved |= enforce_before(A.y, A.h, B.y, 0, lo, hi);",
+      "new": "        if (false) moved |= enforce_before(A.y, A.h, B.y, 0, lo, hi);"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C13 a rectangle pair's time order is never enforced",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "        if (a_first && !(b_first || a_empty || b_empty)) moved |= enforce_before(A.x1, A.b, B.x0, B.a, lo, hi);",
+      "new": "        if (false) moved |= enforce_before(A.x1, A.b, B.x0, B.a, lo, hi);"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C14 parts of one object constrain each other",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "      if (A.g == B.g) continue;",
+      "new": "      (void)0;"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C15 the objective's cut is never applied",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (cut) {\n      int r = linear(m, m.obj_begin, m.obj_end, BCIR_CSP_LE, cut_rhs, lo, hi, w.mins);",
+      "new": "    if (false) {\n      int r = linear(m, m.obj_begin, m.obj_end, BCIR_CSP_LE, cut_rhs, lo, hi, w.mins);"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C16 the cut admits a tie",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (!propagate(m, node.lo, node.hi, have, have ? best_obj - 1 - m.offset : 0, w)) continue;",
+      "new": "    if (!propagate(m, node.lo, node.hi, have, have ? best_obj - m.offset : 0, w)) continue;"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C17 propagation stops after one pass",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (!moved) return true;",
+      "new": "    return true;"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C18 the branch ignores priority",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "      if (pick == m.n || m.prio[v] < m.prio[pick] ||",
+      "new": "      if (pick == m.n || false ||"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C19 the branch splits at the midpoint rounded toward zero",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    int64_t mid = floor_div(node.lo[pick] + node.hi[pick], 2);",
+      "new": "    int64_t mid = (node.lo[pick] + node.hi[pick]) / 2;"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C20 the upper half is searched first",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    stack.push_back(std::move(upper));\n    stack.push_back(std::move(node));",
+      "new": "    stack.push_back(std::move(node));\n    stack.push_back(std::move(upper));"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C21 the budget's bound forgets the incumbent",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "      if (have) floor = std::min(floor, best_obj);",
+      "new": "      (void)0;"
+    },
+    {
+      "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
+      "label": "C22 the budget allows one node more",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (nodes >= budget) {",
+      "new": "    if (nodes > budget) {"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "C24 terms are not merged",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (c) m.terms.push_back(Term{c, v});",
+      "new": "    m.terms.push_back(Term{c, v});"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "C25 an incumbent is not checked",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (!satisfied(m, incumbent)) return BCIR_CSP_ERR_INCUMBENT;",
+      "new": "    if (false) return BCIR_CSP_ERR_INCUMBENT;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "C26 a bound past 2^60 is taken",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (mag(x.lo) > kValue || mag(x.hi) > kValue) return unexpected(BCIR_CSP_ERR_RANGE);",
+      "new": "    if (false) return unexpected(BCIR_CSP_ERR_RANGE);"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "C27 a row past 2^61 is taken",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "      if (!row_in_range(m, con.begin, con.end, c.rhs)) return unexpected(BCIR_CSP_ERR_RANGE);",
+      "new": "      if (false) return unexpected(BCIR_CSP_ERR_RANGE);"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "C28 a group of two shapes is taken",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "          if (m.rects[u].g == x.group && (m.rects[u].y != x.y || m.rects[u].h != x.h))",
+      "new": "          if (false)"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "C29 a capacity of 0 is taken",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "      if ((c.n_tasks && !c.tasks) || c.capacity < 1) return unexpected(BCIR_CSP_ERR_INVALID);",
+      "new": "      if (c.n_tasks && !c.tasks) return unexpected(BCIR_CSP_ERR_INVALID);"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "C30 a refused allocation is reported as a success",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    return BCIR_CSP_ERR_NOMEM;",
+      "new": "    return BCIR_CSP_OK;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "C31 a short values buffer is written",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "  if (out.cap_values < m.n || (m.n && !out.values)) return BCIR_CSP_ERR_CAPACITY;",
+      "new": "  if (m.n && !out.values) return BCIR_CSP_ERR_CAPACITY;"
+    },
+    {
+      "expects": "test_a_malformed_problem_is_the_tools_and_a_refusal_a_status",
+      "label": "C32 an empty domain is taken",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "    if (x.lo > x.hi) return unexpected(BCIR_CSP_ERR_INVALID);",
+      "new": "    if (false) return unexpected(BCIR_CSP_ERR_INVALID);"
+    }
+  ]
+}

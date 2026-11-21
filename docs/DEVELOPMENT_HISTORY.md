@@ -289,6 +289,33 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-21 — PORT-6, first slice: the exact finite-domain solver (`kbcir.csp`) in the hosted C++ library.**
+  - G28's integer CSP / ILP rail -- the one exact rail a problem spanning schedule and memory has -- ran in Python
+    only. `runtime/cpp/bcir_csp.cpp` behind `bcir_csp.h` is `csp.solve` node for node: bounds consistency on each
+    linear row, the compulsory-part timetable on each cumulative, the disjunction on each rectangle pair, the
+    incumbent's objective as a cut, the narrowest open domain of the lowest priority split at its floor midpoint, the
+    lower half first, a fixed node a solution only where the definitions agree, a budget of nodes. It draws on the
+    memory and errors PORT-5 laid down, now one header for the library (`bcir_solver.hpp`).
+  - Two changes of representation, neither of meaning. The cumulative's timetable is sorted intervals where the
+    oracle keeps a set of instants, so its cost is no longer the domain's width. Integers are 64 bits where the
+    oracle's are unbounded, so a model whose arithmetic could leave 62 bits is refused (`BCIR_CSP_ERR_RANGE`) --
+    bounds, offsets, durations and heights within 2^60, each row's and the objective's weighted bound sum within
+    2^61 -- never wrapped.
+  - **Evidence.** `test_cpp_csp.py`: `test_csp FILE` prints the oracle's answer over 1,308 runs -- every model the
+    oracle's own tests generate (`random_model`, the joint schedule x memory regions), bare and seeded with an
+    assignment a short search found, under six budgets -- reaching every stop; every assignment it returns satisfies
+    the model by the oracle's definitions, and every closed search's objective is brute force's. `test_csp.cpp`
+    holds the refusals, the budget's bound, a seeded and a refused incumbent, term merging, determinism and every
+    allocation refused in turn. `fuzz_csp.cpp` enumerates each small model itself and holds every answer to that
+    optimum under libFuzzer, ASan and UBSan. `tools/cpp/check_solver.sh` now builds and runs both solvers.
+  - **Standing faults.** `cpp-csp.json`, 30, each swept RED. Two more survived as equivalent mutants and were
+    dropped: the timetable's overload check, which the per-task scan repeats (a task whose compulsory part holds an
+    overloaded instant is blocked at every start), and a tie replacing the best, which the cut never lets through.
+    The sweep also found a scan fault that never terminates, reworded to one that does, and two contract cases
+    refused for a second reason, isolated. The inventory gains its third C++ twin. N5's other
+    solvers (`gem.dispatch`, `gem.diff`, `kbcir.joint`, regions, dataflow, expectation, io_bounds, objectives,
+    scope, static memory, movement) stay Python's, the port audit's PORT-6 row the place they are counted.
+
 - **2026-11-20 — PORT-5: the hosted C++ solver library, and `gem.exact` in it at parity.**
   - The GEM+ solver portfolio (N5 of the native port audit) had no native form. `runtime/cpp/bcir_exact.cpp` is the
     hosted solver library's foundation and its first solver, behind a C ABI (`bcir_exact.h`): records in, a

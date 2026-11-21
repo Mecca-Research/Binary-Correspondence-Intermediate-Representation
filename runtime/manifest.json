@@ -266,7 +266,7 @@
       "sources": ["bcir_jer_index.cpp", "bcir_jer_simd.cpp"],
       "libraries": ["bcir_asn1", "bcir_base"]
     },
-    "bcir_solver": {"sources": ["bcir_exact.cpp"], "cxx_standard": 23}
+    "bcir_solver": {"sources": ["bcir_exact.cpp", "bcir_csp.cpp"], "cxx_standard": 23}
   },
   "seam_tests": {
     "test_orchestrator": {"sources": ["test_orchestrator.cpp"], "libraries": ["bcir_seam"]},
@@ -275,7 +275,9 @@
     "test_jer_index": {"sources": ["test_jer_index.cpp"], "libraries": ["bcir_jer_index"]},
     "test_jer_simd": {"sources": ["test_jer_simd.cpp"], "libraries": ["bcir_jer_index"]},
     "test_exact": {"sources": ["test_exact.cpp"], "libraries": ["bcir_solver"], "cxx_standard": 23},
-    "fuzz_exact": {"sources": ["fuzz_exact.cpp"], "libraries": ["bcir_solver"], "cxx_standard": 23}
+    "fuzz_exact": {"sources": ["fuzz_exact.cpp"], "libraries": ["bcir_solver"], "cxx_standard": 23},
+    "test_csp": {"sources": ["test_csp.cpp"], "libraries": ["bcir_solver"], "cxx_standard": 23},
+    "fuzz_csp": {"sources": ["fuzz_csp.cpp"], "libraries": ["bcir_solver"], "cxx_standard": 23}
   },
   "variants": {
     "test_decoder_train_c11": {"of": "test_decoder_train", "standard": 11},
