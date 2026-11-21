@@ -155,6 +155,8 @@ echo "[c-runtime] hardware digests: SHA-256 and CRC-32 on SHA-NI / ARMv8 SHA-2 a
 show_section digest_hw || exit 1
 echo "[c-runtime] native data loader: test_tokload's contracts, and bcir-tokload's shards, verdicts and batches == the oracle's"
 show_section tokload || exit 1
+echo "[c-runtime] DMA programs from strided views (N12): test_dma's contracts, and its admissions and rings == the oracle's"
+show_section dma || exit 1
 
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1

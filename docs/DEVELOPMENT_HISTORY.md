@@ -302,6 +302,30 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
   - Where the rest of the PORT order stands: PORT-6's first slice landed (`kbcir.csp`); PORT-7 (N6) and PORT-8
     (N9's planning half) are not started; PORT-9 (N7) waits on IF-1 and IF-2, as the audit's N7 row says.
 
+- **2026-11-21 — N12's run-time half: DMA programs from strided views, in freestanding C.**
+  - Tier 3 of the native port audit, the part that needs no hardware: what a driver needs when it moves bytes.
+    `runtime/c/bcir_dma.c` is the twin of `check_strided_view` (D-R4: the strided view the only allocation
+    currency at the driver seam) and `dma_descriptors` (A2: a view pair compiled into a scatter-gather ring).
+    Admission refuses what the oracle refuses and says why as bits, one per message the oracle writes -- the early
+    refusals alone; the alignment, the capacity and each of the two innermost extents against the native tile
+    together. The ring is each view's runs (a unit innermost stride coalesces its last dimension, anything else is
+    per element) paired by the two-pointer byte walk, merged while both sides stay contiguous, after the pair's
+    refusals: either view's admission, unequal shapes or widths, one bank's overlapping spans. Freestanding, no
+    heap, no recursion (an odometer); every product checked, so arithmetic past 64 bits is a refusal where the
+    oracle's integers would not wrap. The pricing, the transfer module and `kbcir.events`' laws stay the oracle's
+    and the law rail's: they are planning, not the run-time path.
+  - **Evidence.** `test_c_dma.py`: over 25 generated manifests and 1,000 view pairs -- ranks to 3, dense, gapped,
+    scattering and random strides, aligned and not, inside, at and past each bank's last byte, on and off the
+    native tile, one bank and two -- `test_dma FILE` gives the oracle's admission bit for bit (2,150 views) and its
+    ring descriptor for descriptor (7,365 in 174 rings) or its refusal (every kind reached). `test_dma.c` holds what
+    the oracle cannot state: a ring past its capacity says the length it needs and writes no further, arithmetic
+    past 64 bits, every NULL. The `dma` section runs both.
+  - **Standing faults.** `dma.json`, 17, each swept RED. `bcir_dma.c` compiles clean under `bcir-cc` (the
+    ratchet: 43 of 65 units).
+  - **Where the rest of Tier 3 stands.** N10 (native serving), N11 (device manifests bound at instantiation), N13
+    (telemetry export) and N14 (`kbcir.rcsp`, budgeted re-planning) are not started; N14 needs the planner records
+    (BKPI) to carry a budget on both rails before the C planner's DP can take one.
+
 - **2026-11-21 — The native data loader: token shards, and batches straight into the trainer's arrays.**
   - The trainer took its token ids from Python; this is the C subset audit's loader, the last of its three native
     additions. A BTKS shard (version 0) is one token sequence at 2 or 4 bytes a token, addressed by the SHA-256 of

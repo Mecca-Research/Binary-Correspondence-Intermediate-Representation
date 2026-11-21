@@ -9,6 +9,7 @@ freestanding_core bcir_etl.c
 freestanding_core bcir_rng.c
 freestanding_core bcir_digest_hw.c
 freestanding_core bcir_tokload.c
+freestanding_core bcir_dma.c
 freestanding_core bcir_decode.c
 freestanding_core bcir_encode.c
 freestanding_core bcir_exec.c

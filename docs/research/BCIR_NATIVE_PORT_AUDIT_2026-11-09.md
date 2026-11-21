@@ -147,7 +147,7 @@ artifact; they remove Python from the offline toolchain.
 |---|---|---|---|---|
 | N10 | `frontends.models.paged_kv`, `frontends.models.serve` | 1,123 | C | Native serving. Production serving is open in the master roadmap; `bcir_llama.c` already runs greedy generation. |
 | N11 | `kbcir.device_manifest` | 534 | C | A JIT-microkernel instance binding device manifests at instantiation (driver roadmap §7.5). Today drivers read generated headers (`uart16550_regs.h`). |
-| N12 | `kbcir.dma`, `kbcir.events` | 397 | C | Driver row 2, DMA and the ownership engine, and its blueprint |
+| N12 | `kbcir.dma`, `kbcir.events` | 397 | C | Driver row 2, DMA and the ownership engine, and its blueprint. **Run-time half landed 2026-11-21**: `bcir_dma.c`, freestanding -- `check_strided_view`'s admission and `dma_descriptors`' ring; the pricing, the transfer module and `kbcir.events`' laws stay the oracle's and the law rail's |
 | N13 | `telemetry_export` (Prometheus, OTLP and Redfish-shaped adapters) | 910 | C or C++ | A native telemetry or ledger service (the AI system's ledger role) |
 | N14 | `kbcir.rcsp` (budgeted selection under live Θ) | 206 | C | On-target re-planning under a budget. Until then `-bcir-rcsp` holds the law, and the C planner covers the unconstrained core. |
 
