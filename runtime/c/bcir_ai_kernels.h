@@ -20,6 +20,7 @@ extern "C" {
 #define BCIR_AI_MAX_PATTERNS UINT32_C(65536)
 #define BCIR_AI_MAX_DIMENSION UINT32_C(4096)
 #define BCIR_AI_MAX_TOP_K UINT32_C(1024)
+#define BCIR_AI_MAX_FACTS UINT32_C(262144) /* optimization_memory._MAX_FACTS */
 #define BCIR_AI_ABI_VERSION UINT32_C(1)
 
 #define BCIR_AI_OK 0
@@ -176,6 +177,18 @@ BCIR_AI_API int bcir_ai_q15_topk(
     const uint8_t *eligible, size_t pattern_count, size_t dimension,
     size_t top_k, bcir_ai_match *matches, size_t match_capacity,
     size_t *match_count);
+
+/* The optimization memory's hard rail (bcir/kbcir/optimization_memory.py): pattern i is admitted when
+ * every fact it requires is active, so a fuzzy match can never stand in for a missing hardware or
+ * program fact. Pattern i requires facts required_ids[required_offsets[i] .. required_offsets[i + 1]),
+ * each an index into the memory's canonical fact list of fact_count; active[f] is 1 when fact f holds
+ * for this query and 0 when not. Writes eligible[i] (1 or 0) for every pattern: the mask
+ * bcir_ai_q15_topk takes. Refused before anything is written: a NULL, no pattern, more patterns or
+ * facts than the memory's bounds, offsets that do not start at 0 and rise to required_count, an id at
+ * or past fact_count, and an active byte that is neither 0 nor 1. */
+BCIR_AI_API int bcir_ai_facts_admit(
+    const uint32_t *required_offsets, const uint32_t *required_ids, size_t required_count,
+    size_t pattern_count, const uint8_t *active, size_t fact_count, uint8_t *eligible);
 
 #ifdef __cplusplus
 }

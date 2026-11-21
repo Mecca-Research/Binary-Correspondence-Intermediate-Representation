@@ -240,7 +240,19 @@ def query_optimization_memory(
 def _prepare_optimization_query(
     memory: OptimizationMemory, embedding_q15, *, top_k: int, active_facts
 ) -> tuple[tuple[int, ...], tuple[bool, ...]]:
-    """Shared strict boundary for the Python oracle and optional C data plane."""
+    """The oracle's query: the strict boundary, then each pattern admitted when every fact it requires
+    is active (the hard rail the C data plane's `bcir_ai_facts_admit` computes)."""
+    values, admitted = _check_optimization_query(
+        memory, embedding_q15, top_k=top_k, active_facts=active_facts
+    )
+    return values, tuple(set(pattern.required_facts) <= admitted for pattern in memory.patterns)
+
+
+def _check_optimization_query(
+    memory: OptimizationMemory, embedding_q15, *, top_k: int, active_facts
+) -> tuple[tuple[int, ...], set]:
+    """Shared strict boundary for the Python oracle and optional C data plane: (the query's
+    coordinates, the facts it holds active)."""
     if not isinstance(memory, OptimizationMemory):
         raise ValueError("optimization query requires an OptimizationMemory")
     if (
@@ -263,9 +275,7 @@ def _prepare_optimization_query(
         admitted = set(active_facts)
         if not admitted <= set(memory.facts):
             raise ValueError("optimization query supplied a fact outside hard memory")
-    return tuple(embedding_q15), tuple(
-        set(pattern.required_facts) <= admitted for pattern in memory.patterns
-    )
+    return tuple(embedding_q15), admitted
 
 
 __all__ = [

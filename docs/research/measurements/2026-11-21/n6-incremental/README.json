@@ -1,0 +1,41 @@
+{
+ "what": "PORT-7's question (N6, the incremental engine): what a native incremental planner would save. Per scale of the planner audit fixture (bcir.tests.planner_fixtures.audit_fixture), seven one-claim deltas (bcir.tests.delta_fixtures.audit_delta, the delta-ratio row's own); the oracle's optimize from scratch, the oracle's IncrementalPlan.apply, and the C planner's whole plan (bcir_kp_plan, test_kplan --bench, the native planner row's harness) of the final module",
+ "host": "Intel(R) Xeon(R) Processor @ 2.10GHz, 4 vCPU, a virtual machine; Linux 6.18; Python 3.11.15; test_kplan built by tools/c/check_runtime.sh (clang 18.1.3, -O2)",
+ "tree": "c6aaea9ec9a502f3d345c82a3d215c6db942c16d",
+ "class": "wall",
+ "method": "medians: time.perf_counter around one call, gc collected before each, seven deltas a scale; the C plan the median of nine rounds of repeated calls (test_kplan --bench). Wall class on a shared virtual machine: INDICATIVE only, never a gate",
+ "rows": [
+  {
+   "scale": 2,
+   "claims": 512,
+   "oracle_full_ms": 6.45,
+   "oracle_incremental_ms": 0.176,
+   "c_full_ms": 0.1634
+  },
+  {
+   "scale": 4,
+   "claims": 4096,
+   "oracle_full_ms": 34.903,
+   "oracle_incremental_ms": 0.306,
+   "c_full_ms": 1.3977
+  },
+  {
+   "scale": 6,
+   "claims": 13824,
+   "oracle_full_ms": 126.304,
+   "oracle_incremental_ms": 0.937,
+   "c_full_ms": 4.32
+  },
+  {
+   "scale": 8,
+   "claims": 32768,
+   "oracle_full_ms": 312.113,
+   "oracle_incremental_ms": 2.116,
+   "c_full_ms": 10.488
+  }
+ ],
+ "reading": "The C planner plans from scratch at about 0.32 microseconds a claim (10.5 ms at 32,768 claims); the oracle's incremental planner applies a one-claim delta in 0.18 to 2.1 ms, below the C planner's whole plan from 4,096 claims on. A native incremental planner would save at most the C whole plan per delta (10.5 ms at 32,768 claims) to a consumer that re-plans natively from declared deltas.",
+ "records": {
+  "measure.py": "the script that produced the rows: python3 measure.py <test_kplan>"
+ }
+}

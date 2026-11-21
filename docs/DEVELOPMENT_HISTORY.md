@@ -302,6 +302,43 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
   - Where the rest of the PORT order stands: PORT-6's first slice landed (`kbcir.csp`); PORT-7 (N6) and PORT-8
     (N9's planning half) are not started; PORT-9 (N7) waits on IF-1 and IF-2, as the audit's N7 row says.
 
+- **2026-11-21 — PORT-8's first slice: the optimization memory's hard rail in C.**
+  - N9's planning half, measured before it was moved. The native optimization-memory query
+    (`NativeOptimizationIndex`) ran its hard-fact filter in Python before the C top-k, and the filter was
+    the query: 2.40 of 2.50 ms at 4,096 patterns, 0.59 of 0.66 ms at 1,024. `bcir_ai_facts_admit`, beside
+    `bcir_ai_q15_topk` in `runtime/c/bcir_ai_kernels.c`, admits a pattern exactly when every fact it requires
+    is active -- each pattern's facts as indexes into the canonical fact list, computed once when the index
+    is built; the query's active facts as a byte mask -- and refuses every malformed input before it writes
+    the mask. The oracle's boundary is split in two (`_check_optimization_query`, shared; the oracle's own
+    eligibility after it), so the checks are one function on both paths and the oracle's answers are
+    unchanged. The query is now 0.156 ms at 4,096 patterns, 0.09 ms at 1,024 and 0.067 ms at 256
+    ([`measurements/2026-11-21/omem-facts/`](research/measurements/2026-11-21/omem-facts/README.json), wall
+    class, indicative).
+  - **Evidence.** `test_native_fact_admission_is_the_oracles_hard_rail`: over generated memories (no facts,
+    patterns needing none and up to five, active sets from empty to whole, 1 to 512 patterns), the C mask is
+    the oracle's verdict for every pattern and the native index answers 60 queries as the oracle does, both
+    verdicts reached in the hundreds. `test_ai_kernels.c`'s `facts_admit_test`: one missing fact refuses a
+    pattern, a pattern needing nothing is admitted, and each refusal (a NULL, no pattern, offsets that do
+    not start at 0, fall or end past the ids, an id past the facts, an active byte of 2, too many patterns)
+    leaves the mask as it was; the harness passes under ASan and UBSan.
+  - **Standing faults.** `ai-facts.json`, 10, each swept RED.
+  - **The rest of N9.** HAM's route planning (`kbcir.ham`, 1,553 lines) stays the oracle's: its input is an
+    attested `HardwareEnvelope`, which has no native producer before HMF-D0's capability adapter, and the
+    master roadmap's item 6 keeps native HAM behind the driver evidence. Context-shard activation
+    (`kbcir.context_shard`) is manifest work over hosted artifacts, for the AI system's services.
+
+- **2026-11-21 — PORT-7: N6, a native incremental engine -- STOP.**
+  - [The GO/STOP](research/BCIR_N6_INCREMENTAL_ENGINE_GO_STOP_2026-11-21.md), measured
+    ([`measurements/2026-11-21/n6-incremental/`](research/measurements/2026-11-21/n6-incremental/README.json)):
+    on the planner audit fixture's one-claim deltas, the C planner's whole plan takes 0.16 ms at 512 claims
+    and 10.5 ms at 32,768 (about 0.32 µs a claim); the oracle's incremental planner takes 0.18 ms and
+    2.1 ms; the oracle from scratch 6.5 ms and 312 ms. A native incremental engine would save at most the C
+    whole plan per delta, to a consumer that does not exist -- the deltas v0 admits are replacements under a
+    fixed Θ, and on-target re-planning (N14) re-plans on a change of Θ -- and would add a fourth spelling of
+    a DP the oracle, `bcir_kplan.c` and `-bcir-plan` already hold. It reopens on a native consumer with a
+    budget the C whole plan misses, on modules past that budget's size, or when deltas carry Θ; GO is the C
+    planner's own DP keeping its columns, not a C++ re-implementation.
+
 - **2026-11-21 — N12's run-time half: DMA programs from strided views, in freestanding C.**
   - Tier 3 of the native port audit, the part that needs no hardware: what a driver needs when it moves bytes.
     `runtime/c/bcir_dma.c` is the twin of `check_strided_view` (D-R4: the strided view the only allocation
