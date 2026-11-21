@@ -1,0 +1,131 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_dma:_CC",
+    "bcir.tests.test_c_dma:test_the_c_twin_holds_its_contracts",
+    "bcir.tests.test_c_dma:test_the_c_twin_admits_and_programs_as_the_oracle_does"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M1 the alignment never checked",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "  if (b->align == 0u || v->offset % b->align) bits |= BCIR_DMA_BAD_ALIGN;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M2 the last element left out of a view's end",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "  uint64_t bytes = mul_add(elems, v->elem_bytes, v->elem_bytes, bad);",
+      "new": "  uint64_t bytes = mul_add(elems, v->elem_bytes, 0u, bad);"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M3 the second-innermost extent never held to the tile",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    if (v->ndim >= 2u && v->shape[v->ndim - 2u] % b->native_tile) bits |= BCIR_DMA_BAD_TILE_OUTER;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M4 a one-dimensional view never held to the tile",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    if (v->shape[v->ndim - 1u] % b->native_tile) bits |= BCIR_DMA_BAD_TILE_INNER;",
+      "new": "    if (v->ndim >= 2u && v->shape[v->ndim - 1u] % b->native_tile) bits |= BCIR_DMA_BAD_TILE_INNER;"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M5 an extent of 0 admitted",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    if (v->shape[k] < 1u || v->strides[k] < 1u) return BCIR_DMA_BAD_EXTENT;",
+      "new": "    if (v->strides[k] < 1u) return BCIR_DMA_BAD_EXTENT;"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M6 a stride vector of another length admitted",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "  if (v->nstrides != v->ndim || v->ndim > BCIR_DMA_MAX_DIMS) return BCIR_DMA_BAD_RANK;",
+      "new": "  if (v->ndim > BCIR_DMA_MAX_DIMS) return BCIR_DMA_BAD_RANK;"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M7 descriptors never merged",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    if (n && last.src + last.nbytes == so && last.dst + last.nbytes == dov) {",
+      "new": "    if (0 && n && last.src + last.nbytes == so && last.dst + last.nbytes == dov) {"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M8 a merge that asks only the source side",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    if (n && last.src + last.nbytes == so && last.dst + last.nbytes == dov) {",
+      "new": "    if (n && last.src + last.nbytes == so) {"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M9 the byte walk takes the larger remainder",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    uint64_t take = s.run - si < d.run - dj ? s.run - si : d.run - dj;",
+      "new": "    uint64_t take = s.run - si > d.run - dj ? s.run - si : d.run - dj;"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M10 one bank's overlap never refused",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    if (src->offset < b1 && dst->offset < a1) return BCIR_DMA_ERR_OVERLAP;",
+      "new": "    if (0 && src->offset < b1 && dst->offset < a1) return BCIR_DMA_ERR_OVERLAP;"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M11 unequal widths taken",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "  if (src->elem_bytes != dst->elem_bytes) return BCIR_DMA_ERR_WIDTH;",
+      "new": "  if (0) return BCIR_DMA_ERR_WIDTH;"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M12 shapes compared by rank alone",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    if (src->shape[k] != dst->shape[k]) return BCIR_DMA_ERR_SHAPE;",
+      "new": "    if (0) return BCIR_DMA_ERR_SHAPE;"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M13 the odometer turns its outermost dimension first",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "  for (uint32_t k = r->outer; k-- > 0;) {",
+      "new": "  for (uint32_t k = 0; k < r->outer; k++) {"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M14 a coalesced run counted in elements, not bytes",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "  r->run = (unit ? v->shape[v->ndim - 1u] : 1u) * v->elem_bytes;",
+      "new": "  r->run = (unit ? v->shape[v->ndim - 1u] * v->elem_bytes : 1u);"
+    },
+    {
+      "expects": "test_the_c_twin_admits_and_programs_as_the_oracle_does",
+      "label": "M15 a refused destination reported as the source",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    return bits & BCIR_DMA_BAD_OVERFLOW ? BCIR_DMA_ERR_OVERFLOW : BCIR_DMA_ERR_DST;",
+      "new": "    return bits & BCIR_DMA_BAD_OVERFLOW ? BCIR_DMA_ERR_OVERFLOW : BCIR_DMA_ERR_SRC;"
+    },
+    {
+      "expects": "test_the_c_twin_holds_its_contracts",
+      "label": "M16 an offset that carries the end past 64 bits taken",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "  if (bytes > UINT64_MAX - v->offset) *bad = 1;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_the_c_twin_holds_its_contracts",
+      "label": "M17 a ring past its capacity written past it",
+      "path": "runtime/c/bcir_dma.c",
+      "old": "    if (n <= capacity) out[n - 1] = last;",
+      "new": "    if (n <= capacity + 1u) out[n - 1] = last;"
+    }
+  ]
+}

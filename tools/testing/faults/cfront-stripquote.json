@@ -1,0 +1,95 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ1 oracle stripper: an open literal runs on past its line",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "                if ch == \"\\n\":\n                    break\n                out.append(ch)",
+   "new": "                out.append(ch)"
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ2 twin stripper: an open literal runs on past its line",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "        if(ch=='\\n') break;                          /* an open one ends at its line (CF-STRIPQUOTE) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ3 twin: the unit stripped before it is spliced",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    if(splice_lines(state, stripped, &flags)){if(err&&errcap)snprintf(err,errcap,\"oom\");goto cleanup;}\n",
+   "new": ""
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ4 twin: a header stripped before it is spliced",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "            if(splice_lines(state,(char *)hd,&hflags)){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,\"oom\");return 1;}\n",
+   "new": ""
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ5 twin: a line spliced again as it is read",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  while(*p&&*p!='\\n'){\n    if(L<cap-2)line[L++]=*p;else *too_long=1;",
+   "new": "  while(*p&&*p!='\\n'){\n    if(*p=='\\\\'&&p[1]=='\\n'){p+=2;continue;}\n    if(L<cap-2)line[L++]=*p;else *too_long=1;"
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ6 twin: a CRLF end of line no new-line before splicing",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  for(; s[r]; r++){ if(s[r]=='\\r' && s[r+1]=='\\n') continue; if(s[r]=='\\n') nl++; s[w++]=s[r]; }",
+   "new": "  for(; s[r]; r++){ if(s[r]=='\\n') nl++; s[w++]=s[r]; }"
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ7 oracle lexer: an open character constant runs on past its line",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "            while j < n and src[j] != \"'\" and src[j] != \"\\n\":",
+   "new": "            while j < n and src[j] != \"'\":"
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ8 oracle lexer: an open string runs on past its line",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "            while j < n and src[j] != '\"' and src[j] != \"\\n\":",
+   "new": "            while j < n and src[j] != '\"':"
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ9 oracle lexer: an open prefixed literal runs on past its line",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "                while j < n and src[j] != quote and src[j] != \"\\n\":",
+   "new": "                while j < n and src[j] != quote:"
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ10 twin lexer: an open prefixed literal runs on past its line",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        while(*r&&*r!=q&&*r!='\\n'){",
+   "new": "        while(*r&&*r!=q){"
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ11 twin lexer: an open string runs on past its line",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "                 while(*p&&*p!='\"'&&*p!='\\n'){",
+   "new": "                 while(*p&&*p!='\"'){"
+  },
+  {
+   "expects": "test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails",
+   "label": "SQ12 twin lexer: an open character constant runs on past its line",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "                  while(*p&&*p!='\\''&&*p!='\\n'){",
+   "new": "                  while(*p&&*p!='\\''){"
+  }
+ ]
+}

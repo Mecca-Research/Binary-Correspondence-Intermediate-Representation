@@ -84,12 +84,13 @@ BANKS = {name: i + 1 for i, name in enumerate(ARENAS)} | {"workspace": 7, "token
 #: An operand's use: read, written, or both (its kernel's in-place operand).
 R, W, RW = 1, 2, 3
 #: Why `bcir_decoder_lower_pack` refused a pack: the StreamPack and plan verifiers' bcir_status
-#: (bcir_runtime.h, 1-25), then the lowering's own reasons (bcir_decoder_pack.h's BCIR_DP_*).
+#: (bcir_runtime.h, 1-26), then the lowering's own reasons (bcir_decoder_pack.h's BCIR_DP_*).
 REASONS = {
     1: "truncated", 2: "magic", 3: "version", 4: "crc", 5: "nospace", 6: "lane", 7: "width",
     8: "dispatch", 9: "provenance", 10: "stale", 11: "overflow", 12: "trailing", 13: "reserved",
     14: "utf8", 15: "generation", 16: "plan", 17: "control", 18: "mac", 19: "telemetry",
     20: "ring", 21: "full", 22: "busy", 23: "lifetime", 24: "shard", 25: "planner",
+    26: "infeasible",
     101: "op", 102: "claims", 103: "rid", 104: "bank", 105: "live", 106: "slots", 107: "run",
     108: "shape", 109: "block", 110: "liveness", 111: "alternative",
 }  # fmt: skip

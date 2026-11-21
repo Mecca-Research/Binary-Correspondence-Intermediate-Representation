@@ -25,6 +25,9 @@ class TypeRef:
     typeof_expr: object = (
         None  # `typeof(expr)` — the unevaluated operand; lowering infers its static type
     )
+    typeof_unqual: bool = (
+        False  # C23 `typeof_unqual`: the operand's type without its qualifiers (6.7.3.6p5)
+    )
     vla: object = None  # a 1-D variable-length-array dim `T a[n]` — the runtime size EXPRESSION
     #   (None == a normal/constant array); lowering snapshots it for masked bounds
     vla_dims: tuple = ()  # a MULTI-dim VLA `T a[m][n]` — per-dim (int literal | size expr), at least
@@ -36,6 +39,9 @@ class TypeRef:
     ptr_quals: tuple = ()  # the qualifiers after each `*`, from the base out -- `const char *const *`
     #   has `(("const",), ())` -- each a tuple of `const` and `restrict`; () when no `*` is qualified.
     #   A function type spells and compares them (CF-QUALS)
+    row_ptr: bool = False  # the declarator was `(*name)[N]`, a pointer to an array: `array` is `(0, N)`, the shape of
+    #   the `T name[][N]` it is the type of as a parameter -- and, as a member or a block object, the
+    #   pointer itself, not an array of rows (CSUB-2d)
 
 
 # --- expressions ---
@@ -211,6 +217,7 @@ class Decl:
     init: object = None
     static_storage: bool = False  # `static T name = init;` — static storage duration (persists)
     thread_storage: bool = False  # `_Thread_local`: each thread's own object (CF-TLS)
+    align: int = 0  # `_Alignas(N)`: the strictest alignment its specifiers ask (C11 6.7.5p6); 0 -- none (CSUB-2)
 
 
 @dataclass(frozen=True)
@@ -233,6 +240,15 @@ class Seq:
 class Block:
     stmts: tuple = ()  # a bare `{ ... }` compound statement: a new scope, lowered inline
     # (no `if(1)` wrapper), so its locals do not leak to the enclosing block
+
+
+@dataclass(frozen=True)
+class Timed:
+    """A statement a `[[bcir::timing(...)]]` attribute leads (PORT-3): every claim `stmt` lowers carries `timing`,
+    a `bcir.model.Timing`, for the timing laws R19 and R20 -- the twin's `CC.timing`."""
+
+    timing: object
+    stmt: object
 
 
 @dataclass(frozen=True)
@@ -362,6 +378,9 @@ class Func:
     )
     #   before the body, the function itself included: what its body may call or name (C11
     #   6.5.1p2). None when no parser recorded it (nothing is checked)
+    # the untagged aggregates the body's block declarations define, `struct { ... } t[]` (CSUB-2): (synthesized tag,
+    # source spelling), which the emit defines as a typedef on the function's first line
+    block_types: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -386,6 +405,9 @@ class Global:
     static_storage: bool = False  # source `static` (internal linkage) -- the linkable emit keeps
     #   the definition file-local instead of exporting it
     thread_storage: bool = False  # `_Thread_local` -- the linkable emit keeps it (CF-TLS)
+    align: int = (
+        0  # `_Alignas(N)` (C11 6.7.5): the strictest its specifiers ask; 0 -- none (CSUB-2)
+    )
 
 
 @dataclass

@@ -17,6 +17,11 @@ static void r21_print(const char *funcname, const char *kind, void *ctx) {
   (void)ctx; printf("R21 %s: %s\n", funcname, kind);
 }
 
+/* R19/R20 (PORT-3): print one `<law> <func>: <message>` line per timing diagnostic, the oracle's words. */
+static void timing_print(const char *funcname, const char *law, const char *message, void *ctx) {
+  (void)ctx; printf("%s %s: %s\n", law, funcname, message);
+}
+
 /* the directory of `path` (for #include/#embed resolution). */
 static void dirof(const char *path, char *out, size_t cap) {
   const char *s = strrchr(path, '/'), *bs = strrchr(path, '\\');
@@ -56,6 +61,8 @@ int main(int argc, char **argv) {
   { int cs = 1, ws = 4, wsg = 1;   /* the target's character types, which a `#if` reads (CF-PPARITH); an unknown
                                    * target keeps the default's, and the compile below refuses it */
     (void)bcir_cfront_target_chars(target, &cs, &ws, &wsg); bcir_cpp_set_chars(cs, ws, wsg); }
+  { int ls = 8, ps = 8, ld = 1, ms = 0, fe = 0;   /* ... and the rest the standard headers it supplies read (CSUB-1) */
+    (void)bcir_cfront_target_cpp(target, &ls, &ps, &ld, &ms, &fe); bcir_cpp_set_target(ls, ps, ld, ms, fe); }
   int cpp_rc = bcir_cpp_run_alloc(raw, base, &src, NULL, cpperr, sizeof cpperr);
   bcir_host_deallocate(&heap, raw);
   if (cpp_rc) { printf("CPP-ERR %s\n", cpperr); return 1; }
@@ -89,6 +96,7 @@ int main(int argc, char **argv) {
   if (!r.ok) printf("diag: %s\n", r.diag);
   /* R21 advisory (§5.12): print use-after-free / double-free diagnostics before the emit marker. */
   bcir_verify_lifetime(&r.unit, r21_print, NULL);
+  (void)bcir_verify_timing(&r.unit, timing_print, NULL);   /* R19/R20 (PORT-3), every one, before the emit marker */
   printf("----EMIT----\n%s", r.emitted);
   int ok = r.ok;
   bcir_cfront_free(&r);

@@ -170,6 +170,21 @@ _FAULTS = (
         lambda m: m["harnesses"]["test_decode"].__setitem__("libraries", []),
     ),
     (
+        "M2",
+        "a C library naming a C++ standard",
+        lambda m: m["libraries"]["bcir_base"].__setitem__("cxx_standard", 23),
+    ),
+    (
+        "M2",
+        "a C++ standard neither 17 nor 23",
+        lambda m: m["seam_libraries"]["bcir_solver"].__setitem__("cxx_standard", 20),
+    ),
+    (
+        "M2",
+        "a C++17 unit linking the C++23 solver library",
+        lambda m: m["seam_tests"]["test_exact"].pop("cxx_standard"),
+    ),
+    (
         "M11",
         "the seam's C++ units",
         lambda m: m["seam_libraries"]["bcir_seam"].__setitem__("sources", ["bcir_handoff.cpp"]),

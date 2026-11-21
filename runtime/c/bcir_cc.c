@@ -386,6 +386,8 @@ int main(int argc, char **argv) {
                                   * in 64 KiB, and a longer unit refused that the oracle lowered */
     { int cs=1, ws=4, wsg=1;   /* the target's character types, which a `#if` reads (CF-PPARITH) */
       (void)bcir_cfront_target_chars(target, &cs, &ws, &wsg); bcir_cpp_set_chars(cs, ws, wsg); }
+    { int ls=8, ps=8, ld=1, ms=0, fe=0;   /* ... and the rest the standard headers it supplies read (CSUB-1) */
+      (void)bcir_cfront_target_cpp(target, &ls, &ps, &ld, &ms, &fe); bcir_cpp_set_target(ls, ps, ld, ms, fe); }
     int cpp_rc=bcir_cpp_run_ex_alloc(raw, path, dirs, ndirs, alldefs, nalldef, &src, NULL, cpperr, sizeof cpperr);
     cc_release_file(raw);
     if (cpp_rc) {

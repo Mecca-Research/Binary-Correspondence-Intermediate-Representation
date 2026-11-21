@@ -277,17 +277,18 @@ Current work is maintenance and bounded completion, not another breadth sprint:
   Near-term ML-relevant gaps are `<stdbit.h>`, `<stdckdint.h>`, verifier-fed `assume`, and
   packed sub-byte storage/compute semantics.
 - **The subset against the runtime's own C** ([`research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)).
-  The verified compiler parses 6 of the 33 runtime library units today, 15 once three
-  conformance gaps close (CSUB-1), and compiles 10 with R1–R18 clean. The ladder:
-  - CSUB-1, conformance: multi-line macro calls, file-scope `static_assert`, complete
-    freestanding headers;
-  - CSUB-2, table idioms;
+  CSUB-1, conformance, has landed: multi-line macro calls, `static_assert`, the freestanding
+  headers, and one macro engine on both rails. The ratchet (`tools/c/csub_ratchet.py`) records
+  which production units compile with R1–R18 clean, and names the rung that lifts each of the
+  rest. The ladder from here:
+  - CSUB-2, table idioms (most of the blocked units wait on it);
   - CSUB-3, `<stdbit.h>` and `<stdckdint.h>`;
   - CSUB-4, `<stdatomic.h>`'s explicit-order calls;
   - CSUB-5, a hosted profile;
   - CSUB-6, AI numerics at the source level.
 
-  A ratchet gate holds the set of runtime units the verified compiler accepts.
+  The ratchet fails a unit that stops compiling clean, and fails a promotion until it is
+  recorded.
 - Preserve the C++ airlock: C owns stable value/resource ABI; C++ owns hosted graph and
   distributed orchestration. Implement a backend only with an executable consumer and teardown
   tests.
@@ -598,7 +599,8 @@ History explains past decisions but does not reopen superseded sequencing.
 3. Optionally finish UART's U1 law-rail half (the five laws as `-bcir-verify` clauses and the C
    twin's form), the one UART slice left open across rails. It can ride between slices of either
    phase, and so can the native port audit's small slices: PORT-0 (the inventory counts C++ and
-   MLIR twins) and PORT-1 (MC1 in C) have landed; PORT-2 (the tokenizers in C) is next.
+   MLIR twins), PORT-1 (MC1 in C) and PORT-2 (both tokenizers in C) have landed, and so has the C
+   subset audit's CSUB-1 rung; CSUB-2 is next.
 4. Then build drivers in the driver roadmap's §5.6 order on §5.5's one contract, starting with the
    event timers and DMA, whose blueprints exist; virtio-net, and with it native networking, comes
    with row 3. Alternate the drivers one slice at a time with the deferred work:

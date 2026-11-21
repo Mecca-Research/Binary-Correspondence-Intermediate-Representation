@@ -37,7 +37,8 @@ table, or with one no claim reads, writes the record it always wrote.
 - Little-endian; every field has a fixed width.
 - **CRC:** CRC-32 (zlib; `bcir_crc32` on the C rail) over every byte before the trailer.
 - **Statuses** are the runtime's `bcir_status`; Python raises `PlannerAbiError.status` with the
-  same names. S4-A appended `BCIR_ERR_PLANNER` (25). Every law other than the framing laws refuses
+  same names. S4-A appended `BCIR_ERR_PLANNER` (25), and N14 `BCIR_ERR_INFEASIBLE` (26, the budgeted
+  planner's `rcsp.Infeasible`). Every law other than the framing laws refuses
   with it, except an op that is not UTF-8 (`BCIR_ERR_UTF8`, checked by the runtime's one
   validator, `bcir_utf8_valid`), and a realization value above 2⁶³ − 1 (`BCIR_ERR_OVERFLOW`).
 
@@ -240,6 +241,27 @@ effective type. Every failure zeroes the output.
 re-check one invariant of it, the lane-width count (1..16), because the geometry indexes by it: a
 hand-built `bcir_kp_input` with no widths or with more than 16 is refused `BCIR_ERR_PLANNER`
 before anything is read. The harness's `--api` mode drives both counts.
+
+## The budgeted planner (N14)
+
+`bcir_kp_plan_budgeted` is `kbcir.rcsp.optimize_constrained`, `min M(pi) s.t. R(pi, Theta) <= B`, over the
+same offer and edges as `bcir_kp_plan`. The caps are its argument, at most `BCIR_KP_BUDGET_MAX` (12) of
+them as (`cost.DIMS` index, bound) pairs, ascending by dimension as `rcsp.Budget` sorts them. They are
+never a BKPI field, so the record above and both its encoders are unchanged.
+
+| step | oracle | C |
+|---|---|---|
+| a label: the score and the tracked resources, the resources coupled as the oracle couples them (x1.25 heat and power for wide SIMD on a hot machine, x0.75 memory on a vector edge sharing a read operand) | `rcsp._expand`'s extension (`_context_factor`, `couple`) | `kp_label_column` |
+| the labels a realization keeps: an extension past a cap cut, a dominated label pruned, ties keeping the first | `rcsp._insert`, `_dominates` | `kp_dominates`, `kp_insert` |
+| the plan: the last column's least label by (score, resources), its rows read back through the labels' parents | `optimize_constrained`'s sink, `_reconstruct` | the sink of `kp_run` |
+
+With no cap the plan is `bcir_kp_plan`'s, byte for byte. A claim no label survives is
+`BCIR_ERR_INFEASIBLE` with its id in `*infeasible_claim`. The labels live in the caller's storage
+(`bcir_kp_label_bytes`), at any alignment; storage that runs out is `BCIR_ERR_NOSPACE`, which the
+oracle's unbounded lists never meet. Caps past the maximum, a dimension past `cost.DIMS` and falling or
+repeated dimensions are `BCIR_ERR_PLANNER`. `*labels_kept` is the labels the plan kept, the oracle's count.
+Every failure zeroes the output. The harness's `--batch-budget` and `--api-budget` modes drive it
+(`bcir/tests/test_c_rcsp.py`).
 
 ## BKPB — the binding, and the native hydrate (CXX4)
 

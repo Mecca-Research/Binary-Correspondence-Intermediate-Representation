@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..toolchain import host_link_args, unit_options
-from .optimization_memory import OptimizationMatch, OptimizationMemory, _prepare_optimization_query
+from .optimization_memory import OptimizationMatch, OptimizationMemory, _check_optimization_query
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SOURCE = _ROOT / "runtime" / "c" / "bcir_ai_kernels.c"
@@ -462,6 +462,17 @@ class NativeAIKernels:
             sizep,
         ]
         self._library.bcir_ai_q15_topk.restype = ctypes.c_int
+        u32p = ctypes.POINTER(ctypes.c_uint32)
+        self._library.bcir_ai_facts_admit.argtypes = [
+            u32p,
+            u32p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+            u8p,
+        ]
+        self._library.bcir_ai_facts_admit.restype = ctypes.c_int
 
     @staticmethod
     def _finite_values(values) -> tuple[float, ...]:
@@ -814,6 +825,21 @@ class NativeAIKernels:
             for index in range(count.value)
         )
 
+    def _facts_admit(
+        self, offsets: array, ids: array, pattern_count: int, active: bytes, fact_count: int
+    ) -> bytes:
+        """The eligibility mask `bcir_ai_facts_admit` writes: one 0/1 byte a pattern."""
+        offset_view = (ctypes.c_uint32 * len(offsets)).from_buffer(offsets)
+        ids_view = (ctypes.c_uint32 * max(1, len(ids))).from_buffer_copy(ids.tobytes() or bytes(4))
+        active_view = (ctypes.c_uint8 * max(1, len(active))).from_buffer_copy(active or b"\0")
+        eligible = (ctypes.c_uint8 * pattern_count)()
+        status = self._library.bcir_ai_facts_admit(
+            offset_view, ids_view, len(ids), pattern_count, active_view, fact_count, eligible
+        )
+        if status:
+            raise RuntimeError(f"native fact admission failed with status {status}")
+        return bytes(eligible)
+
 
 class NativeOptimizationIndex:
     """One-time contiguous native projection of immutable optimization memory."""
@@ -826,18 +852,36 @@ class NativeOptimizationIndex:
         self._patterns = array(
             "h", (coordinate for pattern in memory.patterns for coordinate in pattern.embedding_q15)
         )
+        # the hard rail, once: each pattern's required facts as indexes into the canonical fact list
+        self._fact_index = {fact: k for k, fact in enumerate(memory.facts)}
+        self._offsets, self._ids = array("I", [0]), array("I")
+        if self._offsets.itemsize != 4:
+            raise RuntimeError("native fact admission needs 32-bit unsigned array items")
+        for pattern in memory.patterns:
+            self._ids.extend(self._fact_index[fact] for fact in pattern.required_facts)
+            self._offsets.append(len(self._ids))
 
     def query(
         self, embedding_q15, *, top_k: int = 1, active_facts=None
     ) -> tuple[OptimizationMatch, ...]:
-        values, eligible = _prepare_optimization_query(
+        values, admitted = _check_optimization_query(
             self.memory, embedding_q15, top_k=top_k, active_facts=active_facts
+        )
+        active = bytearray(len(self.memory.facts))
+        for fact in admitted:
+            active[self._fact_index[fact]] = 1
+        eligible = self.kernels._facts_admit(
+            self._offsets,
+            self._ids,
+            len(self.memory.patterns),
+            bytes(active),
+            len(self.memory.facts),
         )
         query = array("h", values)
         matches = self.kernels._q15_topk(
             query,
             self._patterns,
-            bytes(eligible),
+            eligible,
             len(self.memory.patterns),
             self.memory.dimension,
             top_k,

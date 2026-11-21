@@ -21,7 +21,7 @@ the sort byte-for-byte, and `bcir/tests/test_c_cfront.py` + `tools/c/check_runti
 
 from __future__ import annotations
 
-from .lower import _EXTERN_VARIADIC, _LIBM, _LIBM_INT, _STDLIB_ALLOC, _STRING_MEM
+from .lower import _EXTERN_VARIADIC, _LIBM, _LIBM_INT, _STDLIB_ALLOC, _STRING_CALLS
 
 # The external-call claim-op prefixes whose `:<callee>` suffix names a real (non-bcir_) symbol the
 # linker must resolve. A unit's link flags are derived purely from the callees behind these edges.
@@ -44,6 +44,10 @@ def _is_libm(callee: str) -> bool:
     name, an f/l-suffixed real variant, or a fixed-integer one (ilogb / lround...). Resolves to -lm.
     The full name is tested before stripping a trailing f/l so a base that ends in f/l (`erf`, `modf`,
     the `*l` long-double forms) is classified by the table, never as a phantom suffix of a shorter base."""
+    if callee.startswith(
+        "__builtin_"
+    ):  # a compiler builtin (<math.h>'s classification macros): no library
+        return False
     if callee in _LIBM or callee in _LIBM_INT:
         return True
     base = callee[:-1]
@@ -52,14 +56,14 @@ def _is_libm(callee: str) -> bool:
 
 def _is_libc_implicit(callee: str) -> bool:
     """True if `callee` is a libc symbol linked implicitly (no `-l`): the <stdlib.h> allocators +
-    `free`, the <string.h> memory routines, and the printf/scanf-family <stdio.h> variadics. These are
+    `free`, the <string.h> routines, and the printf/scanf-family <stdio.h> variadics. These are
     real external edges but need no flag. Classified explicitly (NO_FLAG) rather than left to the unknown
     default, so the mapping is a complete statement of what BCIR knows about its own emitted external
     seams."""
     return (
         callee == "free"
         or callee in _STDLIB_ALLOC
-        or callee in _STRING_MEM
+        or callee in _STRING_CALLS
         or callee in _EXTERN_VARIADIC
     )
 

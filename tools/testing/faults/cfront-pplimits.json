@@ -56,22 +56,8 @@
     {
       "expects": "test_a_token_of_any_length",
       "label": "PT5 a line's token is held in 256 bytes (`preprocessor token too long`)",
-      "new": "  int i = 0; char t[256], prevc = 0;",
-      "old": "  int i = 0; char t[BCIR_CPP_LINE], prevc = 0;",
-      "path": "runtime/c/bcir_cpp.c"
-    },
-    {
-      "expects": "test_a_token_of_any_length",
-      "label": "PT6 a macro argument is held in 1 KiB (`macro argument is too large`)",
-      "new": "if (aw < 1023) args[na][aw++] = a[z]; else",
-      "old": "if (aw < BCIR_CPP_LINE - 1) args[na][aw++] = a[z]; else",
-      "path": "runtime/c/bcir_cpp.c"
-    },
-    {
-      "expects": "test_a_token_of_any_length",
-      "label": "PT7 the spacing token keeps an argument's first 255 bytes: `...+b y` is written `...+by`",
-      "new": "  memcpy(prev, s, n > 255 ? 255 : n + 1); prev[255] = 0;",
-      "old": "  memcpy(prev, s + (n > 255 ? n - 255 : 0), n > 255 ? 256 : n + 1);",
+      "new": "    k = ntok(st, line, &i, st->ppx_tok, 256);",
+      "old": "    k = ntok(st, line, &i, st->ppx_tok, sizeof st->ppx_tok);",
       "path": "runtime/c/bcir_cpp.c"
     },
     {

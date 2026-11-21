@@ -21,6 +21,27 @@ import time
 from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
+from bcir.frontends.cfront.lower import (
+    ATTR_VENDOR,
+    ROW_ADDR,
+    ROW_PTR_ELEM,
+    ROW_PTR_PLACE,
+    ROW_VALUE,
+    TYPEOF_ARR_PTR,
+    TYPEOF_DIMS,
+    TYPEOF_SCOPE,
+    TYPEOF_UNSIZED,
+    TIMING_COUNT,
+    TIMING_FIELD,
+    TIMING_FLAG,
+    TIMING_NESTED,
+    TIMING_PLACE,
+    TIMING_SYNTAX,
+    TIMING_TEXT,
+    TIMING_TWICE,
+    TIMING_UNKNOWN,
+    VOLATILE_PTR,
+)
 from bcir.model import Domain
 from bcir.toolchain import BuildFailed, host_link_args
 from bcir.verify import cfront_structural_digest
@@ -129,6 +150,8 @@ _PREPROC = [
     "cfront_ppinc.c",
     "cfront_comments.c",
     "cfront_paste.c",  # tokens that would lex as others, written apart: `a + ++g` (CF-PASTE)
+    "cfront_stdheaders.c",  # the standard headers both rails supply, static assertions at every scope, and
+    #   invocations across lines, each value equal to Clang's through its own headers (CSUB-1)
 ]  # L7: exercise the preprocessor
 _ABI = [
     "cfront_structret.c",
@@ -307,6 +330,27 @@ _PTRVALUE = [
     "cfront_enumobj.c",  # objects of an enumerated type -- locals, globals, parameters, returns, members, a bit-field,
     #   typedef names -- typed as the enumeration's compatible type: `unsigned int` with no negative enumerator on System
     #   V, `int` otherwise and on MSVC (CF-ENUMOBJ)
+    "cfront_csub2_decl.c",  # array parameters of function-pointer types, `_Alignas` on locals, statics and globals,
+    #   each object's address showing its alignment kept by the emit (CSUB-2a)
+    "cfront_csub2_strtab.c",  # string literals in block-scope static tables: names, escapes, pieces, records by
+    #   braces, elision and designators, scalar, thread-local and union statics (CSUB-2b)
+    "cfront_csub2_untagged.c",  # untagged structs and unions a block declaration defines: static and automatic
+    #   tables, a nested untagged member, several declarators, `typeof` and assignment copies, a `for` declaration's
+    #   (CSUB-2b)
+    "cfront_csub2_records.c",  # pointer members of array elements, at a nested member's depth, read, subscripted,
+    #   dereferenced, followed with `->`, stored and stored through (CSUB-2c)
+    "cfront_csub2_lvalues.c",  # an element of a pointer to structs through a loaded pointer: its address, a member
+    #   stepped, assigned as a value, addressed, and stored or stepped through a pointer member (CSUB-2e)
+    "cfront_csub2_structmembers.c",  # struct and union members of array elements: read, stored, copied, passed and
+    #   returned by value, addressed, on direct arrays, member arrays and through loaded pointers (CSUB-2c)
+    "cfront_csub2_rowptr.c",  # a pointer-to-array member `T (*m)[N]`: its elements by the row, the row sized, the
+    #   pointer tested, copied and passed to a row-pointer parameter, through values, elements and loaded pointers (CSUB-2d)
+    "cfront_csub2_rows.c",  # a row of a multi-dimensional array used as a value -- passed, assigned, chosen, stepped,
+    #   compared, dereferenced -- of statics, globals, VLAs, parameters, members and row pointers; volatile addresses (CSUB-2d)
+    "cfront_csub2_elemarrays.c",  # an array member of an array element used as a value -- a channel table's names
+    #   compared, a cast table's types checked through a loaded pointer, stepped, chosen, sized (CSUB-2c)
+    "cfront_csub2_volatile.c",  # volatile objects stepped and reached through a pointer sum -- the quarantine's counter
+    #   and the device registers a driver steps -- one read, one write each (CSUB-2e)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -541,6 +585,7 @@ def _equiv(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
     # (`source` is preprocessed, its `#include`s gone: what a fixture includes, the harness does -- <stdarg.h> for a
     # variadic function's `va_list`, CF-FPRET)
     harness = f"""#include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -6957,23 +7002,14 @@ def test_preprocessor_fuzz_differential_seed_b():
 # --- DUAL-RAIL C TWIN preprocessor differential (bonus) -----------------------------------------
 # The C twin `bcir_cpp_run` preprocesses then feeds the frontend; `test_cfront.c --emit-cpp` now dumps
 # the preprocessed text and exits, so the C rail's preprocessor can be differentialed against the SAME
-# reference -- catching a Python<->C preprocessor divergence. The C twin is the production port and is
-# NOT yet at parity with the (now-fixed) Python oracle on three adversarial classes; those are PINNED
-# below with a recorded reason + TODO (fixing the C twin's prescan / stringize-escaping / 3-cycle
-# blue-paint is fragile surgery in a separate ~500-line C engine whose expand_line uses non-reentrant
-# static buffers -- out of scope for this Python-side gate). The differential still runs on every fixture
-# where the C twin AGREES with the reference, so a future Python<->C regression on the clean subset is
-# caught, and the pinned set is asserted to stay BOUNDED (it must not silently grow).
-_PP_CTWIN_PIN = {
-    "cfront_pp_stringize.c": "C twin (bcir_cpp.c) does not prescan a two-level XSTR argument and does "
-    'not escape `"`/`\\` inside a stringized string-literal token -- '
-    "TODO(bcir_cpp): add argument prescan + spec stringize escaping.",
-    "cfront_pp_predefined.c": "C twin does not prescan `__LINE__` through the two-level XSTR "
-    '(emits "__LINE__" not the number) -- TODO(bcir_cpp): prescan dynamic '
-    "predefineds in argument position.",
-    "cfront_pp_bluepaint.c": "C twin mis-handles a 3-macro indirect self-reference cycle (p->q->r->p) "
-    "-- TODO(bcir_cpp): paint the whole active replacement chain, not one level.",
-}
+# reference -- catching a Python<->C preprocessor divergence. A fixture the twin is known to get wrong is
+# PINNED below with its reason, and a pin whose divergence is gone fails as STALE, so the set cannot rot.
+# It is empty: the twin's engine was the oracle's port of Prosser's algorithm from CSUB-1 on (hide sets,
+# the argument prescan, one rescan, `#`'s spacing), and the three pins it had -- the two-level XSTR
+# prescan with stringize escaping (cfront_pp_stringize.c), `__LINE__` prescanned through XSTR
+# (cfront_pp_predefined.c) and the p->q->r->p blue-paint cycle (cfront_pp_bluepaint.c) -- each agree
+# with the reference now, and are differentialed like every other fixture.
+_PP_CTWIN_PIN: dict[str, str] = {}
 
 
 def _ctwin_emit_cpp(fx: str):
@@ -6987,11 +7023,10 @@ def _ctwin_emit_cpp(fx: str):
 
 
 def test_c_twin_preprocessor_differential_against_reference():
-    """DUAL-RAIL C-TWIN preprocessor differential (bonus). For each adversarial fixture where the C twin
-    is at parity, assert its `--emit-cpp` token-normalized output equals the reference (on the fair,
-    single-truth fixtures) -- catching a Python<->C preprocessor divergence on the clean subset. The
-    three known C-twin-immature classes are PINNED in `_PP_CTWIN_PIN` (recorded reason + TODO; fixing
-    the C engine is fragile surgery, out of scope). Self-skips if no C compiler / reference is present.
+    """DUAL-RAIL C-TWIN preprocessor differential (bonus). For each adversarial fixture, assert the C twin's
+    `--emit-cpp` token-normalized output equals the reference (on the fair, single-truth fixtures) --
+    catching a Python<->C preprocessor divergence. A fixture pinned in `_PP_CTWIN_PIN` (none since CSUB-1)
+    must still diverge, or fails as a stale pin. Self-skips if no C compiler / reference is present.
     Asserts the pinned set stays BOUNDED (a new C-twin divergence must be triaged, not silently pinned)
     and that a non-trivial subset actually ran (anti-degeneration)."""
     if not _CC or not (shutil.which("clang") or shutil.which("gcc")):
@@ -7044,6 +7079,262 @@ def test_c_twin_preprocessor_differential_against_reference():
         f"C-twin preprocessor differential degenerated: only {tested} fixtures ran "
         f"(pinned={pinned}) -- a real differential must exercise the clean subset"
     )
+
+
+# --- CSUB-1: one macro-replacement engine on both rails, generated --------------------------------------------
+# The twin's preprocessor is the oracle's engine (Prosser's algorithm, the argument prescan, one rescan, `#`'s spacing)
+# ported step for step, with the same bounds counted at the same events. The fixtures pin its corners; this generates
+# macro programs -- object and function-like macros, `#`, `##`, `__VA_ARGS__` and `__VA_OPT__`, self-reference, empty
+# and nested arguments, two-level stringizing, each token spaced or not -- and holds the two rails to one answer on
+# every one: the same preprocessed text, or the same refusal. Where clang -E -P and gcc -E -P agree (and form no
+# invalid paste, which C leaves undefined), the oracle must also give their tokens.
+_PPG_IDS = ("a", "b", "x", "y", "E", "P", "Q", "F", "G", "S", "XS", "CAT", "V", "f", "g")
+_PPG_PUNCT = (
+    "+",
+    "-",
+    "*",
+    "/",
+    "(",
+    ")",
+    ",",
+    "<",
+    "<<",
+    "=",
+    "==",
+    "!",
+    "&",
+    "&&",
+    ".",
+    "[",
+    "]",
+)
+_PPG_LITS = ("1", "23", "0x1f", "1.5", '"s"', '"a b"', "'c'", '"q\\"x"')
+
+
+def _ppg_spaced(toks, rng) -> str:
+    """`toks` as text, a space before each at random -- and wherever two would lex as one."""
+    out, prev = "", ""
+    for t in toks:
+        if out and (
+            rng.random() < 0.5 or _cpp._pastes(prev, t) or (out[-1] == "/" and t[0] in "*/")
+        ):
+            out += " "
+        out += t
+        prev = t
+    return out
+
+
+def _ppg_body(rng, params, variadic):
+    toks = []
+    for _ in range(rng.randint(0, 7)):
+        r = rng.random()
+        if params and r < 0.25:
+            toks.append(rng.choice(params))
+        elif params and r < 0.33:
+            toks += ["#", rng.choice(params)]
+        elif r < 0.43 and toks:
+            toks += ["##", rng.choice(list(params) + list(_PPG_IDS[:4]))]
+        elif variadic and r < 0.5:
+            toks += ["__VA_OPT__", "(", rng.choice(list(_PPG_IDS[:4]) + [","] + list(params)), ")"]
+        elif r < 0.65:
+            toks.append(rng.choice(_PPG_IDS))
+        elif r < 0.85:
+            toks.append(rng.choice(_PPG_PUNCT))
+        else:
+            toks.append(rng.choice(_PPG_LITS))
+    while toks and toks[0] == "##":
+        toks.pop(0)
+    while toks and toks[-1] in ("##", "#"):
+        toks.pop()
+    return toks
+
+
+def _ppg_program(rng) -> str:
+    lines = ["#define S(x) #x", "#define XS(x) S(x)", "#define CAT(a, b) a ## b"]
+    names = ["S", "XS", "CAT"]
+    for nm in rng.sample(["E", "P", "Q", "F", "G", "V", "f", "g"], rng.randint(2, 5)):
+        if rng.random() < 0.4:
+            lines.append(f"#define {nm} {_ppg_spaced(_ppg_body(rng, [], False), rng)}")
+        else:
+            ps = [chr(ord("p") + k) for k in range(rng.randint(0, 2))]
+            variadic = rng.random() < 0.3
+            params = ps + (["__VA_ARGS__"] if variadic else [])
+            decl = ", ".join(ps + (["..."] if variadic else []))
+            lines.append(
+                f"#define {nm}({decl}) {_ppg_spaced(_ppg_body(rng, params, variadic), rng)}"
+            )
+        names.append(nm)
+
+    def use(depth):
+        nm = rng.choice(names + list(_PPG_IDS[:4]))
+        if rng.random() < 0.6 and depth < 3:
+            args = []
+            for _ in range(rng.randint(0, 3)):
+                parts = [
+                    use(depth + 1)
+                    if rng.random() < 0.3
+                    else rng.choice(_PPG_IDS + _PPG_LITS + ("+", "-"))
+                    for _ in range(rng.randint(0, 3))
+                ]
+                args.append(
+                    _ppg_spaced(parts, rng) if parts else (" " if rng.random() < 0.3 else "")
+                )
+            return nm + ("(" if rng.random() < 0.8 else " (") + ",".join(args) + ")"
+        return nm
+
+    for _ in range(rng.randint(1, 4)):
+        u = use(0)
+        lines.append(f"XS({u})" if rng.random() < 0.4 else u)
+    return "\n".join(lines) + "\n"
+
+
+def _ppg_reference(path: str):
+    """clang's and gcc's token-normalized expansion of `path` where they agree and form no invalid paste, else None."""
+    got = []
+    for cc, std in (("clang", "c23"), ("gcc", _pp_gcc_std())):
+        r = subprocess.run([cc, f"-std={std}", "-E", "-P", path], capture_output=True, text=True)
+        if (
+            r.returncode != 0
+            or "pasting formed" in r.stderr
+            or "valid preprocessing token" in r.stderr
+        ):
+            return None
+        got.append(_pp_token_normalize(r.stdout))
+    return got[0] if got[0] == got[1] else None
+
+
+def test_the_preprocessors_give_one_answer_on_generated_macro_programs():
+    """CSUB-1. 400 generated macro programs (seeded): the twin's `--emit-cpp` text equals the oracle's, or both refuse
+    for one reason; and on the fair ones (clang -E -P == gcc -E -P), the oracle's tokens are theirs. Before the twin
+    carried the oracle's engine, this split on a painted name (`f(1)(2)` of `#define f(x) (x) + f`), an argument's
+    prescan, a stringized argument's spacing and a `#` before no parameter; the oracle itself spelled `S(a + b)`
+    "a+b". Anti-vacuity: most programs must expand and a good share be fair."""
+    import random as _random
+
+    if not _CC or not (shutil.which("clang") and shutil.which("gcc")):
+        return
+    exe = _build_frontend(_session_build_dir())
+    rng = _random.Random(20261111)
+    expanded = refused = fair = 0
+    splits, wrong = [], []
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "p.c")
+        for _ in range(400):
+            src = _ppg_program(rng)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            try:
+                oracle = ("ok", _cpp.preprocess(src))
+            except _cpp.CPPError as e:
+                oracle = ("err", str(e))
+            run = subprocess.run(
+                [exe, "--emit-cpp", path], capture_output=True, text=True, timeout=60
+            )
+            first = (run.stdout.splitlines() or [""])[0]
+            if run.returncode == 0:
+                twin = ("ok", run.stdout)
+            else:
+                twin = ("err", first[len("CPP-ERR ") :] if first.startswith("CPP-ERR ") else first)
+            if oracle != twin:
+                splits.append((src, oracle, twin))
+                continue
+            if oracle[0] == "err":
+                refused += 1
+                continue
+            expanded += 1
+            ref = _ppg_reference(path)
+            if ref is None:
+                continue
+            fair += 1
+            if _pp_token_normalize(oracle[1]) != ref:
+                wrong.append((src, _pp_token_normalize(oracle[1]), ref))
+    assert not splits, "the rails split on a generated macro program:\n" + "\n".join(
+        f"  SRC {s!r}\n    oracle={o!r}\n    twin={t!r}" for s, o, t in splits[:4]
+    )
+    assert not wrong, "the oracle's expansion is not clang's and gcc's:\n" + "\n".join(
+        f"  SRC {s!r}\n    oracle={o}\n    reference={r}" for s, o, r in wrong[:4]
+    )
+    assert expanded >= 200 and refused >= 50 and fair >= 150, (expanded, refused, fair)
+
+
+def test_the_preprocessors_share_their_expansion_bounds():
+    """CSUB-1. Both rails hold one expansion to the same bounds, counted at the same events: an argument's prescan
+    nests at most 63 deep (`macro expansion nesting too deep`), and an expansion does at most 2^22 units of work
+    (`macro expansion is too large`) -- the edge found on the oracle, 504 copies of a macro of 64 * 64 empty ones,
+    expands on both, and 505 is refused on both, and so does the edge where hide sets and where output bytes carry
+    the charge. The oracle had recursed without a bound to a `RecursionError` at
+    some 400 levels, and charged its 4 000 000 steps per rescan; the twin had refused at 64 rewrites of a line
+    whatever they held, and any line expanding past 8 KiB -- which, 12 000 bytes of it, both now lower."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <stdint.h>\nuint32_t g(uint32_t x) {{ return {v}; }}\n"
+    nest = "#define f(x) x\n"
+    for n in (1, 63):
+        _lowers_alike(exe, nest + unit.format(v="f(" * n + "x" + ")" * n))
+    for n in (64, 1500):
+        _refused_alike(
+            exe, nest + unit.format(v="f(" * n + "x" + ")" * n), "macro expansion nesting too deep"
+        )
+    head = (
+        "#define Z\n#define A "
+        + " ".join(["Z"] * 64)
+        + "\n#define B "
+        + " ".join(["A"] * 64)
+        + "\n"
+    )
+    _lowers_alike(exe, head + " ".join(["B"] * 504) + "\n" + unit.format(v="x"))
+    _refused_alike(
+        exe,
+        head + " ".join(["B"] * 505) + "\n" + unit.format(v="x"),
+        "macro expansion is too large",
+    )
+    # the same edge where hide sets carry the charge: a chain of 1 000 macros first makes sets of 1 to 1 000 elements,
+    # 500 500 in all, so 443 copies expand and 444 do not (the table's bound, CF-MACROCAP, is far past it)
+    plain = "unsigned g(unsigned x) { return x; }\n"
+    chain = "".join(f"#define C{k} C{k + 1}\n" for k in range(1, 1000)) + "#define C1000\n"
+    _lowers_alike(exe, chain + head + "C1 " + " ".join(["B"] * 443) + "\n" + plain)
+    _refused_alike(
+        exe,
+        chain + head + "C1 " + " ".join(["B"] * 444) + "\n" + plain,
+        "macro expansion is too large",
+    )
+    # ... and where the output's bytes do: 63-character names in a `#if`, which past the bound is too large and
+    # within it too long an expression
+    name = "L" + "x" * 62
+    wide_if = (
+        f"#define L {name}\n#define M "
+        + " ".join(["L"] * 15)
+        + "\n#define N "
+        + " ".join(["M"] * 100)
+        + "\n#if "
+    )
+    _refused_alike(
+        exe,
+        wide_if + " ".join(["N"] * 41) + "\n#endif\n" + plain,
+        "too many tokens in #if expression",
+    )
+    _refused_alike(
+        exe, wide_if + " ".join(["N"] * 42) + "\n#endif\n" + plain, "macro expansion is too large"
+    )
+    wide = "#define W " + " + ".join(["x"] * 100) + "\n"  # 60 of them: a line of 11 999 bytes
+    summary = _lowers_alike(exe, wide + unit.format(v=" + ".join(["W"] * 60)))
+    assert "funcs=1" in summary, summary
+
+
+def test_a_directive_keeps_its_operand_spacing_on_both_rails():
+    """CSUB-1. A directive's operand is expanded as a line is, with its spacing: `#error S(a + b)` stringizes `"a +
+    b"` on both rails (both had spelled it `"a+b"`), and a `#if` reads the text the oracle reads -- the expression as
+    written, `defined X` replaced by 1 or 0 in place -- so `defined(A) defined(B)` is two operands and refused alike
+    (the twin had spaced its operands only where two would lex as one, and read `11`), while `defined(A)&&1` lowers."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <stdint.h>\nuint32_t g(uint32_t x) { return x; }\n"
+    stringize = "#define S(x) #x\n#define XS(x) S(x)\n#define P a + b\n"
+    _refused_alike(
+        exe, stringize + "#error S(a + b) XS(P) S(a+b)\n" + unit, '#error "a + b""a + b""a+b"'
+    )
+    _refused_alike(
+        exe, "#define A 1\n#if defined(A) defined(B)\n#endif\n" + unit, "malformed #if expression"
+    )
+    _lowers_alike(exe, "#define A 1\n#if defined(A)&&1\n#endif\n" + unit)
 
 
 # --- CF-PASTE: the preprocessor keeps apart tokens that would lex as others ----------------------------
@@ -7734,24 +8025,22 @@ def test_a_decayed_member_array_digests_apart_from_its_element():
         assert len(digests) == 2 and digests[0] != digests[1], (tmpl, digests)
 
 
-# CF-DECAY: a row -- of a multi-dimensional local, parameter or global, or a multi-dimensional member array --
-# used as a value, and arithmetic on a multi-dimensional array, would decay to a `T (*)[N]` the value model
-# has no spelling for (its emit declares the array flat, so C would step an element where the source steps a
-# row). Both rails refuse each one; both had read the row's flat element silently.
+# CF-DECAY: arithmetic on a multi-dimensional array, and a multi-dimensional member array used as a value, would
+# decay to a `T (*)[N]` the value model has no spelling for (its emit declares the array flat, so C would step an
+# element where the source steps a row). Both rails refuse each one; both had read the row's flat element silently.
+# A row of scalars used as a value -- `l2[1]`, `m[1]`, `gb[1]`, which this table refused until CSUB-2d -- is the
+# pointer to its first element on both rails now (`_CSUB2W_LOWERED`).
 _DECAY_REFUSED = (
-    "uintptr_t f(void) { uint16_t l2[4][6] = {0}; return (uintptr_t)l2[1] - (uintptr_t)l2; }",
-    "uint16_t *f(void) { static uint16_t l2[4][6]; return l2[1]; }",
     "uintptr_t f(void) { uint16_t l2[4][6] = {0}; return (uintptr_t)(l2 + 1) - (uintptr_t)l2; }",
     "uintptr_t f(uint8_t m[3][5]) { return (uintptr_t)(m + 1) - (uintptr_t)m; }",
-    "uint8_t *f(uint8_t m[3][5]) { return m[1]; }",
-    "uint8_t gb[3][5];\nuint8_t *f(void) { return gb[1]; }",
     "struct s { uint8_t m[2][3]; };\nuint8_t *f(struct s *p) { return (uint8_t *)p->m; }",
 )
 
 
 def test_a_row_used_as_a_value_is_refused_on_both_rails():
     """CF-DECAY: every form in `_DECAY_REFUSED` is refused by both rails (the twin with its refusal status,
-    never a crash) -- each had lowered to a read of the row's flat element."""
+    never a crash) -- each had lowered to a read of the row's flat element. (A row of scalars used as a value lowers
+    since CSUB-2d: `test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails`.)"""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
 
@@ -8484,14 +8773,8 @@ _GAPS_REFUSED = (
     ),
     (
         "uint32_t f(uint32_t i) { uint8_t m[3][5] = {0}; uint8_t *r = (uint8_t *)&m[i % 3u]; return r[1]; }",
-        "partial indexing of a multi-dimensional array",
-        "the address of a row of a multi-dimensional array",
-    ),
-    (
-        "struct s { uint8_t c; uint32_t a[2][3]; };\nstruct s ga[4];\n"
-        "uint32_t f(uint32_t i) { uint32_t *r = ga[i % 4u].a[1]; return r[0]; }",
-        "partial indexing of a struct member array",
-        "partial indexing of a struct member array",
+        ROW_ADDR,
+        ROW_ADDR,
     ),
     (
         "uint32_t g = 5u;\nuint32_t f(uint32_t i) { extern uint32_t g; return g + i; }",
@@ -8516,7 +8799,7 @@ def test_initializer_and_declaration_refusals_on_both_rails():
     excess initializer, an override of an initialized subobject, a string too long for its array, a
     non-character array given a string or an expression, a designator outside its array (past the end, past
     INT_MAX), a nesting past the 64 subobjects both walks bound, an unsized array with nothing to count, a
-    local pointer to an array, a row's address, a partial member-array index, a block-scope `extern` -- and
+    local pointer to an array, a row's address, a block-scope `extern` -- and
     the twin exits with its refusal, never a crash or a truncated walk."""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
@@ -8959,8 +9242,9 @@ def test_postfix_after_parentheses_runs_as_the_original_on_both_rails():
 
 
 # CF-NESTMEM, CF-PAREN: what both rails still refuse, each for the reason the form witnesses -- a member of an
-# array element that is no scalar (a bitfield, a struct, a pointer, an array used as a value) and a member
-# array of a member-array element, whatever the nesting; and a parenthesized DECLARATOR, which neither rail
+# array element that is no scalar (a bitfield, a function pointer; an array used as a value lowers since CSUB-2c,
+# `g[1].m.arr`, a lowered form of `_CSUB2A_LOWERED`) and a member array of a member-array element, whatever the
+# nesting; and a parenthesized DECLARATOR, which neither rail
 # spells: the twin's CF-PAREN rewrite must leave a declaration's parentheses -- after its type, a `*`, a
 # declarator comma, in a for-init or a statement expression, `T (*p)[N]` -- as they are.
 # (the unit, the oracle's refusal, the twin's)
@@ -8971,22 +9255,10 @@ _PAREN_NEST_REFUSED = (
         "array-of-structs non-scalar element field ('.y')",
         "array-of-structs non-scalar element field",
     ),
-    (
-        "struct pt { uint16_t x, y; }; struct seg { struct pt a, b; }; struct top { struct seg s; };\n"
-        "uint32_t f(uint32_t s) { struct top g[2] = {0}; struct pt q = g[1].s.b; return q.x + s; }",
-        "array-of-structs non-scalar element field ('.b')",
-        "array-of-structs non-scalar element field",
-    ),
-    (
-        "struct pt { uint16_t x, y; }; struct hold { uint32_t k; struct pt *p; }; struct seg { struct hold h; };\n"
-        "uint32_t f(uint32_t s) { struct pt q = {1, 2}; struct seg g[2] = {0}; g[1].h.p = &q; return s; }",
-        "array-of-structs non-scalar element field ('.p')",
-        "array-of-structs non-scalar element field",
-    ),
-    (
-        "struct in { uint8_t arr[4]; }; struct seg { struct in m; };\n"
-        "uint32_t f(uint32_t s) { struct seg g[2] = {0}; uint8_t *p = g[1].m.arr; return p[0] + s; }",
-        "array-of-structs non-scalar element field ('.arr')",
+    (  # a function-pointer member (a pointer member lowers since CSUB-2c, `g[1].h.p = &q`)
+        "struct hold { uint32_t k; uint32_t (*fn)(uint32_t); }; struct seg { struct hold h; };\n"
+        "uint32_t f(uint32_t s) { struct seg g[2] = {0}; g[1].h.fn = 0; return s; }",
+        "array-of-structs non-scalar element field ('.fn')",
         "array-of-structs non-scalar element field",
     ),
     (
@@ -9032,10 +9304,10 @@ _PAREN_NEST_REFUSED = (
 
 def test_paren_and_nested_member_refusals_on_both_rails():
     """CF-NESTMEM, CF-PAREN: every form of `_PAREN_NEST_REFUSED` is refused by both rails for the reason it
-    witnesses -- a non-scalar member of an array element at any nesting (a bitfield, a struct, a pointer, an
-    array used as a value), a member array of a member-array element, a parenthesized declarator (after the
-    type, a `*`, a declarator comma, in a for-init, in a statement expression, `T (*p)[N]` for a local) -- and
-    the twin exits with its refusal, never a crash or a rewritten declaration."""
+    witnesses -- a non-scalar member of an array element at any nesting (a bitfield, a function pointer, an
+    array used as a value), a member array of a member-array element, a parenthesized declarator
+    (after the type, a `*`, a declarator comma, in a for-init, in a statement expression, `T (*p)[N]` for a
+    local) -- and the twin exits with its refusal, never a crash or a rewritten declaration."""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
 
@@ -9493,6 +9765,1474 @@ def test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails():
     )
 
 
+def test_a_macro_invocation_runs_across_lines_alike_on_both_rails():
+    """CSUB-1. A new-line is white space inside a function-like macro's invocation (C11 6.10.3p10): an argument list
+    still open at the end of a line continues on the next, and a function-like macro's name that ends a line is invoked
+    by a `(` that opens the next line that is not blank. Both rails had refused the first (`unterminated macro ...`)
+    and left the second uninvoked. Both now join the lines an invocation takes and lower the unit digest-equal; each
+    line after keeps its own number; the joined line is held to the line bound; and both refuse alike an argument list
+    the unit ends inside, a directive where the arguments continue (6.10.3p11 leaves it undefined) and `__LINE__` on a
+    continued line, which Clang and GCC give its own line and neither rail tracks per token."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = "#include <stdint.h>\n#define M(a, b) ((a) + (b))\n#define F(x) (x)\n"
+    summary = _lowers_alike(
+        exe,
+        head
+        + "uint32_t f(uint32_t x) { return M(x,\n  1u) + F\n\n  (2u) + M(\n M(x,\n 3u), 4u); }\n",
+    )
+    assert "funcs=1" in summary, summary
+    # `__LINE__` on the invocation's first line, and after it: each line keeps its own number
+    src = (
+        head
+        + "uint32_t f(void) { return M(__LINE__,\n 1u); }\nuint32_t g(void) { return __LINE__; }\n"
+    )
+    _lowers_alike(exe, src)
+    out = _cpp.preprocess(src)
+    lines = out.splitlines()
+    first = next(k for k, ln in enumerate(lines) if ln.startswith("uint32_t f("))
+    assert lines[first] == "uint32_t f(void){return((4)+(1u));}" and lines[first + 1] == "", out
+    assert "return 6;" in lines[first + 2], out
+    if exe is not None:
+        r = subprocess.run(
+            [exe, "--emit-cpp", "/dev/stdin"], input=src, capture_output=True, text=True
+        )
+        assert r.returncode == 0 and "return 6;" in r.stdout and "((4)+(1u))" in r.stdout, (
+            r.stdout,
+            r.stderr,
+        )
+    # a name the next line does not open with `(` is itself
+    _lowers_alike(
+        exe,
+        "#include <stdint.h>\n#define F(x) (x)\nuint32_t F = 1u;\nuint32_t g(void) { return F\n; }\n",
+    )
+    body = "uint32_t f(uint32_t x) { return M(x,\n"
+    _refused_alike(exe, head + body, "unterminated macro argument list")
+    _refused_alike(
+        exe,
+        head + body + "#define Q 1u\n  1u); }\n",
+        "preprocessing directive inside macro arguments",
+    )
+    _refused_alike(
+        exe, head + body + "  __LINE__); }\n", "__LINE__ on a continued line of a macro invocation"
+    )
+    # the joined line is held to the bound each line is: 8 190 bytes
+    first = "uint32_t f(uint32_t x) { return M(x"
+    arg = "+1u" * ((8190 - len(first) - 8) // 3)
+    _lowers_alike(exe, head + first + ",\n" + arg + "); }\n")
+    _refused_alike(exe, head + first + arg + ",\n" + arg + "); }\n", "preprocessor line too long")
+
+
+def _clang_accepts(src: str) -> bool | None:
+    """Whether clang (C23, syntax only) accepts `src`; None where no clang is on PATH."""
+    clang = shutil.which("clang")
+    if clang is None:
+        return None
+    r = subprocess.run(
+        [clang, "-std=c23", "-fsyntax-only", "-x", "c", "-"],
+        input=src,
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0
+
+
+def test_a_static_assertion_is_checked_at_file_block_and_member_scope_on_both_rails():
+    """CSUB-1. `_Static_assert ( constant-expression , string-literal ) ;` (C11 6.7.10) and C23's `static_assert`, its
+    message optional, at file scope, in a block and among an aggregate's members. Both rails had read one as a call of
+    a function of that name (the twin: `R18: call to undefined function _Static_assert`) or refused it at file scope
+    (`expected a type`). The expression is an integer constant expression folded on the target -- `sizeof`/`_Alignof`
+    of the unit's types laid out so far, enumerators, literals -- and one that holds declares nothing: the unit lowers
+    digest-equal to the one without it. One that is zero is refused alike, `static assertion failed`; one that is no
+    integer constant expression, or whose message is no string literal, is refused alike too. Clang witnesses each
+    verdict. `sizeof` of an object is not folded in one yet (the folder reads types, not a block's objects): refused
+    alike, as no integer constant expression."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    decls = (
+        "#include <stdint.h>\n"
+        "#define SA(c, m) _Static_assert(c, m)\n"
+        "struct hdr {{ uint32_t magic; uint16_t ver; {m}uint16_t flags; uint64_t len; }};\n"
+        "enum {{ K = 3 }};\n"
+        "{f}"
+        "uint32_t f(uint32_t x) {{ {b}return x + K; }}\n"
+    )
+    member = '_Static_assert(sizeof(uint16_t) == 2, "u16"); '
+    file_scope = (
+        '_Static_assert(sizeof(struct hdr) == 16, "hdr");\n'
+        "static_assert(_Alignof(struct hdr) == 8);\n"
+        'static_assert(K * 2 == 6, "an enumerator" " and two literals");\n'
+        'SA(sizeof(struct hdr) ==\n   16, "across lines");\n'
+    )
+    block = '_Static_assert(sizeof(uint32_t) == 4, "x"); static_assert(1); '
+    asserted = decls.format(m=member, f=file_scope, b=block)
+    plain = decls.format(m="", f="", b="")
+    summary = _lowers_alike(exe, asserted)
+    assert "funcs=1" in summary, summary
+    assert summary == _lowers_alike(exe, plain), (
+        summary,
+        "an assertion that holds declared something",
+    )
+    assert _clang_accepts(asserted) in (True, None)
+    failing = (
+        decls.format(m="", f='_Static_assert(sizeof(struct hdr) == 8, "no");\n', b=""),
+        decls.format(m="", f="", b="static_assert(K == 4); "),
+        decls.format(m='_Static_assert(sizeof(uint16_t) == 4, "m"); ', f="", b=""),
+        decls.format(m="", f="static_assert(0 && K);\n", b=""),
+    )
+    for src in failing:
+        _refused_alike(exe, src, "static assertion failed", phase="PARSE")
+        assert _clang_accepts(src) in (False, None), src
+    for src, why in (
+        ('int n;\n_Static_assert(n, "n");\n', "not an integer constant expression"),
+        (
+            'struct s { int a; static_assert(sizeof(struct s) == 4, "s"); };\n',
+            "not an integer constant expression",
+        ),
+        ("_Static_assert(1, 2);\n", "expected a string literal"),
+    ):
+        _refused_alike(exe, src, why, phase="PARSE")
+        assert _clang_accepts(src) in (False, None), src
+    # the honest limit: `sizeof` of a block's object is no constant either rail folds yet (Clang folds it)
+    _refused_alike(
+        exe,
+        'int f(int x) { _Static_assert(sizeof x == 4, "x"); return x; }\n',
+        "not an integer constant expression",
+        phase="PARSE",
+    )
+
+
+#: A `#define` line of the frontend's standard headers (`stdheaders`): the macro's name, and its parameters when it
+#: is function-like.
+_STD_DEFINE = re.compile(r"^#define (\w+)(\([^)]*\))?", re.M)
+#: The macros whose type C gives one way and Clang's freestanding headers another (`stdheaders`' docstring): C's is
+#: the type of an object of the macro's type after the integer promotions, an `int` where Clang's spells `U`.
+_CLANG_FREESTANDING_TYPES = {
+    "UINT8_C",
+    "UINT16_C",
+    "UINT8_MAX",
+    "UINT16_MAX",
+    "UINT_LEAST8_MAX",
+    "UINT_LEAST16_MAX",
+}
+_CLANG_FREESTANDING_TYPES_WIDE16 = {"WCHAR_MIN", "WCHAR_MAX", "WINT_MIN", "WINT_MAX"}
+
+
+def _std_probes(abi) -> list:
+    """Each macro the frontend's standard headers define on `abi`'s target, read from the oracle's own texts, as
+    (header, name, probe): the name, or a function-like one applied (`INT64_C(1)`, `offsetof(struct ...)`)."""
+    from bcir.frontends.cfront import stdheaders
+
+    out = []
+    for h in stdheaders.NAMES:
+        for m in _STD_DEFINE.finditer(stdheaders.header_text(h, abi)):
+            name = m.group(1)
+            if name.startswith("__BCIR_"):  # the include guard
+                continue
+            if name == "offsetof":
+                probe = "offsetof(struct __probe, b[1])"
+            elif name.startswith("ckd_"):  # <stdckdint.h>'s three operands (CSUB-3)
+                probe = f"{name}(r, a, b)"
+            else:
+                probe = f"{name}(1)" if m.group(2) else name
+            out.append((h, name, probe))
+    return out
+
+
+def _std_probe_unit(probes, libc: bool = True) -> str:
+    """The probe unit: every header included -- but `<math.h>` only where a C library is (`libc`): a freestanding
+    implementation has none, and its constants are checked against the host's -- then one line per probe."""
+    from bcir.frontends.cfront import stdheaders
+
+    head = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if libc or h != "math.h")
+    return head + "".join(f"@ {k} @ {probe}\n" for k, (_h, _n, probe) in enumerate(probes))
+
+
+_PROBE_LINE = re.compile(r"^\s*@\s*(\d+)\s*@(.*)$")
+
+
+def _probe_expansions(text: str) -> dict:
+    """Probe index -> the token list its line expanded to, from a preprocessed probe unit."""
+    out = {}
+    for ln in text.splitlines():
+        m = _PROBE_LINE.match(ln)
+        if m:
+            out[int(m.group(1))] = _cpp._tokens(m.group(2))
+    return out
+
+
+def _clang_expansions(src: str, abi, hosted: bool) -> dict | None:
+    """Clang's expansion of each probe in `src` for the target `abi` (`TargetABI.clang_target`; None: the host)."""
+    clang = shutil.which("clang")
+    if clang is None:
+        return None
+    cmd = [clang, "-std=c23", "-E", "-P", "-x", "c", "-"]
+    if abi is not None:
+        cmd[1:1] = abi.clang_target
+    if not hosted:
+        cmd.insert(1, "-ffreestanding")
+    r = subprocess.run(cmd, input=src, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2000:]
+    return _probe_expansions(r.stdout)
+
+
+def _clang_syntax(src: str, abi, hosted: bool) -> str:
+    """Clang's verdict on `src` (C23, syntax only) for the target `abi` (None: the host): "" accepted, else its
+    diagnostics."""
+    cmd = [shutil.which("clang"), "-std=c23", "-fsyntax-only", "-x", "c", "-"]
+    if abi is not None:
+        cmd[1:1] = abi.clang_target
+    if not hosted:
+        cmd.insert(1, "-ffreestanding")
+    r = subprocess.run(cmd, input=src, capture_output=True, text=True)
+    return "" if r.returncode == 0 else r.stderr[-4000:]
+
+
+def _glibc_host_target() -> str | None:
+    """The target of the matrix this host is, where its C library is glibc (`_HOST_TARGETS`): the one whose
+    expansions the host's own headers are held to. None on any other host (Windows, macOS, musl)."""
+    import platform
+
+    if not sys.platform.startswith("linux") or platform.libc_ver()[0] != "glibc":
+        return None
+    return _HOST_TARGETS.get(platform.machine().lower())
+
+
+def _is_int_expansion(toks: list) -> bool:
+    """An integer constant expression of the headers' own shape: decimal constants, signs and parentheses."""
+    return bool(toks) and all(re.fullmatch(r"[0-9]+[uUlL]*|[()+\-*]", t) for t in toks)
+
+
+def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_target():
+    """CSUB-1. A `#include <...>` no search path holds had been read as nothing on both rails -- the standard *types*
+    modeled, none of the *macros* (`UINT64_C(1)` a call of an undefined function, `INT_MAX` an undeclared name). Both
+    now read the text of `<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<limits.h>`, `<float.h>`, `<iso646.h>`,
+    `<stdalign.h>` and `<math.h>`'s constants for the target (`stdheaders`; the twin's `builtin_header`). On each of
+    the five targets, every macro those texts define expands to the same tokens on both rails; each integer one
+    equals Clang's in value and type, read through the target's own headers (`--target`, freestanding), but where C
+    types it otherwise than Clang's freestanding headers do (`UINT8_C`, `UINT16_C`, Windows' `wchar_t` and `wint_t`
+    limits: value only); every other one expands to Clang's tokens; and on a glibc host, the C library's headers
+    agree on what the freestanding ones leave to it -- `MB_LEN_MAX`, those types, and `<math.h>`'s constants -- for
+    the target the host is (`_glibc_host_target`): an AArch64 host's glibc spells an unsigned `wchar_t`'s limits,
+    an x86-64 host's a signed one's."""
+    from bcir.frontends.cfront import stdheaders
+    from bcir.frontends.cfront.abi import TARGETS
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    host, hosted_checked = _glibc_host_target(), False
+    for name, abi in TARGETS.items():
+        probes = _std_probes(abi)
+        unit = "struct __probe { int a; short b[4]; };\n" + _std_probe_unit(probes)
+        ours = _probe_expansions(_cpp.preprocess(unit, abi=abi))
+        assert len(ours) == len(probes), (name, len(ours), len(probes))
+        if exe is not None:
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "probe.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(unit)
+                r = subprocess.run(
+                    [exe, "--target", name, "--emit-cpp", path], capture_output=True, text=True
+                )
+            assert r.returncode == 0, r.stdout + r.stderr
+            twin = _probe_expansions(r.stdout)
+            diffs = [(probes[k][1], ours[k], twin.get(k)) for k in ours if twin.get(k) != ours[k]]
+            assert not diffs, (name, diffs[:6])
+        fs_unit = "struct __probe { int a; short b[4]; };\n" + _std_probe_unit(probes, libc=False)
+        clang = _clang_expansions(fs_unit, abi, hosted=False)
+        if clang is None:
+            continue
+        asserts, mismatched = [], []
+        for k, (h, macro, probe) in enumerate(probes):
+            e = " ".join(ours[k])
+            if _is_int_expansion(ours[k]):
+                if macro == "MB_LEN_MAX":
+                    continue  # the hosted C library's: checked against glibc below
+                if (
+                    macro == "BOOL_WIDTH"
+                ):  # C23 5.2.4.2.1 fixes it at 1; Clang 18 reported 8, Clang 23 reports 1
+                    assert ours[k] == ["1"], ours[k]
+                    continue
+                typed = macro not in _CLANG_FREESTANDING_TYPES and not (
+                    abi.wchar_size == 2 and macro in _CLANG_FREESTANDING_TYPES_WIDE16
+                )
+                cond = f"({probe}) == ({e})"
+                if typed:
+                    cond += (
+                        f" && __builtin_types_compatible_p(__typeof__({probe}), __typeof__({e}))"
+                    )
+                asserts.append(f'_Static_assert({cond}, "{macro}");')
+            elif h != "math.h" and clang.get(k) != ours[k]:
+                mismatched.append((macro, ours[k], clang.get(k)))
+        assert not mismatched, (name, mismatched)
+        includes = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if h != "math.h")
+        verdict = _clang_syntax(includes + "\n".join(asserts) + "\n", abi, hosted=False)
+        assert not verdict, (name, verdict)
+        if name == host:  # the host's C library: what the freestanding headers leave to it
+            hosted_checked = True
+            hosted = _clang_expansions(unit, abi, hosted=True)
+            math = [
+                (n, ours[k], hosted.get(k)) for k, (h, n, _p) in enumerate(probes) if h == "math.h"
+            ]
+            assert all(o == c for _n, o, c in math), math
+            checks = [
+                f"#if defined({n}) && {int(n != 'BOOL_WIDTH')}\n_Static_assert(({p}) == ({' '.join(ours[k])}) && __builtin_types_compatible_p("
+                f'__typeof__({p}), __typeof__({" ".join(ours[k])})), "{n}");\n#endif'
+                for k, (_h, n, p) in enumerate(probes)
+                if _is_int_expansion(ours[k])
+            ]
+            verdict = _clang_syntax(includes + "\n".join(checks) + "\n", abi, hosted=True)
+            assert not verdict, (name, verdict)
+    if host is not None and shutil.which("clang"):
+        assert hosted_checked, (
+            f"the glibc host is {host}, and no target of the matrix was checked against it"
+        )
+
+
+def test_the_standard_headers_lay_out_their_types_as_clang_on_every_target():
+    """CSUB-1. The typedefs the standard headers bring -- `ptrdiff_t`, `max_align_t`, `intmax_t`, `uintmax_t`, the
+    `int_leastN_t` family -- and `offsetof` lay out on each target as Clang lays them out there: Clang's sizes and
+    alignments, read from its own compile for the target, are asserted (`_Static_assert`) in a unit both rails compile
+    for it, R1-R18 clean. `max_align_t` is the case the rails could not have guessed: 32 bytes aligned to 16 on the
+    LP64 Linux targets, 24 aligned to 8 on i386 (Clang aligns its `long long` member as `__alignof__` reads it), a
+    `double` on Windows."""
+    from bcir.frontends.cfront.abi import TARGETS
+
+    clang = shutil.which("clang")
+    if clang is None:
+        return
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    exprs = {
+        "s_max": "sizeof(max_align_t)",
+        "a_max": "_Alignof(max_align_t)",
+        "s_ptrdiff": "sizeof(ptrdiff_t)",
+        "s_intmax": "sizeof(intmax_t)",
+        "s_uintmax": "sizeof(uintmax_t)",
+        "s_least8": "sizeof(int_least8_t)",
+        "s_least64": "sizeof(uint_least64_t)",
+        "o_tail": "offsetof(struct __probe, tail)",
+        "o_b2": "offsetof(struct __probe, b[2])",
+        "o_in": "offsetof(struct __probe, in[1].y)",
+        "s_probe": "sizeof(struct __probe)",
+    }
+    probe = (
+        "#include <stdint.h>\n#include <stddef.h>\n"
+        "struct __inner { char x; long long y; };\n"
+        "struct __probe { char a; short b[3]; max_align_t m; struct __inner in[2]; double tail; };\n"
+    )
+    for name, abi in TARGETS.items():
+        src = probe + "".join(f"int {k} = {e};\n" for k, e in exprs.items())
+        r = subprocess.run(
+            [
+                clang,
+                *abi.clang_target,
+                "-std=c23",
+                "-ffreestanding",
+                "-S",
+                "-emit-llvm",
+                "-o",
+                "-",
+                "-x",
+                "c",
+                "-",
+            ],
+            input=src,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, r.stderr[-2000:]
+        values = dict(re.findall(r"^@(\w+) = (?:dso_local )?global i32 (\d+)", r.stdout, re.M))
+        assert set(values) == set(exprs), (name, values)
+        unit = probe + "".join(
+            f'_Static_assert({e} == {values[k]}, "{k}");\n' for k, e in exprs.items()
+        )
+        unit += "uint32_t f(uint32_t x) { return x + (uint32_t)sizeof(max_align_t); }\n"
+        for mode in ("-fsyntax-only", "--fallback"):
+            oracle = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "bcir.frontends.cfront",
+                    "--target",
+                    name,
+                    mode,
+                    "/dev/stdin",
+                ],
+                input=unit,
+                capture_output=True,
+                text=True,
+            )
+            assert oracle.returncode == 0, (name, mode, oracle.stdout + oracle.stderr, values)
+        if exe is not None:
+            assert _twin_line(exe, unit, "--target", name)[0] == 0, (
+                name,
+                _twin_line(exe, unit, "--target", name),
+            )
+
+
+# CSUB-2a: units each rail lowers to one digest, and the `_Alignas(N)` each emit must spell (the function-level emit for a
+# block object, the linkable one for a global)
+_CSUB2_ALIGN_LOWERED = (
+    (
+        "uint32_t f(uint32_t k) { _Alignas(64) uint8_t b[64]; alignas(16) uint32_t w = k; b[0] = (uint8_t)k;"
+        " return b[0] + w; }",
+        ("_Alignas(64) uint8_t", "_Alignas(16) uint32_t"),
+        (),
+    ),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(16) _Alignas(64) uint8_t b[8]; static _Alignas(32) uint32_t s;"
+        " b[0] = (uint8_t)k; s += k; return b[0] + s; }",
+        ("_Alignas(64) uint8_t", "static _Alignas(32) uint32_t"),
+        (),
+    ),
+    ("uint32_t f(uint32_t k) { _Alignas(0) uint32_t x = k; return x; }", (), ()),
+    (
+        "static _Alignas(64) uint8_t g_buf[64] = {1, 2}; _Alignas(16) _Thread_local uint32_t g_t;\n"
+        "uint32_t f(uint32_t k) { return k + g_buf[1] + g_t; }",
+        (),
+        (
+            "static _Alignas(64) uint8_t g_buf[64] = {1, 2};",
+            "_Alignas(16) _Thread_local uint32_t g_t;",
+        ),
+    ),
+    (
+        "extern _Alignas(8) uint32_t g_e;\nuint32_t f(uint32_t k) { return k + g_e; }",
+        (),
+        ("extern _Alignas(8) uint32_t g_e;",),
+    ),
+    (
+        "typedef uint32_t (*fn)(const uint8_t d[4], uint32_t n);\n"
+        "static uint32_t s4(const uint8_t d[4], uint32_t n) { return d[0] + d[3] + n; }\n"
+        "uint32_t f(uint32_t k) { uint8_t d[4] = {1, 2, 3, 4}; fn g = s4; return g(d, k); }",
+        (),
+        (),
+    ),
+)
+# ... and the forms both refuse, each for one reason; `clang` -- whether C forbids it, so Clang refuses it too
+_CSUB2_ALIGN_REFUSED = (
+    ("uint32_t f(uint32_t k) { _Alignas(3) uint32_t x = k; return x; }", "lower.ALIGN_POW2", True),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(8192) uint32_t x = k; return x; }",
+        "lower.ALIGN_LARGE",
+        False,
+    ),
+    ("uint32_t f(uint32_t k) { _Alignas(2) uint32_t x = k; return x; }", "lower.ALIGN_WEAK", True),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(4) char c = 1, *p = &c; return k + (uint32_t)*p; }",
+        "lower.ALIGN_WEAK",
+        True,
+    ),
+    (
+        "struct s { uint64_t a; };\nuint32_t f(uint32_t k) { _Alignas(4) struct s v; v.a = k; return (uint32_t)v.a; }",
+        "lower.ALIGN_WEAK",
+        True,
+    ),
+    ("_Alignas(2) uint32_t g;\nuint32_t f(uint32_t k) { return k + g; }", "lower.ALIGN_WEAK", True),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(double) uint32_t x = k; return x; }",
+        "lower.ALIGN_TYPE",
+        False,
+    ),
+    (
+        "typedef _Alignas(8) uint32_t al_t;\nuint32_t f(uint32_t k) { return k; }",
+        "lower.ALIGN_PLACE",
+        True,
+    ),
+    ("uint32_t f(_Alignas(8) uint32_t k) { return k; }", "lower.ALIGN_PLACE", True),
+    ("_Alignas(8) uint32_t f(uint32_t k) { return k; }", "lower.ALIGN_PLACE", True),
+    ("uint32_t f(uint32_t k) { return (_Alignas(8) uint32_t)k; }", "lower.ALIGN_PLACE", True),
+    (
+        "uint32_t f(uint32_t k) { return k + (uint32_t)sizeof(_Alignas(8) uint32_t); }",
+        "lower.ALIGN_PLACE",
+        True,
+    ),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(64) uint32_t v[k]; v[0] = 1u; return v[0]; }",
+        "lower.ALIGN_VLA",
+        False,
+    ),
+    (
+        "_Alignas(16) struct s { uint32_t a; } g_s;\nuint32_t f(uint32_t k) { return k + g_s.a; }",
+        "lower.ALIGN_AGG",
+        False,
+    ),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(16) struct s { uint32_t a; } v; v.a = k; return v.a; }",
+        "lower.ALIGN_AGG",
+        False,
+    ),
+    (
+        "typedef uint32_t (*fn)(size_t n, const uint8_t a[n]);\nuint32_t f(uint32_t k) { return k; }",
+        "lower.FP_PARAM_VLA",
+        False,
+    ),
+    (
+        "typedef uint32_t (*fn)(const uint8_t m[2][3]);\nuint32_t f(uint32_t k) { return k; }",
+        "lower.FP_PARAM_ROWS",
+        False,
+    ),
+    (
+        "typedef uint8_t row_t[3];\ntypedef uint32_t (*fn)(row_t m[2]);\nuint32_t f(uint32_t k) { return k; }",
+        "lower.FP_PARAM_ROWS",
+        False,
+    ),
+)
+
+
+def test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails():
+    """CSUB-2a. `_Alignas(N)` / `alignas(N)` (C11 6.7.5) on an object -- a local, several declarators off one specifier,
+    the strictest of two specifiers, a block static, a file-scope object of any storage class -- lowers on both rails to
+    one digest, and each emit spells it where the object is declared: the function-level emit a block object's, the
+    linkable emit a global's (the oracle had read a file-scope one and dropped it; the twin refused it as `unknown
+    type`). A function-pointer type's parameter declared as an array is a pointer (6.7.6.3p7) on both. Every other
+    form is refused alike, for one reason: an alignment that is no power of two, past 4096, weaker than the type's or
+    of a type name; one on a typedef, a parameter, a function, a type name, a variable-length array or a declaration
+    that defines a struct; and an array-of-arrays or variable-length parameter of a function-pointer type. Where C
+    forbids the form, Clang refuses it too."""
+    from bcir.frontends.cfront import lower as low
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n#include <stdalign.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, local, linked) in enumerate(_CSUB2_ALIGN_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            text = "\n".join(r.emitted.values())
+            assert all(a in text for a in local), (body, text[-600:])
+            link = emit_linkable(r.lowered, r.emitted)
+            assert all(a in link for a in linked), (body, link[-600:])
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            assert all(a in emit for a in local), (body, emit[-600:])
+            twin_link = _twin_linkable(path)
+            assert all(a in twin_link for a in linked), (body, twin_link[-600:])
+        clang = shutil.which("clang") if _CC else None
+        for n, (body, name, forbidden) in enumerate(_CSUB2_ALIGN_REFUSED):
+            why = getattr(low, name.split(".", 1)[1])
+            src = head + body + "\n"
+            assert _oracle_refusal(src) == why, (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+            if forbidden and clang:
+                cr = subprocess.run(
+                    [clang, "-std=c23", "-fsyntax-only", path], capture_output=True, text=True
+                )
+                assert cr.returncode != 0, (body, "Clang accepts what C forbids")
+
+
+# CSUB-2b: a string literal in a static's image -- (unit, what both rails' emits spell for its statics). Each entry is
+# the literal's canonical spelling (`lower._kstr`): printable ASCII but `"`, `\\` and `?` as itself, every other unit
+# a three-digit octal escape, whatever escapes and pieces the source spells it with
+_CSUB2_STR_LOWERED = (
+    (
+        'const char *f(uint32_t k) { static const char *const t[] = {"zero", "one", 0}; return t[k % 3u]; }',
+        ('{"zero", "one"}',),
+    ),
+    (
+        'uint32_t f(uint32_t k) { static const char *const t[] = {"a\\tb\\x41\\101\\"\\\\", "?" "?=", "\\x4" "1", ((""))};'
+        " return (uint32_t)t[k & 3u][0]; }",
+        ('{"a\\011bAA\\042\\134", "\\077\\077=", "\\0041", ""}',),
+    ),
+    (
+        "struct kw { const char *text; uint32_t id; };\n"
+        'uint32_t f(uint32_t k) { static const struct kw t[] = {{"if", 1u}, "else", 2u, [3] = {.id = 4u, .text = "do"}};'
+        " return t[k & 3u].id; }",
+        ('{{"if", 1u}, {"else", 2u}, [3] = {"do", 4u}}',),
+    ),
+    (
+        'uint32_t f(uint32_t k) { static char *p = "mut"; static const char *q[2] = {[0] = "x", [0] = 0, [1] = "y"};'
+        " return k + (uint32_t)p[0] + (q[0] == 0); }",
+        ('= "mut";', '{[1] = "y"}'),
+    ),
+)
+# ... and the forms refused: (unit, the reason's name in `lower`, whether C forbids it -- Clang refuses it too)
+_CSUB2_STR_REFUSED = (
+    (
+        'uint32_t f(void) { static const uint8_t *t[] = {"ab"}; return t[0][0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const signed char *t[] = {"ab"}; return (uint32_t)t[0][0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        "struct e { const unsigned char *n; };\n"
+        'uint32_t f(void) { static const struct e t[] = {{"a"}}; return t[0].n[0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const void *t[] = {"ab"}; return t[0] != 0; }',
+        "STATIC_STR",
+        False,
+    ),
+    ('uint32_t f(void) { static const char **t = "ab"; return t != 0; }', "STATIC_STR", False),
+    ('uint32_t f(void) { static _Bool b = "ab"; return b; }', "STATIC_STR", False),
+    ('uint32_t f(void) { static char c = "ab"; return (uint32_t)c; }', "STATIC_STR", True),
+    (
+        'uint32_t f(void) { static const uintptr_t u = "ab"; return (uint32_t)u; }',
+        "STATIC_STR",
+        True,
+    ),
+    (
+        'uint32_t f(void) { static const wchar_t *const t[] = {L"ab"}; return (uint32_t)t[0][0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {u8"ab"}; return (uint32_t)t[0][0]; }',
+        "STATIC_STR",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {"ab" + 1}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {(const char *)"ab"}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {1 ? "a" : "b"}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {(0, "a")}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    # an entry that evaluates to a literal is not the literal: Clang takes `("a", "b")` as "b"
+    (
+        'uint32_t f(void) { static const char *const t[] = {("a", "b")}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+    (
+        'uint32_t f(void) { static const char *const t[] = {_Generic(0, int: "a")}; return (uint32_t)t[0][0]; }',
+        "_NOT_CONSTANT",
+        False,
+    ),
+)
+
+
+def test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2b. A string literal -- in any redundant parentheses, of any pieces -- is the address of its array, an
+    address constant (C11 6.6p9), and so an entry of a static's image: a block-scope `static const char *const t[]`,
+    a pointer member of a static table's record, by braces, brace elision or designators, a scalar static, a later
+    store over an earlier one. Both rails spell each entry by one canonical spelling (`lower._kstr`), so the image
+    and the digest over it agree; `?` is an octal escape, so a trigraph `-std=c11` reads is never spelled. It is one
+    only where C converts that address without a diagnostic -- a pointer to plain `char`, from a literal of no prefix:
+    every other slot or prefix is refused alike, for one reason (`STATIC_STR`), and an address computed from the
+    literal is no constant here (`_NOT_CONSTANT`). `cfront_csub2_strtab.c` runs as the original on each rail's emit
+    (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
+    from bcir.frontends.cfront import lower as low
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, spelled) in enumerate(_CSUB2_STR_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            text = "\n".join(r.emitted.values())
+            assert all(a in text for a in spelled), (body, text[-700:])
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            assert all(a in emit for a in spelled), (body, emit[-700:])
+        clang = shutil.which("clang") if _CC else None
+        for n, (body, name, forbidden) in enumerate(_CSUB2_STR_REFUSED):
+            why = getattr(low, name)
+            src = head + body + "\n"
+            assert _oracle_refusal(src) == why, (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+            if forbidden and clang:
+                cr = subprocess.run(
+                    [clang, "-std=c23", "-fsyntax-only", path], capture_output=True, text=True
+                )
+                assert cr.returncode != 0, (body, "Clang accepts what C forbids")
+        if exe is None:
+            return
+        _linkable_c11_runs_as_the_original(d, "cfront_csub2_strtab.c", "csub2_strtab")
+
+
+# CSUB-2b: an untagged struct or union a block declaration defines -- (unit, what both rails' emits spell). Each emit
+# opens the function with the type's typedef, its members as the source spells them, and names the type by it
+_CSUB2_AGG_LOWERED = (
+    (
+        "uint32_t f(uint32_t k) { static const struct { uint16_t bit; uint16_t w; } t[] = {{1u, 3u}, {2u, 5u}};"
+        " return t[k & 1u].w; }",
+        ("typedef struct { uint16_t bit ; uint16_t w ; } __bcir_anon", "{{1u, 3u}, {2u, 5u}}"),
+    ),
+    (
+        "uint32_t f(uint32_t k) { union { uint32_t w; uint8_t b[4]; } u; u.w = k; return u.b[0]; }",
+        ("typedef union { uint32_t w ; uint8_t b [ 4 ] ; } __bcir_anon",),
+    ),
+    (
+        "uint32_t f(uint32_t k) { struct { struct { uint32_t a; } in; uint32_t b; } x = {{k}, 2u}, *p = &x;"
+        " __typeof__(x) y = x; return y.in.a + p->b; }",
+        ("typedef struct { struct { uint32_t a ; } in ; uint32_t b ; } __bcir_anon",),
+    ),
+    (
+        "uint32_t f(uint32_t k) { for (struct { uint32_t i, n; } s = {0u, k & 7u}; s.i < s.n; s.i++) k += s.i;"
+        " return k; }",
+        ("typedef struct { uint32_t i , n ; } __bcir_anon",),
+    ),
+)
+# ... and the forms refused: (unit, the reason's name in `lower`)
+_CSUB2_AGG_REFUSED = (
+    (
+        "uint32_t f(uint32_t k) { struct t { uint32_t a; } x = {k}; return x.a; }",
+        "AGG_BLOCK_TAGGED",
+    ),
+    (
+        "uint32_t f(uint32_t k) { static const union u { uint32_t a; } x[] = {{1u}}; return x[0].a + k; }",
+        "AGG_BLOCK_TAGGED",
+    ),
+    ("uint32_t f(void) { return (uint32_t)sizeof(struct { uint32_t a; }); }", "AGG_TYPE_NAME"),
+    ("uint32_t f(void *p) { return ((struct { uint32_t a; } *)p)->a; }", "AGG_TYPE_NAME"),
+    ("uint32_t f(struct { uint32_t a; } *p) { return p->a; }", "AGG_TYPE_NAME"),
+    ("uint32_t f(uint32_t k) { return (struct { uint32_t a; }){k}.a; }", "AGG_TYPE_NAME"),
+    (
+        "uint32_t f(uint32_t k) { __typeof__(struct { uint32_t a; }) x = {k}; return x.a; }",
+        "AGG_TYPE_NAME",
+    ),
+    ("uint32_t f(uint32_t k) { _Atomic(struct { uint32_t a; }) x; return k; }", "AGG_TYPE_NAME"),
+    (
+        "struct s { const struct { uint32_t a; } m; };\nuint32_t f(uint32_t k) { return k; }",
+        "AGG_TYPE_NAME",
+    ),
+    (
+        "uint32_t f(uint32_t k) { _Alignas(16) struct { uint32_t a; } x = {k}; return x.a; }",
+        "ALIGN_AGG",
+    ),
+)
+
+
+def test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2b. An untagged struct or union a block declaration defines, `static const struct { ... } t[] = {...}` --
+    static or automatic, a union, one holding an untagged member, several declarators off one definition, a `for`
+    declaration's -- lowers on both rails to one digest. Nothing else can name its type (C11 6.7.2.3p6), so each emit
+    opens the function with a typedef of it, its members as the source spells them, under a name reserved to the
+    implementation, `__bcir_anonN`, and names every object, temp and copy of the type by it. A tag defined in a block
+    is refused alike (`AGG_BLOCK_TAGGED`), and so is a struct or union defined anywhere else a type is named -- a cast,
+    `sizeof`, a parameter, a compound literal, `typeof`, `_Atomic(...)`, a member's qualified type (`AGG_TYPE_NAME`).
+    `cfront_csub2_untagged.c` runs as the original on each rail's emit (`_ABI`), and each rail's linkable artifact of
+    it, built as C11, returns what the original does."""
+    from bcir.frontends.cfront import lower as low
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, spelled) in enumerate(_CSUB2_AGG_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            text = "\n".join(r.emitted.values())
+            assert all(a in text for a in spelled) and "$anon" not in text, (body, text[-700:])
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            assert all(a in emit for a in spelled) and "$anon" not in emit, (body, emit[-700:])
+        for n, (body, name) in enumerate(_CSUB2_AGG_REFUSED):
+            why = getattr(low, name)
+            src = head + body + "\n"
+            assert _oracle_refusal(src) == why, (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_untagged.c", "csub2_untagged")
+
+
+# CSUB-2c: a pointer member of an array element -- read as a value of its pointer type, subscripted, dereferenced,
+# followed with `->`, stored and stored through, at any depth of the element's nested members
+_CSUB2_PTRLEAF_LOWERED = (
+    "struct kw { const char *text; uint32_t id; };\n"
+    'static const struct kw g_kw[] = {{"if", 1u}, {"else", 2u}};\n'
+    "uint32_t f(uint32_t k) { const char *t = g_kw[k & 1u].text; return (uint32_t)(uint8_t)t[0] + g_kw[k & 1u].id; }",
+    "struct note { uint32_t code; const char *message; }; struct diag { struct note notes[4]; uint32_t n; };\n"
+    "uint32_t f(const struct diag *d, uint32_t i) {"
+    " return d->notes[i & 3u].message ? (uint32_t)(uint8_t)d->notes[i & 3u].message[0] : 0u; }",
+    "struct str { const char *s; size_t n; }; struct slot { struct str name; uint32_t id; };\n"
+    "uint32_t f(const struct slot *t, uint32_t i) { return t[i].name.s ? (uint32_t)(uint8_t)t[i].name.s[0] : 0u; }",
+    "struct n { struct n *next; uint32_t v; };\n"
+    "uint32_t f(struct n *t, uint32_t i, uint32_t v) { t[i].next->v = v; return t[i].next ? t[i].next->v : 0u; }",
+    "struct e { uint32_t *p; };\n"
+    "uint32_t f(struct e *t, uint32_t i, uint32_t v) { t[i].p[1] = v; *t[i].p += v; return *t[i].p + t[i].p[1]; }",
+    "struct pnl { const uint32_t *a; };\n"
+    "uint32_t f(const uint32_t *panel) { static struct pnl pre[2]; pre[0].a = panel; pre[1].a = pre[0].a + 1;"
+    " return pre[1].a[0]; }",
+    # stepped through; the member's address a `T **`, an object's through it a `T *`
+    "struct n { struct n *next; uint32_t v; }; struct e { uint32_t *p; struct n *l; const char *name; };\n"
+    "uint32_t f(struct e *t, uint32_t i) { t[i].p[0]++; ++t[i].l->v; uint32_t **q = &t[i].p;"
+    " const char **nm = &t[i].name; uint32_t *r = &t[i].p[1]; uint32_t *w = &t[i].l->v;"
+    " return **q + *r + *w + (uint32_t)(uint8_t)(*nm)[0]; }",
+    # ... of a member array's element: stored, stepped through, addressed
+    "struct n { struct n *next; uint32_t v; }; struct b { uint32_t *cell; struct n *head; };"
+    " struct t { struct b b[2]; };\n"
+    "uint32_t f(struct t *s, uint32_t i, uint32_t v) { s->b[i & 1u].cell[1] = v; s->b[i & 1u].head->v += v;"
+    " s->b[i & 1u].cell[0]++; uint32_t *q = &s->b[i & 1u].cell[1]; uint32_t **pc = &s->b[0].cell;"
+    " return *q + **pc + --s->b[1].head->v; }",
+    # a plain struct's pointer members' addresses, which the twin had typed `int8_t **` and `uint32_t **`
+    "struct e { const char *name; uint32_t **pp; };\n"
+    "uint32_t f(struct e *t) { const char **n = &t->name; uint32_t ***q = &t->pp;"
+    " return (uint32_t)(uint8_t)(*n)[0] + ***q; }",
+)
+# ... and the forms refused: (unit, the reason's name in `lower`, or the text both rails' reasons begin with)
+_CSUB2_PTRLEAF_REFUSED = (
+    (
+        "struct e { uint32_t (*fn)(uint32_t); };\n"
+        "uint32_t f(const struct e *t, uint32_t i) { uint32_t (*g)(uint32_t) = t[i].fn; return g(i); }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct e { uint32_t a : 3; };\nuint32_t f(const struct e *t, uint32_t i) { return t[i].a; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct p { uint32_t x; }; struct e { struct p *q; };\n"
+        "uint32_t f(const struct e *t, uint32_t i) { return t[i].q.x; }",
+        "DOT_NOT",
+    ),
+    (
+        "struct e { uint32_t v; };\nuint32_t f(const struct e *t, uint32_t i) { return t[i].v[0]; }",
+        "SUBSCRIPT_NOT",
+    ),
+    (
+        "struct e { uint32_t v; };\nuint32_t f(const struct e *t, uint32_t i) { return t[i].v->x; }",
+        "ARROW_NOT",
+    ),
+    (
+        "struct e { uint32_t *p; };\nuint32_t f(const struct e *t, uint32_t i) { return t[i].p->x; }",
+        "ARROW_NOT",
+    ),
+    ("struct e { uint32_t *p; };\nuint32_t f(const struct e *s) { return s->p->x; }", "ARROW_NOT"),
+    # the pointer member itself stepped, as a plain struct's (`s->p++`) is refused (the twin had stepped it)
+    (
+        "struct e { uint32_t *p; };\nuint32_t f(struct e *t, uint32_t i) { t[i].p++; return *t[i].p; }",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+    (
+        "struct b { uint32_t *cell; }; struct t { struct b b[2]; };\n"
+        "uint32_t f(struct t *s, uint32_t i) { uint32_t *q = --s->b[i & 1u].cell; return *q; }",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+    # a function-pointer member's address, which the twin had typed an integer's (a struct member's lowers since the
+    # record table's struct members, CSUB-2c)
+    (
+        "struct o { uint32_t (*fn)(uint32_t); }; struct t { struct o a[2]; };\n"
+        "uint32_t f(struct t *s, uint32_t i) { uint32_t (**q)(uint32_t) = &s->a[i & 1u].fn; return (*q)(i); }",
+        "array-of-structs non-scalar element field",
+    ),
+    # C's reason before the element's own form, after a member array's element too
+    (
+        "struct o { uint32_t x; }; struct t { struct o a[2]; };\n"
+        "uint32_t f(struct t *s, uint32_t i) { uint32_t *q = &s->a[i & 1u].x[0]; return *q; }",
+        "SUBSCRIPT_NOT",
+    ),
+    (
+        "struct p { uint32_t x; }; struct e { struct p *q; };\n"
+        "uint32_t f(struct e *t, uint32_t i) { uint32_t *r = &t[i].q.x; return *r; }",
+        "DOT_NOT",
+    ),
+)
+
+
+def _emits_compile_strictly(d: str, src: str, emits: dict) -> None:
+    """Each rail's emit beside the source it lowered, as C11, an incompatible pointer or an integer made a pointer an
+    error: a declared type is no part of the digest, so a temp typed wrongly passes it (CSUB-2)."""
+    if not _CC:
+        return
+    for rail, emit in emits.items():
+        path = os.path.join(d, f"strict_{rail}.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(
+                '#include <string.h>\n#include "bcir_quarantine.h"\n' + src + "\n" + emit + "\n"
+            )
+        run = subprocess.run(
+            [_CC, "-std=c11", "-fsyntax-only", "-I", _C, "-Werror=incompatible-pointer-types", "-Werror=int-conversion",
+             path],
+            capture_output=True, text=True,
+        )  # fmt: skip
+        assert run.returncode == 0, (rail, src[-300:], run.stderr[-600:])
+
+
+# A volatile access as both emits spell it: through a `volatile T *` the access names, `*(volatile T *)(...)`.
+_VOL_ACCESS = re.compile(r"\*\((?:const )?volatile ")
+_EMIT_COMMENT = re.compile(r"^\s*(/\*|\*\s|\*/|\*$|//)")
+
+
+def _same_volatile_accesses(emits: dict) -> None:
+    """Both rails' emits spell the same number of volatile accesses (CSUB-2e). A store the claim graph does not mark
+    volatile is emitted as a byte copy through a plain pointer, `memcpy((char *)c + 0, ...)` of a `volatile T *`: no
+    volatile access, and neither the digest (which holds no claim's volatile bit) nor a strict build (the cast is
+    explicit) sees it."""
+    counts = {
+        rail: len(
+            _VOL_ACCESS.findall("\n".join(l for l in e.splitlines() if not _EMIT_COMMENT.match(l)))
+        )
+        for rail, e in emits.items()
+    }
+    assert len(set(counts.values())) == 1, counts
+
+
+def test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2c. A pointer member of an array element -- `order[i].name`, `d->notes[i].message`, `t[i].name.s` at a
+    nested member's depth -- is a value of its pointer type on both rails, to one digest: loaded as an element's member
+    is, strided by the element, then compared, passed, subscripted, dereferenced, followed with `->`, stored and stored
+    through, as a plain struct's pointer member is. Both had refused it ("non-scalar element field"), which was the
+    first refusal of `bcir_ab_listing.c`, `bcir_emit.c`, `bcir_diag.c`, `bcir_provenance.c` and `bcir_bpe.c`. An
+    inc/dec through one (`t[i].next->v++`) is lowered, its address is a `T **` and an object's it reaches a `T *`. The
+    member itself stepped (`t[i].p++`) is refused alike, as a plain struct's pointer member's step is; so is a
+    function-pointer or bit-field member of an element; and what C forbids after one -- a subscript or `->` of
+    a member that is no pointer, a `.` of one that is, `->` through a pointer to no struct -- is refused for C's reason
+    on both. Each was a twin defect: it had said `member access through a pointer to a non-struct`; had loaded a
+    function-pointer member as an integer it assigned to the function pointer, and had typed its address an integer's;
+    had refused `t[i].p[0]++` for a missing `=`; and had typed
+    `&t->name` of a `const char *` member an `int8_t **` and `&t->pp` of a `T **` one a `T **` -- invalid C the digest,
+    which carries no declared type, cannot see, so each lowered form's emits are also compiled, strictly, beside their
+    source (`_emits_compile_strictly`). `cfront_csub2_records.c` runs as
+    the original on each rail's emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the
+    original does."""
+    from bcir.frontends.cfront import lower as low
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2_PTRLEAF_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, name) in enumerate(_CSUB2_PTRLEAF_REFUSED):
+            why = getattr(low, name, name)
+            src = head + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_records.c", "csub2_records")
+
+
+_CSUB2E_HEAD = (
+    "struct slot { uint32_t id; int16_t h; const char *name; struct slot *next; uint8_t *buf; uint32_t bits : 5;"
+    " _Atomic uint32_t cnt; };\n"
+    "union word { uint32_t w; uint8_t b[4]; };\n"
+    "struct set { struct slot *slots; size_t n; struct { struct slot *c; } t; union word *u; };\n"
+)
+# CSUB-2e: an element of a pointer to structs reached through a loaded pointer, `p->a[i]`, and its members -- the
+# element's address, a member stepped, assigned as a value, addressed, and stored or stepped through a pointer member
+_CSUB2E_LOWERED = (
+    "uint32_t f(struct set *s, size_t j) { const struct slot *e = &s->slots[j]; struct slot *g = &s->t.c[j];"
+    " return e->id + g->id + (uint32_t)(e - s->slots); }",
+    "uint32_t f(struct set *s, size_t j, uint32_t v) { s->slots[j].id++; uint32_t a = --s->slots[j].id;"
+    " uint32_t b = (s->slots[j].id = v); uint32_t c = (s->slots[j].id += v); return a + b + c + s->slots[j].h--; }",
+    "uint32_t f(struct set *s, size_t j) { uint32_t *p = &s->slots[j].id; int16_t *h = &s->slots[j].h;"
+    " struct slot *n = &s->slots[j].next[1]; return *p + (uint32_t)*h + n->id; }",
+    "uint32_t f(struct set *s, size_t j, uint8_t v) { s->slots[j].buf[1] = v; s->slots[j].buf[0] += v;"
+    " s->slots[j].next->next->id = 2u; s->slots[j].next->id++; return s->slots[j].buf[1]; }",
+    "uint32_t f(struct set *s, size_t j) { s->slots[j].cnt++; _Atomic uint32_t *c = &s->slots[j].cnt;"
+    " return (s->slots[j].cnt += 2u) + *c; }",
+    "uint32_t f(struct set *s, size_t j) { union word *u = &s->u[j]; uint32_t *w = &s->u[j].w; return u->b[0] + *w; }",
+)
+# ... and the forms refused: (unit, the reason's name in `lower`, or the text both rails' reasons begin with)
+_CSUB2E_REFUSED = (
+    # `->` of a struct element: both rails had read it as `.`, an emit no C compiler takes
+    ("uint32_t f(struct slot *t, uint32_t i) { return t[i]->id; }", "ARROW_NOT"),
+    ("uint32_t f(struct slot *t, uint32_t i) { t[i]->id = 1u; return 0u; }", "ARROW_NOT"),
+    ("uint32_t f(struct set *s, size_t j) { return s->slots[j]->id; }", "ARROW_NOT"),
+    (
+        "struct o { struct slot a[2]; };\nuint32_t f(struct o *t, uint32_t i) { return t->a[i & 1u]->id++; }",
+        "ARROW_NOT",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j) { return s->slots[j][0].id; }",
+        "a subscript of an element that is not a pointer",
+    ),
+    # ... through the address and step paths too, and after a member of one
+    (
+        "uint32_t f(struct set *s, size_t j) { uint32_t *p = &s->slots[j]->id; return *p; }",
+        "ARROW_NOT",
+    ),
+    ("uint32_t f(struct set *s, size_t j) { s->slots[j]->id++; return 0u; }", "ARROW_NOT"),
+    (
+        "uint32_t f(struct set *s, size_t j) { struct slot *p = &s->slots[j][0]; return p->id; }",
+        "a subscript of an element that is not a pointer",
+    ),
+    ("uint32_t f(struct set *s, size_t j) { s->slots[j].id[0] = 1u; return 0u; }", "SUBSCRIPT_NOT"),
+    ("uint32_t f(struct set *s, size_t j) { s->slots[j].next.id = 1u; return 0u; }", "DOT_NOT"),
+    (
+        "uint32_t f(struct set *s, size_t j) { uint32_t *p = &s->slots[j].bits; return *p; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j, struct slot o) { struct slot x = (s->slots[j] = o); return x.id; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j, struct slot o) { struct slot x = (s->slots[j] += o); return x.id; }",
+        "this lvalue form's compound assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j) { s->slots[j]++; return 0u; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+)
+
+
+def test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2e. An element of a pointer to structs reached through a loaded pointer -- `&set->slots[j]`, `&d->fixits[i]`,
+    `&b->t.constraints[n]`, `&c->claims[v->claim_id]`, `&t->slots[i]`, the first refusal of `bcir_bpe.c`,
+    `bcir_diag.c`, `bcir_emit.c`, `bcir_decoder_pack.c` and `bcir_handoff.c` -- is an lvalue on both rails, to one
+    digest: its address a pointer to the struct, a member of it stepped, assigned as a value, compound-assigned or
+    addressed, a store or a step through a pointer member it holds. The oracle had lowered each; the twin's lvalue walk
+    through a loaded pointer (`plv_chain`) had stopped at a struct element, and its store through one had asked for an
+    `=` after a pointer member (`s->rows[j].buf[1] = v`), which CSUB-2c had opened. `->` of a struct element, `a[i]->m`,
+    which both rails had read as `a[i].m` -- an emit no C compiler takes -- is refused for C's reason on both, as are
+    the forms C or the subset refuses after one. `cfront_csub2_lvalues.c` runs as the original on each rail's emit
+    (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
+    from bcir.frontends.cfront import lower as low
+
+    head = "#include <stdint.h>\n#include <stddef.h>\n" + _CSUB2E_HEAD
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2E_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, name) in enumerate(_CSUB2E_REFUSED):
+            why = getattr(low, name, name)
+            src = head + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_lvalues.c", "csub2_lvalues")
+
+
+_CSUB2S_HEAD = (
+    "struct str { const char *s; size_t n; };\n"
+    "struct span { uint32_t lo, hi; };\n"
+    "struct slot { uint32_t id; struct str name; struct span sp; };\n"
+    "struct set { struct slot *slots; size_t n; };\n"
+    "struct box { struct slot a[2]; };\n"
+    "static uint32_t width(struct span s) { return s.hi - s.lo; }\n"
+)
+# CSUB-2c: a struct or union member of an array element, the aggregate value -- read, stored, copied, passed and
+# returned by value, and addressed, on a direct array, a member array and through a loaded pointer
+_CSUB2S_LOWERED = (
+    "uint32_t f(struct set *set, size_t j, struct str name) { set->slots[j].name = name;"
+    " struct str b = set->slots[j].name; return (uint32_t)b.n; }",
+    "uint32_t f(struct slot *t, size_t i) { struct span x = t[i].sp; return x.hi + width(t[i].sp); }",
+    "struct span f(struct slot *t, size_t i) { return t[i].sp; }",
+    "uint32_t f(struct slot *t, size_t i, size_t j) { t[i].sp = t[j].sp; t[i].name = t[j].name; return t[i].sp.hi; }",
+    "uint32_t f(struct box *b, size_t i) { struct span v = b->a[i & 1u].sp; b->a[1].sp = v;"
+    " struct span *p = &b->a[i & 1u].sp; return p->lo; }",
+    "uint32_t f(struct set *s, size_t i, size_t j) { s->slots[i].sp = s->slots[j].sp;"
+    " struct span *p = &s->slots[j].sp; const struct str *n = &s->slots[i].name; return p->hi + (uint32_t)n->n; }",
+    "union word { struct span sp; uint64_t w; }; struct cell { union word u; };\n"
+    "uint32_t f(struct cell *t, size_t i) { union word x = t[i].u; t[i].u = x; return x.sp.lo; }",
+    "struct in { uint32_t x; }; struct o { struct in in; }; struct t { struct o a[2]; };\n"
+    "uint32_t f(struct t *s, uint32_t i) { struct in *q = &s->a[i & 1u].in; return q->x; }",
+)
+# ... and the forms refused: (unit, the reason's text both rails' reasons begin with)
+_CSUB2S_REFUSED = (
+    # an aggregate member assigned as a value: the oracle's follow-on, on every path
+    (
+        "uint32_t f(struct slot *t, size_t i, struct span v) { struct span r = (t[i].sp = v); return r.lo; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(struct slot *t, size_t i, struct span v) { struct span r = (t[i].sp += v); return r.lo; }",
+        "this lvalue form's compound assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(struct box *b, size_t i, struct span v) { struct span r = (b->a[i & 1u].sp = v); return r.lo; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j, struct span v) { struct span r = (s->slots[j].sp = v); return r.lo; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    # the aggregate an operand
+    (
+        "uint32_t f(struct slot *t, size_t i) { t[i].sp++; return 0u; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+    (
+        "uint32_t f(struct set *s, size_t j) { s->slots[j].sp++; return 0u; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+    (
+        "uint32_t f(struct slot *t, size_t i) { return t[i].sp == t[i].sp; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+)
+
+
+def test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2c. A struct or union member of an array element -- `set->slots[j].name = name` (`bcir_bpe.c`),
+    `d->notes[i].span` passed by value (`bcir_diag.c`) -- is the aggregate value on both rails, to one digest: read,
+    stored, copied element to element, passed and returned by value, and addressed (a pointer to the struct), on a
+    direct array, a member array and through a loaded pointer. Both had refused it ("non-scalar element field"). An
+    aggregate member assigned as a value is refused for the oracle's reasons on every path, where the twin had lowered
+    `(t[i].sp = v)`; the aggregate as an operand is refused for C's. `cfront_csub2_structmembers.c` runs as the original
+    on each rail's emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original
+    does."""
+    head = "#include <stdint.h>\n#include <stddef.h>\n" + _CSUB2S_HEAD
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2S_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_CSUB2S_REFUSED):
+            src = head + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(
+                d, "cfront_csub2_structmembers.c", "csub2_structmembers"
+            )
+
+
+_CSUB2R_HEAD = (
+    "struct fn { uint32_t n; char (*calls)[8]; uint16_t (*w)[3]; struct fn *next; };\n"
+    "struct box { struct fn f; struct fn arr[2]; struct fn *pa; };\n"
+    "static uint32_t rowsum(uint16_t (*r)[3], uint32_t k) { return r[k][0] + r[k][2]; }\n"
+    "static uint32_t len(const char *s) { uint32_t n = 0; while (s[n]) n++; return n; }\n"
+)
+# CSUB-2d: a pointer-to-array member, `T (*m)[N]` -- its elements by the row (read, stored, stepped, compound-assigned
+# and assigned as a value, addressed), the row sized, the pointer tested and copied, taken from a two-dimensional array,
+# passed to a row-pointer parameter and its type taken by `typeof`; through a struct value, an element of a member array,
+# a loaded pointer and a union
+_CSUB2R_LOWERED = (
+    "uint32_t f(const struct fn *p, uint32_t k) { return (uint32_t)p->calls[k][1] + p->w[k][2]; }",
+    "uint32_t f(struct fn *p, uint32_t k, uint16_t v) { p->w[k][1] = v; p->w[k][2] += v; p->w[k][0]++; ++p->w[k][0];"
+    " uint16_t x = (p->w[k][1] = v); uint32_t y = p->w[k][0]--; return x + y + p->w[k][1]; }",
+    "uint32_t f(struct fn *p, uint32_t k) { uint16_t *q = &p->w[k][1]; *q = 7; char *c = &p->calls[k][0];"
+    " return *q + (uint32_t)*c + (uint32_t)(&p->w[k][2] - &p->w[0][0]); }",
+    "uint32_t f(struct fn *p) { struct fn s; return (uint32_t)(sizeof p->calls + sizeof *p->calls + sizeof p->calls[0]"
+    " + sizeof p->calls[0][0] + sizeof s.w[1] + sizeof *s.w + sizeof(struct fn)); }",
+    "uint32_t f(struct fn *p, struct fn *q) { uint32_t r = 0; if (!p->calls) r += 1; if (p->w == 0) r += 2;"
+    " if (p->w) r += 4; r += p->calls ? 8u : 16u; r += p->w == q->w; return r; }",
+    "uint32_t f(struct fn *p, struct fn *q, uint32_t k) { static uint16_t buf[4][3]; p->w = 0; p->w = q->w; q->w = buf;"
+    " q->w[1][2] = 5; return buf[1][2] + (p->w == 0) + rowsum(q->w, k & 3u); }",
+    "uint32_t f(uint32_t k) { static uint16_t buf[4][3]; struct fn s; s.w = buf; s.w[k & 3u][1] = 9;"
+    " s.w[k & 3u][2] += 2; return s.w[k & 3u][1] + buf[k & 3u][2]; }",
+    "uint32_t f(struct box *b, uint32_t i, uint32_t k) { b->arr[i & 1u].w[k][1] = 3; b->arr[i & 1u].w[k][2]++;"
+    " b->f.w[k][0] = 1; return b->arr[i & 1u].w[k][1] + b->pa[i].w[k][0]; }",
+    "uint32_t f(struct fn *p, uint32_t k) { p->next->w[k][1] = 4; p->next->w[k][1] += 1; p->next->next->w[k][2]++;"
+    " struct fn s = *p; return p->next->w[k][1] + (uint32_t)p->next->calls[k][2] + s.w[k][0]; }",
+    "uint32_t f(struct fn *p) { __typeof__(p->w) q = p->w; q[0][1] = 4; return q[1][2] + (uint32_t)sizeof *q; }",
+    "union u { uint16_t (*w)[3]; uint64_t raw; };\n"
+    "uint32_t f(union u *x, uint32_t k) { x->w[k][1] = 3; return x->w[k][1] + (uint32_t)x->raw; }",
+    "static uint32_t g2[2][3];\nuint32_t f(uint32_t k, uint32_t (*p)[3]) { static uint32_t m[2][3]; m[0][1] = k;"
+    " (*m)[2] = 3u; (*g2)[1] = k; (*p)[0] = 2u; return (*m)[1] + (*m)[2] + (*g2)[1] + (*p)[0]"
+    " + (uint32_t)sizeof *m + (uint32_t)sizeof *g2; }",
+    "struct fr { float (*fl)[2]; _Bool (*bs)[4]; const char (*names)[4]; };\n"
+    "uint32_t f(struct fr *p, uint32_t k) { float x = p->fl[k][1] * 2.0f; p->fl[k][0] += x; p->bs[k][3] = 7;"
+    " return (uint32_t)p->fl[k][0] + p->bs[k][3] + (uint32_t)p->names[k][0]; }",
+)
+# ... and the forms refused: (unit, the reason's text both rails' reasons begin with)
+_CSUB2R_REFUSED = (
+    # the row `*` designates: a member's, and a row-pointer parameter's, which both rails had read as its first element
+    # (a row by its subscript is a value: `_CSUB2W_LOWERED`)
+    ("uint32_t f(struct fn *p) { char *r = *p->calls; return (uint32_t)r[0]; }", ROW_VALUE),
+    ("uint32_t f(char (*rows)[4]) { char *r = *rows; return (uint32_t)r[1]; }", ROW_VALUE),
+    # ... and `*m` of a two-dimensional array, local or file-scope, which both rails had read alike
+    (
+        "uint32_t f(uint32_t k) { static uint32_t m[2][3]; m[0][1] = k; uint32_t *r = *m; return r[1]; }",
+        ROW_VALUE,
+    ),
+    (
+        "static uint32_t g2[2][3];\nuint32_t f(uint32_t k) { g2[0][1] = k; uint32_t *r = *g2; return r[1]; }",
+        ROW_VALUE,
+    ),
+    # arithmetic on it, a step of it, a subscript of its element
+    (
+        "uint32_t f(struct fn *p) { return rowsum(p->w + 1, 0); }",
+        "arithmetic on a multi-dimensional array",
+    ),
+    (
+        "uint32_t f(struct fn *p) { p->w += 1; return 0; }",
+        "arithmetic on a multi-dimensional array",
+    ),
+    (
+        "uint32_t f(struct fn *p) { p->w++; return 0; }",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+    (
+        "uint32_t f(struct fn *p, uint32_t k) { return (uint32_t)p->calls[k][1][0]; }",
+        "a subscript of an element",
+    ),
+    # a row of no scalar, of two dimensions, no size or past the bound, of a qualified or `_BitInt` element
+    (
+        "struct pt { uint32_t x; }; struct g { struct pt (*rows)[2]; };\nuint32_t f(struct g *p) { return 0; }",
+        ROW_PTR_ELEM,
+    ),
+    ("struct g { uint32_t (*m)[2][3]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    ("struct g { uint32_t *(*m)[2]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    ("struct g { uint32_t (*m)[]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    (
+        "typedef uint32_t row_t[4];\nstruct g { row_t (*m)[2]; };\nuint32_t f(struct g *p) { return 0; }",
+        ROW_PTR_ELEM,
+    ),
+    ("struct g { uint8_t (*m)[70000]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    (
+        "struct g { volatile uint32_t (*m)[2]; };\nuint32_t f(struct g *p) { return 0; }",
+        ROW_PTR_ELEM,
+    ),
+    (
+        "struct g { _Atomic uint32_t (*m)[2]; };\nuint32_t f(struct g *p) { return 0; }",
+        ROW_PTR_ELEM,
+    ),
+    ("struct g { _BitInt(12) (*m)[2]; };\nuint32_t f(struct g *p) { return 0; }", ROW_PTR_ELEM),
+    # one declared where neither rail declares it: at file scope, or in a typedef
+    ("static uint32_t (*gp)[4];\nuint32_t f(uint32_t k) { return gp[k][1]; }", ROW_PTR_PLACE),
+    ("extern uint32_t (*gx)[4];\nuint32_t f(void) { return gx[1][2]; }", ROW_PTR_PLACE),
+    ("typedef uint32_t (*rowp_t)[4];\nuint32_t f(rowp_t p) { return p[1][2]; }", ROW_PTR_PLACE),
+)
+
+
+def test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2d. A member `T (*m)[N]` -- `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]`, which five units include -- is a
+    pointer to a row of N scalars on both rails, to one digest: laid out as a pointer, `p->m[k][j]` element `k*N + j` of
+    the flat pointer it is loaded as, read, stored, stepped and addressed, `sizeof *p->m` the row, the pointer tested,
+    copied and passed on, through a struct value, an element, a loaded pointer and a union. Both had refused the
+    declaration. A row used as a value, arithmetic on the pointer, and the forms no row of scalars is are refused alike,
+    and so is one at file scope or in a typedef, where the oracle had read an array of rows. `*rows` of a row-pointer
+    parameter, which both rails had read as its first element, is refused as the row it is. `cfront_csub2_rowptr.c` runs
+    as the original on each rail's emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what
+    the original does."""
+    head = "#include <stdint.h>\n#include <stddef.h>\n" + _CSUB2R_HEAD
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2R_LOWERED):
+            src = head + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_CSUB2R_REFUSED):
+            src = head + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_rowptr.c", "csub2_rowptr")
+
+
+def _linkable_c11_runs_as_the_original(d: str, fx: str, entry: str) -> None:
+    """Each rail's linkable artifact of the fixture `fx`, built as C11 beside a driver of its two-argument `entry`
+    under every compiler at hand, prints what the original does."""
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    r = compile_unit(src, check_clang=False)
+    driver = (
+        "#include <stdio.h>\nint main(void) {\n  for (uint32_t x = 0; x < 9u; x++)\n"
+        f'    for (uint32_t y = 0; y < 9u; y++) printf("%u\\n", (unsigned){entry}(x * 977u, y * 31u + x));\n'
+        "  return 0;\n}\n"
+    )
+    quarantine = ("-I", _C, os.path.join(_C, "bcir_quarantine.c"))
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    for cc in compilers:
+        want = _build_c11_run(d, cc, "original", f"{src}\n{driver}", ())
+        for rail, linkable in _linkable_artifacts(fx, r):
+            got = _build_c11_run(d, cc, f"linkable_{rail}", f"{linkable}\n{driver}", quarantine)
+            assert want and got == want, f"{fx}: the {rail}'s linkable artifact under {cc} -std=c11"
+
+
+def _build_c11_run(d: str, cc: str, label: str, text: str, extra) -> str:
+    """Build `text` with `cc` under `-std=c11` -- the standard that reads trigraphs -- and run it; its stdout. A
+    pointer initialized from another pointer type is an error, as Clang 23 makes it and `_build_run_c` asks: the twin
+    had declared `T *a[] = {...}` as `uint32_t *a[n]`, which Clang 18 and GCC only warn of."""
+    cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+    with open(cpath, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    b = subprocess.run(
+        [cc, "-std=c11", "-O2", "-Werror=incompatible-pointer-types", cpath, "-o", epath, *extra],
+        capture_output=True,
+        text=True,
+    )
+    assert b.returncode == 0, f"{label}: build failed under {cc} -std=c11:\n{b.stderr[-1500:]}"
+    return subprocess.run([epath], capture_output=True, text=True, timeout=300).stdout.strip()
+
+
+def test_offsetof_and_the_header_typedefs_lower_and_refuse_alike_on_both_rails():
+    """CSUB-1. `offsetof` is `__builtin_offsetof(type, member-designator)` on both rails (C11 7.19p3): a member, then
+    any run of `.member` and `[constant]`, laid out on the target -- a `size_t` constant, folded where an integer
+    constant expression is read. Both refuse alike a type no struct or union, an incomplete one, a bit-field, a
+    designator that names no member or steps into one no aggregate or array, and a negative subscript. A supplied
+    header answers `__has_include`, is read once however often it is included, and leaves a unit's `#ifndef`
+    fallback unused. Its typedefs are the frontend's: the linkable emit never writes `max_align_t` out again -- it
+    includes `<stddef.h>`, and the artifact compiles beside the real header."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = (
+        "#include <stdint.h>\n#include <stddef.h>\n"
+        "struct s { uint8_t a; uint16_t b[3]; struct { uint32_t x; uint64_t y; } in[2]; uint32_t bf : 3; };\n"
+        "struct t;\n"
+    )
+    fn = "size_t f(void) {{ return {}; }}\n"
+    summary = _lowers_alike(
+        exe,
+        head
+        + fn.format(
+            "offsetof(struct s, b[2]) + offsetof(struct s, in[1].y) + offsetof(struct s, in)"
+        ),
+    )
+    assert "funcs=1" in summary, summary
+    for body, why in (
+        ("offsetof(int, a)", "offsetof of a type that is not a struct or union"),
+        ("offsetof(struct s *, a)", "offsetof of a type that is not a struct or union"),
+        ("offsetof(struct t, a)", "offsetof of an incomplete struct or union"),
+        ("offsetof(struct s, bf)", "offsetof of a bit-field member"),
+        ("offsetof(struct s, nope)", "invalid offsetof member designator"),
+        ("offsetof(struct s, a.x)", "invalid offsetof member designator"),
+        ("offsetof(struct s, a[0])", "invalid offsetof member designator"),
+        ("offsetof(struct s, b[-1])", "invalid offsetof member designator"),
+        ("offsetof(struct s, in.x)", "invalid offsetof member designator"),
+    ):
+        _refused_alike(exe, head + fn.format(body), why, phase="PARSE")
+    # a supplied header answers `__has_include`, reads once, and a unit's fallback for it stays unused
+    once = (
+        "#include <stdint.h>\n#include <stdint.h>\n#ifndef UINT64_C\n#define UINT64_C(c) c\n#endif\n"
+        "#if __has_include(<stdint.h>) && __has_include(<math.h>) && !__has_include(<bcir_no_such.h>)\n"
+        "uint64_t f(void) { return UINT64_C(1) << 40; }\n#endif\n"
+    )
+    assert "funcs=1" in _lowers_alike(exe, once)
+    assert "1UL<<40" in _cpp.preprocess(once).replace(" ", ""), _cpp.preprocess(once)
+    # the linkable emit includes <stddef.h> for `max_align_t` and writes none of the frontend's typedefs
+    unit = (
+        "#include <stddef.h>\n#include <stdint.h>\n"
+        "struct blk { struct blk *next; max_align_t anchor; unsigned char data[]; };\n"
+        "size_t f(struct blk *b) { ptrdiff_t d = 1; intmax_t m = 2; "
+        "return b ? offsetof(struct blk, data) + sizeof(max_align_t) + (size_t)d + (size_t)m : 0u; }\n"
+    )
+    r = compile_unit(unit, check_clang=False)
+    assert r.is_clean, r.diagnostics
+    rails = [("oracle", emit_linkable(r.lowered, r.emitted))]
+    if _CC:
+        rails.append(("twin", _twin_linkable_of(unit)))
+    for rail, text in rails:
+        assert "#include <stddef.h>" in text and "__bcir_builtin" not in text, (rail, text)
+        assert "typedef" not in text.split("struct blk", 1)[0], (rail, text)
+        if _CC:
+            cp = subprocess.run(
+                [_CC, "-std=c11", "-fsyntax-only", "-x", "c", "-"],
+                input=text,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            assert cp.returncode == 0, (rail, cp.stderr, text)
+
+
 def test_a_line_directive_takes_a_decimal_digit_sequence_in_range_on_both_rails():
     """CF-PPSPLITS. `#line` takes a decimal digit sequence (C11 6.10.4p3) in 1..2147483647, then an optional file
     name. `#line 12abc` read 12 on the oracle and was `out of range` on the twin; `#line abc` was ignored on both.
@@ -9678,7 +11418,8 @@ _STATICTAB_REFUSED = (
     ),
     ("uint32_t g = 5u;\nuint32_t f(uint32_t i) { static uint32_t *p = &g; return *p + i; }", "not"),
     (
-        'uint32_t f(uint32_t i) { static const char *n[2] = {"a", "b"}; return (uint32_t)n[i % 2u][0]; }',
+        # a string literal itself is an address constant (CSUB-2b: `cfront_csub2_strtab.c`); one computed from it is not
+        'uint32_t f(uint32_t i) { static const char *n[2] = {"a" + 1, "b"}; return (uint32_t)n[i % 2u][0]; }',
         "not",
     ),
     (
@@ -9720,7 +11461,7 @@ _STATICTAB_REASONS = {
 def test_static_initializer_refusals_on_both_rails():
     """CF-STATICTAB: every form of `_STATICTAB_REFUSED` is refused by both rails for the one reason it
     witnesses -- an entry the constant fold cannot evaluate, as C cannot (a parameter, another static, a local
-    `const`, an address, a string, a floating constant, a struct value, a division by zero, an oversized or
+    `const`, an address, one computed from a string literal, a floating constant, a struct value, a division by zero, an oversized or
     negative shift, a signed overflow), a union initialized through an anonymous member other than its first,
     and the walk's own refusals, which a static's initializer shares -- never lowered with a guessed value."""
     from bcir.frontends.cfront.cparse import CParseError
@@ -10882,7 +12623,7 @@ def test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails():
     inner = num("c.bin.sub(in:p0,in:p1)")
     canon = cfront_structural_canon(compile_unit(pin, check_clang=False).lowered)
     assert canon == (
-        f"c.bin.sub|4|{inner},in:p0||0\nc.bin.sub|4|in:p0,in:p1||0\n"
+        f"c.bin.sub|4|{inner},in:p0||0|0\nc.bin.sub|4|in:p0,in:p1||0|0\n"
         f"ret={num(f'c.bin.sub({inner},in:p0)')}|stores=\n@\n"
     ), canon
     if exe:
@@ -11047,25 +12788,24 @@ def test_split_forms_lower_alike_and_run_as_the_original_on_both_rails():
     _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _SPLITS_DRIVER)
 
 
-# The forms stay refused where the object is a device's: a re-read of it (the value of `=`/OP= and a prefix
-# step) or its read-modify-write through a device pointer would be an extra device access, which the oracle's
-# `_mmio` gate refuses and the twin's `plv_volatile` refuses alike.
+# The forms stay refused where the object is a device's and its value would re-read it -- the value of `=`/OP= and
+# a prefix step that narrows -- an extra device access, which the oracle's `_mmio` gate refuses and the twin's
+# `plv_volatile` refuses alike. A step of one, `h.d->v++` or `++h.d->r`, is one read and one write and lowers on both
+# rails since CSUB-2e (`_CSUB2V_LOWERED`).
 _SPLITS_DEVICE = (
-    "struct dv {{ uint32_t v; volatile uint32_t r; }};\nstruct dh {{ struct dv *d; }};\n"
+    "struct dv {{ uint32_t v; volatile uint32_t r; uint8_t b; }};\nstruct dh {{ struct dv *d; }};\n"
     "uint32_t f(struct dh h, uint32_t s) {{ {body} }}\n"
 )
 _SPLITS_DEVICE_BODIES = (
-    "return h.d->v++;",  # a plain member of a struct that holds volatile storage
-    "return ++h.d->r;",  # a volatile member
-    "return (h.d->v = s);",
-    "return (h.d->r += s);",
-    "h.d->v--; return s;",
+    "return (h.d->v = s);",  # a plain member of a struct that holds volatile storage
+    "return (h.d->r += s);",  # a volatile member
+    "return ++h.d->b;",  # a prefix step that narrows: its value re-reads the member
 )
 
 
 def test_split_forms_on_a_device_object_are_refused_on_both_rails():
-    """CF-SPLIT2: an increment, or an assignment used as a value, through a loaded pointer into a struct that
-    holds volatile storage is refused on both rails -- the oracle's device gate (`_mmio`), the twin's
+    """CF-SPLIT2: an assignment used as a value, or a prefix step that narrows, through a loaded pointer into a
+    struct that holds volatile storage is refused on both rails -- the oracle's device gate (`_mmio`), the twin's
     `plv_volatile` reading the loaded pointer's device domain -- rather than lowered by one rail alone."""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
@@ -11311,6 +13051,16 @@ _LINKABLE_HEADERS = {
         "#include <string.h>",
         ("#include <math.h>", "#include <stdlib.h>"),
     ),
+    # ... and for the reads, CSUB-5: memcmp/strcmp/strncmp, memchr/strchr/strrchr/strstr and strlen
+    "string reads": (
+        '#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\nstatic const char s[] = "ab.cd";\n'
+        "uint32_t f(uint32_t x) { size_t n = strlen(s); const char *p = strchr(s, '.');"
+        " const char *q = strrchr(s, 'c'); const char *w = strstr(s, \"cd\"); const void *m = memchr(s, 'b', n);"
+        ' return (uint32_t)memcmp(s, "ab", 2) + (uint32_t)strcmp(s, "ab") + (uint32_t)strncmp(s, "ab", 2)'
+        " + (uint32_t)n + (p != q) + (w != 0) + (m != 0) + x; }\n",
+        "#include <string.h>",
+        ("#include <math.h>", "#include <stdlib.h>"),
+    ),
     "aligned_alloc": (
         "#include <stdint.h>\n#include <stdlib.h>\nuint32_t f(uint32_t n) { uint32_t *p = aligned_alloc(16, 16);"
         " return (uint32_t)(p != 0) + n; }\n",
@@ -11424,6 +13174,526 @@ int main(void) {
 }
 """
 )
+
+
+_PROTORET_DRIVER = (
+    _GAPS_SAME
+    + r"""
+pr_outcome pr_admit(const uint8_t *d, size_t n) {
+  pr_outcome o;
+  o.ok = (uint8_t)(n > 3u); o.why = (uint16_t)(d[0] * 3u + n); o.gen = ((uint64_t)d[1] << 33) | n;
+  return o;
+}
+struct pr_pair pr_make(uint32_t x) { struct pr_pair p = {x * 7u, x ^ 0x55u}; return p; }
+union pr_word pr_word_of(uint32_t x) { union pr_word u; u.w = x * 2654435761u; return u; }
+static struct pr_pair pr_pairs[4];
+struct pr_pair *pr_find(uint32_t x) { pr_pairs[x & 3u].a = x; pr_pairs[x & 3u].b = x + 9u; return &pr_pairs[x & 3u]; }
+static uint32_t pr_tab[4] = {3u, 5u, 7u, 11u};
+uint32_t *pr_table(void) { return pr_tab; }
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    SAME(pr_admit_entry, gaps_in[n]); SAME(pr_pair_entry, gaps_in[n]); SAME(pr_word_entry, gaps_in[n]);
+    SAME(pr_ptr_entry, gaps_in[n]);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+_PROTORET_HEAD = (
+    "#include <stdint.h>\n#include <stddef.h>\n"
+    "struct pr { uint32_t a, b; };\n"
+    "typedef struct { uint8_t ok; uint16_t why; uint64_t gen; } outcome;\n"
+    "union un { uint32_t w; uint8_t b[4]; };\n"
+    "struct pr mk(uint32_t x);\noutcome admit(const uint8_t *data, size_t len);\nunion un mku(uint32_t x);\n"
+    "struct pr *mkp(uint32_t x);\nuint32_t *arr(void);\n"
+)
+# CSUB-2: a struct or union a prototyped callee returns -- initialized from, assigned, read a member of in place, passed
+# and returned on by value, stored into an element and through a pointer, chosen by `?:`, its call a statement -- and a
+# pointer one returns, followed with `->` and `[]`
+_PROTORET_LOWERED = (
+    "uint32_t f(uint32_t x) { struct pr p = mk(x); return p.a + p.b; }",
+    "uint32_t f(uint32_t x) { return mk(x).b + mk(x + 1u).a; }",
+    "struct pr f(uint32_t x) { return mk(x); }",
+    "uint32_t f(const uint8_t *d, size_t n) { outcome c; c = admit(d, n); if (!c.ok) return c.why;"
+    " return (uint32_t)c.gen; }",
+    "static uint32_t sum(struct pr p) { return p.a * 3u + p.b; } uint32_t f(uint32_t x) { return sum(mk(x)); }",
+    "uint32_t f(uint32_t x) { union un u = mku(x); return u.b[0] + mku(x).w; }",
+    "uint32_t f(uint32_t x, int c) { struct pr p = c ? mk(x) : mk(x + 1u); return p.a; }",
+    "uint32_t f(uint32_t x) { struct pr q[2]; q[1] = mk(x); return q[1].b; }",
+    "struct h { struct pr p; uint32_t n; }; uint32_t f(struct h *h, uint32_t x) { h->p = mk(x); return h->p.a; }",
+    "uint32_t f(uint32_t x) { (void)mk(x); mk(x); return x; }",
+    "uint32_t f(uint32_t x) { return (uint32_t)sizeof mk(x) + (uint32_t)sizeof(mk(x).a); }",
+    "uint32_t f(uint32_t x) { return mkp(x)->a + mkp(x)[1].b + arr()[2]; }",
+)
+# ... and refused alike, for one reason each: the aggregate as an operand or a scalar, `->` of it, an incomplete one
+_PROTORET_REFUSED = (
+    (
+        "uint32_t f(uint32_t x) { return mk(x) + 1u; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+    (
+        "uint32_t f(uint32_t x) { if (mk(x)) return 1u; return 0u; }",
+        "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator",
+    ),
+    (
+        "uint32_t f(uint32_t x) { uint32_t v = mk(x); return v; }",
+        "a struct or union is converted to a scalar type",
+    ),
+    (
+        "uint32_t f(uint32_t x) { return mk(x)->a; }",
+        "member access `->` through a value that is not a pointer to a struct or union",
+    ),
+    (
+        "struct opaque;\nstruct opaque mko(uint32_t x);\nuint32_t f(uint32_t x) { mko(x); return x; }",
+        "the incomplete struct or union",
+    ),
+)
+
+
+def test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2. A struct or union a call returns through a prototype -- `bcir_handoff.c`'s `c = bcir_ctl_admit_pack(...)`,
+    a callee another unit defines -- is the aggregate value on both rails, to one digest, as a defined callee's is:
+    initialized from, assigned, read a member of in place, passed and returned on by value, stored, chosen by `?:`. The
+    twin had refused it ("aggregate return through a prototype"), and had read no `->` or `[]` after a pointer a
+    prototyped callee returns (`mkp(x)->a`, `arr()[2]`), which the oracle lowered. The aggregate as an operand or a
+    scalar, `->` of it, and an incomplete one are refused alike. `cfront_csub2_protoret.c` lowers to one claim graph on
+    the four targets, and each emit runs as the original, linked with a driver that defines the callees."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_PROTORET_LOWERED):
+            src = _PROTORET_HEAD + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_PROTORET_REFUSED):
+            src = _PROTORET_HEAD + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+    if exe is None:
+        return
+    fx = "cfront_csub2_protoret.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _PROTORET_DRIVER)
+
+
+_CSUB2W_HEAD = (
+    "#include <stdint.h>\n#include <stddef.h>\n"
+    "struct fn { uint32_t n; char (*calls)[8]; uint16_t (*w)[3]; struct fn *next; };\n"
+    "struct mm { uint16_t m[4][3]; uint32_t n; };\n"
+    "struct am { uint32_t n; uint16_t m[4][3]; };\n"
+    "struct P { uint16_t x, y; };\n"
+    "typedef int64_t gf[4];\n"
+    "static uint16_t gm[4][3];\n"
+    "static uint32_t sum3(const uint16_t *s) { return s[0] + s[2]; }\n"
+    "static uint32_t len(const char *s) { uint32_t n = 0; while (s[n]) n++; return n; }\n"
+    "static int64_t g0(const int64_t *s) { return s[0] + s[3]; }\n"
+)
+# CSUB-2d: a row of scalars used as a value is the pointer to its first element, `&m[k][0]` -- passed, assigned,
+# initialized from, chosen by `?:`, stepped, compared, subtracted, dereferenced (`*m[k]`, `*(m[k] + i)`, stored through)
+# and sized; of a block static, a global, a VLA, a `T m[][N]` and a `gf p[4]` parameter, a member array (of a value,
+# through a loaded pointer, of an element of an array of structs, at three dimensions) and the row a pointer-to-array
+# member points at; and the address of a volatile array's element or member, a `volatile T *`, which the twin had typed
+# a `T *`
+_CSUB2W_LOWERED = (
+    "uint32_t f(struct fn *p, uint32_t k) { return len(p->calls[k]) + sum3(p->w[k]) + sum3(p->next->w[k]); }",
+    "uint32_t f(uint32_t k) { static uint16_t m[4][3]; uint16_t *r; r = m[k & 3u]; r[1] = 7;"
+    " const uint16_t *c = (k & 1u) ? m[0] : gm[2]; uint16_t *rows[2] = {m[k & 3u], gm[1]};"
+    " return sum3(r) + sum3(c) + rows[1][2] + sum3(gm[k & 3u]); }",
+    "uint32_t f(uint32_t k) { static uint16_t m[4][3]; uint16_t *s = m[k & 3u] + 1; *s += 2u;"
+    " return (m[k & 3u] == s) + (m[0] != m[1]) * 2u + (uint32_t)(m[2] - m[0]) + (uint32_t)sizeof m[k & 3u]"
+    " + !m[1]; }",
+    "uint32_t f(uint32_t k) { static uint16_t m[4][3]; m[1][1] = 5; *(m[k & 3u] + 1) += 7; *(2 + m[0]) = 3;"
+    " return *m[k & 3u] + *(m[k & 3u] + 1) + *(m[k & 3u] - 0 + 2) + (*(m[0] + 1) = 6); }",
+    "uint32_t f(uint32_t n, uint32_t k) { uint16_t v[n + 1u][3]; for (uint32_t i = 0; i <= n; i++) v[i][0] = (uint16_t)i;"
+    " uint16_t *r = v[k % (n + 1u)]; return r[0] + *v[n]; }",
+    "static uint32_t rs(uint16_t rows[][3], uint32_t k) { return sum3(rows[k]) + *rows[k]; }\n"
+    "uint32_t f(uint32_t k) { static uint16_t m[4][3]; return rs(m, k & 3u); }",
+    "static int64_t mix(gf p[4]) { return g0(p[1]) + g0(p[3]); }\n"
+    "uint32_t f(uint32_t k) { static gf q[4]; q[1][0] = (int64_t)k; return (uint32_t)(mix(q) + g0(q[2])); }",
+    "uint32_t f(struct mm *s, struct mm v, uint32_t k) { uint16_t *r = s->m[k & 3u]; r[1] = 2;"
+    " return sum3(v.m[k & 3u]) + *s->m[1] + *(s->m[2] + 1); }",
+    "uint32_t f(uint32_t k) { static struct am a[2]; a[1].m[2][2] = 7; uint16_t *r = a[k & 1u].m[2]; r[0] = 1;"
+    " return sum3(a[k & 1u].m[(k & 1u) ? 2 : 3]) + *a[0].m[1] + a[k & 1u].m[2][2]; }",
+    "struct am3 { uint32_t n; uint16_t m[2][4][3]; };\n"
+    "uint32_t f(struct am3 *p, uint32_t k) { static struct am3 a[2]; return sum3(a[k & 1u].m[1][2]) + sum3(p[k].m[0][1]); }",
+    "struct hp { struct am *p; };\nuint32_t f(struct hp *h, uint32_t k) { return sum3(h->p[k & 1u].m[2]); }",
+    "struct hq { struct mm *q; };\nuint32_t f(struct hq *h, uint32_t k) { uint16_t *r = h->q->m[k & 3u]; r[2] = 1;"
+    " return sum3(h->q->m[1]) + *h->q->m[2]; }",
+    "struct s { uint8_t c; uint32_t a[2][3]; };\nstruct s ga[4];\n"
+    "uint32_t f(uint32_t i) { uint32_t *r = ga[i % 4u].a[1]; return r[0]; }",
+    "uint32_t f(uint32_t k) { static float ys[3][5]; ys[1][2] = 1.5f; const float *r = ys[k % 3u]; return (uint32_t)r[2]; }",
+    # CF-DECAY's rows, which both rails had refused: of a local, a static, a parameter and a global
+    "uintptr_t f(void) { uint16_t l2[4][6] = {0}; return (uintptr_t)l2[1] - (uintptr_t)l2; }",
+    "uint16_t *f(void) { static uint16_t l2[4][6]; return l2[1]; }",
+    "uint8_t *f(uint8_t m[3][5]) { return m[1]; }",
+    "uint8_t gb[3][5];\nuint8_t *f(void) { return gb[1]; }",
+    # ... and an array no subscript designates is no row: `*(a + 1)` stays the element `a[1]` it is
+    "uint32_t f(uint32_t k) { static uint16_t a[4]; a[1] = 3; return *(a + 1) + *(k % 4u + a) + *(gm[1] + 2); }",
+    "uint32_t f(uint32_t k) { static volatile uint16_t m[4][3]; m[1][1] = 3; return sum3((const uint16_t *)m[k & 3u]); }",
+    "struct vx { volatile uint16_t x; volatile uint16_t q[3]; struct { volatile uint16_t v; } a[2]; };\n"
+    "uint32_t f(struct vx *s, uint32_t k) { static volatile uint16_t a[3]; volatile uint16_t *p = &a[k % 3u]; *p = 1;"
+    " return sum3((const uint16_t *)&s->x) + sum3((const uint16_t *)&s->q[k % 3u])"
+    " + sum3((const uint16_t *)&s->a[k & 1u].v) + sum3((const uint16_t *)&gm[k & 3u][0]); }",
+    "struct vm { volatile uint16_t m[4][3]; };\nstatic volatile uint16_t gv[4][3];\n"
+    "uint32_t f(struct vm *s, uint32_t k) { return sum3((const uint16_t *)s->m[k & 3u])"
+    " + sum3((const uint16_t *)&gv[k & 3u][1]) + sum3((const uint16_t *)gv[k & 3u]); }",
+)
+# ... and the forms refused, for one reason each: a row's address (a pointer to an array), its type taken by `typeof`
+# (the array, which the value model does not declare), and a row of no scalars
+_CSUB2W_REFUSED = (
+    (
+        "uint32_t f(uint32_t k) { static uint16_t m[4][3]; return (uint32_t)(uintptr_t)&m[k & 3u]; }",
+        ROW_ADDR,
+    ),
+    (
+        "uint32_t f(uint32_t k) { uint16_t *p = (uint16_t *)(&gm[k & 1u] + 1); return *p; }",
+        ROW_ADDR,
+    ),
+    (
+        "uint32_t f(struct mm *s, uint32_t k) { return (uint32_t)(uintptr_t)&s->m[k & 3u]; }",
+        ROW_ADDR,
+    ),
+    ("uint32_t f(struct mm s, uint32_t k) { return (uint32_t)(uintptr_t)&s.m[k & 3u]; }", ROW_ADDR),
+    (
+        "uint32_t f(struct fn *p, uint32_t k) { return (uint32_t)(uintptr_t)&p->calls[k]; }",
+        ROW_ADDR,
+    ),
+    ("uint32_t f(uint16_t (*r)[3], uint32_t k) { return (uint32_t)(uintptr_t)&r[k]; }", ROW_ADDR),
+    (
+        "uint32_t f(uint32_t k) { static struct am a[2]; return (uint32_t)(uintptr_t)&a[k & 1u].m[2]; }",
+        ROW_ADDR,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static uint16_t m[4][3]; __typeof__(m[1]) t; (void)k; return (uint32_t)sizeof t; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(struct fn *p, uint32_t k) { __typeof__(p->calls[k]) t; return (uint32_t)sizeof t; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static uint16_t m[2][2][3]; uint16_t *r = (uint16_t *)m[k & 1u]; return r[0]; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static struct P sm[2][3]; struct P *q = sm[k & 1u]; return q[0].x; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static struct P sm[2][3]; struct P q = *sm[k & 1u]; return q.x; }",
+        ROW_VALUE,
+    ),
+    (
+        "uint32_t f(uint32_t k) { static char *pm[2][3]; char **q = pm[k & 1u]; return q[0] == 0; }",
+        ROW_VALUE,
+    ),
+)
+
+
+def test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2d. A row of scalars used as a value -- `bcir_channel.c`'s `strcmp(seen_keys[i], key)`, `bcir_verify.c`'s
+    `fixed_string(f->calls[k], ...)`, `bcir_ed25519.c`'s `fsub(a, p[1], p[0])`, `bcir_tensor.c`'s `ys[v]` -- is the
+    pointer to its first element on both rails, to one digest: `&m[k][0]`, lowered as that form lowers. Both had refused
+    it. A row's address, its type taken by `typeof` and a row of no scalars are refused alike. Found on the way and closed
+    with it: the twin had read `&g[k]` of a two-dimensional global and `&s->m[k]` of a member as `&g[0][k]` (and the
+    oracle `&g[k] + 1` as one element on), and `f(s->m[k])`, a member array's row, as its first element; `typeof` of a
+    row as its element on the oracle; and a volatile array's element address as a `T *` on the twin. `cfront_csub2_rows.c` runs as the original on each rail's emit (`_ABI`), and each
+    rail's linkable artifact of it, built as C11, returns what the original does."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2W_LOWERED):
+            src = _CSUB2W_HEAD + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_CSUB2W_REFUSED):
+            src = _CSUB2W_HEAD + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_rows.c", "csub2_rows")
+
+
+_CSUB2A_HEAD = (
+    "#include <stdint.h>\n#include <stddef.h>\n"
+    "struct ch { uint32_t rank; char name[8]; uint16_t w[3]; };\n"
+    "struct qc { uint32_t n; char type[6]; };\n"
+    "struct fn { uint32_t nq; struct qc *qcasts; struct qc q2[2]; };\n"
+    "struct holder { struct ch arr[2]; };\n"
+    "static uint32_t len(const char *s) { uint32_t n = 0; while (s[n]) n++; return n; }\n"
+    "static uint32_t sum3(const uint16_t *s) { return s[0] + s[2]; }\n"
+)
+# CSUB-2c: an array member of scalars of an array element used as a value is the pointer to its first element,
+# `&a[i].m[0]` -- of a block static's element, of a pointer parameter's and through a loaded pointer member; passed,
+# assigned, chosen, compared, subtracted, stepped, dereferenced and sized
+_CSUB2A_LOWERED = (
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; chs[1].name[0] = 0x61; return len(chs[k % 3u].name); }",
+    "uint32_t f(struct fn *f, uint32_t k) { return len(f->qcasts[k].type) + (uint32_t)sizeof f->qcasts[k].type; }",
+    "uint32_t f(struct ch *p, uint32_t k) { return sum3(p[k].w) + len(p[k].name); }",
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; char *n = chs[k % 3u].name; n[1] = 0;"
+    " return (uint32_t)(n - chs[0].name); }",
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; return *chs[k % 3u].name + *(chs[1].w + 2); }",
+    "uint32_t f(struct fn *f, uint32_t k) { const char *t = (k & 1u) ? f->qcasts[k].type : f->qcasts[0].type;"
+    " return len(t); }",
+    "uint32_t f(struct ch *p, uint32_t k) { return (uint32_t)(p[k].name == p[0].name) + (uint32_t)(p[k].w - p[0].w); }",
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; return (uint32_t)sizeof chs[k % 3u].name"
+    " + (uint32_t)sizeof(chs[0].w); }",
+    # a member array a `.` hop reaches, of a local's element (CF-NESTMEM had pinned it refused)
+    "struct in { uint8_t arr[4]; }; struct seg { struct in m; };\n"
+    "uint32_t f(uint32_t s) { struct seg g[2] = {0}; uint8_t *p = g[1].m.arr; return p[0] + s; }",
+    # its type by `typeof`: the member's array (CF-TYPEOFARR; both rails had refused it as a row)
+    "uint32_t f(uint32_t k) { static struct ch chs[3]; __typeof__(chs[k % 3u].name) t = {1};"
+    " return (uint32_t)sizeof t + (uint32_t)t[0]; }",
+)
+# ... and the forms refused, for one reason each: the member array's address, a member array of structs, pointers or
+# two dimensions as a value, a store to it, and one of an element of a member array
+_CSUB2A_REFUSED = (
+    (
+        "uint32_t f(uint32_t k) { static struct ch chs[3]; return (uint32_t)(uintptr_t)&chs[k % 3u].name; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct cs { uint32_t n; struct ch sub[2]; };\n"
+        "uint32_t f(uint32_t k) { static struct cs a[2]; struct ch *q = a[k & 1u].sub; return q[0].rank; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct cp { uint32_t n; char *ptrs[2]; };\n"
+        "uint32_t f(uint32_t k) { static struct cp a[2]; char **q = a[k & 1u].ptrs; return q[0] == 0; }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "struct cm { uint32_t n; uint16_t m[2][3]; };\n"
+        "uint32_t f(uint32_t k) { static struct cm a[2]; return sum3((const uint16_t *)a[k & 1u].m); }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "uint32_t f(struct holder *h, uint32_t k) { return len(h->arr[k & 1u].name); }",
+        "array-of-structs non-scalar element field",
+    ),
+    (
+        "uint32_t f(struct fn *f, uint32_t k) { return len(f->q2[k & 1u].type); }",
+        "array-of-structs non-scalar element field",
+    ),
+)
+
+
+def test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2c. An array member of scalars of an array element used as a value -- `bcir_channel.c`'s
+    `strcmp(channels[i].name, channels[best].name)`, `bcir_verify.c`'s `fixed_string(f->qcasts[k].type, ...)` -- is the
+    pointer to its first element on both rails, to one digest: `&a[i].m[0]`, lowered as that form lowers (the oracle's
+    `_scalar_row`, the twin's `aos_member_array_x` with `pad` 2). Both had refused it as `array-of-structs non-scalar
+    element field`. Its type by `typeof` is the member's array on both rails (CF-TYPEOFARR). Its address, a member array
+    of structs, pointers or two dimensions, and one of an element of a member array stay refused alike. `cfront_csub2_elemarrays.c` runs as the original on each rail's
+    emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2A_LOWERED):
+            src = _CSUB2A_HEAD + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            _emits_compile_strictly(d, src, {"oracle": "\n".join(r.emitted.values()), "twin": emit})
+        for n, (body, why) in enumerate(_CSUB2A_REFUSED):
+            src = _CSUB2A_HEAD + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_elemarrays.c", "csub2_elemarrays")
+
+
+_CSUB2V_HEAD = "#include <stdint.h>\n"
+_CSUB2V_FO = "inc/dec of this lvalue form is a follow-on"
+# CSUB-2e: a step of a volatile scalar is one read and one write -- through a pointer (`bcir_quarantine.h`'s
+# `(*c)++`), of an element, a member, a volatile struct's member, member array element or array element, and of a
+# named object, as a statement or a value; and a pointer sum of a pointer to volatile storage is one, read and stored
+# through (the twin had typed it a `T *`)
+_CSUB2V_LOWERED = (
+    "uint32_t f(volatile uint32_t *c) { return (*c)++; }",
+    "uint32_t f(volatile uint32_t *c) { return ++*c; }",
+    "uint32_t f(volatile uint32_t *c) { (*c)--; --*c; return 0; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return c[k]++; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return ++c[k]; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return (*(c + k))++; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return ++*(c + k - 1u); }",
+    "uint32_t f(volatile uint8_t *c) { return (*c)++; }",
+    "uint32_t f(volatile uint32_t **pp) { return (**pp)++; }",
+    "uint32_t f(volatile float *c) { return (uint32_t)((*c)++); }",
+    "typedef volatile unsigned long ctr;\n"
+    "static inline unsigned long next(ctr *c) { return (*c)++; }\n"
+    "unsigned long f(ctr *c) { return next(c) + *c; }",
+    "volatile uint32_t g[4]; uint32_t f(uint32_t k) { return g[k & 3u]++; }",
+    "uint32_t f(uint32_t k) { volatile uint32_t a[4] = {0}; a[k & 3u]++; return a[0]; }",
+    "volatile uint32_t m2[2][3]; uint32_t f(uint32_t k) { return m2[k & 1u][2]++; }",
+    "struct s { volatile uint32_t n; }; uint32_t f(struct s *p) { return p->n++; }",
+    "struct s { volatile uint32_t n; uint32_t m; }; uint32_t f(struct s *p) { p->m++; return ++p->m; }",
+    "struct s { uint32_t n; }; uint32_t f(volatile struct s *p) { return p->n++; }",
+    "struct s { uint32_t n; uint32_t a[2]; }; uint32_t f(volatile struct s *p, uint32_t k) { return p->a[k & 1u]++; }",
+    "struct in { uint32_t x; }; struct s { uint32_t n; struct in i; };\n"
+    "uint32_t f(volatile struct s *p) { return p->i.x++; }",
+    "struct s { uint32_t n; }; uint32_t f(volatile struct s *p, uint32_t k) { return p[k].n++; }",
+    # a pointer member of a volatile struct's element: the pointer it loads (the twin had declared it an integer)
+    "struct s { uint32_t n; uint32_t *q; }; uint32_t f(volatile struct s *p, uint32_t k) { return p[k].q[1]++; }",
+    "struct s { uint32_t n; uint32_t *q; }; uint32_t f(volatile struct s *p, uint32_t k) { return p[k].q[1] + k; }",
+    # through a loaded pointer into a device struct (CF-SPLIT2 had pinned these refused)
+    "struct dv { uint32_t v; volatile uint32_t r; }; struct dh { struct dv *d; };\n"
+    "uint32_t f(struct dh h, uint32_t s) { uint32_t a = h.d->v++; a += ++h.d->r; h.d->v--; return a + s; }",
+    "struct dv { uint32_t v; volatile uint32_t r; }; struct dh { struct dv *d; };\n"
+    "uint32_t f(struct dh *ph) { return ph->d->r++; }",
+    "struct dv { uint32_t v; volatile uint32_t r; }; struct e { uint32_t n; struct dv *p; };\n"
+    "uint32_t f(struct e *t, uint32_t i) { uint32_t a = t[i].p->r++; return a + ++t[i].p->v; }",
+    "volatile uint32_t gv; uint32_t f(uint32_t k) { gv++; return gv + k; }",
+    # a volatile array's and a volatile member's initializer: each store a volatile access (the twin's were not)
+    "uint32_t f(uint32_t s) { volatile uint32_t st[4] = {s & 6u, s & 2u, s | 1u, 1u}; return st[s & 3u]; }",
+    "struct d2 { volatile uint32_t r; uint32_t x; }; uint32_t f(uint32_t s) { struct d2 v = {s, 2u}; return v.r + v.x; }",
+    "uint32_t f(uint32_t k) { volatile uint32_t x = k; x++; return x; }",
+    "uint32_t f(uint32_t k) { static volatile uint32_t t; t = k; uint32_t a = ++t; return a + t--; }",
+    "volatile uint16_t g16; uint32_t f(uint32_t k) { g16 = (uint16_t)k; g16++; --g16; return g16--; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return *(c + k - 1u); }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { return *(k + c); }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { *(c + k - 1u) = 5u; return 0; }",
+    "uint32_t f(volatile uint32_t *c, uint32_t k) { volatile uint32_t *q = c + k; *q = 2u; return *q; }",
+)
+# ... and the forms refused, for one reason each: a prefix step that narrows, whose value would re-read the object (a
+# second access), on every path; a bitfield of a device region; and an assignment or a compound one through a pointer
+# to volatile storage used as a value
+_CSUB2V_REFUSED = (
+    ("uint32_t f(volatile uint8_t *c) { return ++*c; }", _CSUB2V_FO),
+    ("uint32_t f(volatile uint8_t *c, uint32_t k) { return ++c[k]; }", _CSUB2V_FO),
+    ("volatile uint8_t m3[2][3]; uint32_t f(uint32_t k) { return ++m3[k & 1u][2]; }", _CSUB2V_FO),
+    ("struct s { uint8_t n; }; uint32_t f(volatile struct s *p) { return ++p->n; }", _CSUB2V_FO),
+    (
+        "struct s { volatile uint8_t n; uint8_t m; }; uint32_t f(struct s *p) { return ++p->m; }",
+        _CSUB2V_FO,
+    ),
+    (
+        "struct s { uint32_t n; uint8_t b; }; uint32_t f(volatile struct s *p, uint32_t k) { return ++p[k].b; }",
+        _CSUB2V_FO,
+    ),
+    (
+        "struct s { volatile uint32_t n; uint8_t b; }; uint32_t f(struct s *p, uint32_t k) { return ++p[k].b; }",
+        _CSUB2V_FO,
+    ),
+    ("uint32_t f(uint32_t k) { volatile uint8_t t = (uint8_t)k; return ++t; }", _CSUB2V_FO),
+    (
+        "struct dv { uint32_t v; volatile uint8_t r; }; struct e { uint32_t n; struct dv *p; };\n"
+        "uint32_t f(struct e *t, uint32_t i) { return ++t[i].p->r; }",
+        _CSUB2V_FO,
+    ),
+    (
+        "struct s { volatile uint32_t n; uint32_t b : 4; }; uint32_t f(struct s *p) { return p->b++; }",
+        "inc/dec of a volatile/MMIO bitfield is a follow-on",
+    ),
+    (
+        "uint32_t f(volatile uint32_t *c, uint32_t k) { uint32_t r = (*(c + k - 1u) = 5u); return r; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(volatile uint32_t *c, uint32_t k) { uint32_t r = (*c = k); return r; }",
+        "this lvalue form's assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(volatile uint32_t *c, uint32_t k) { return *(c + k) += 1u; }",
+        "this lvalue form's compound assignment as a value is a follow-on",
+    ),
+    (
+        "uint32_t f(volatile uint8_t *c, uint32_t k) { uint32_t r = (*(c + 1) |= (uint8_t)k); return r; }",
+        "this lvalue form's compound assignment as a value is a follow-on",
+    ),
+)
+
+
+def test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails():
+    """CSUB-2e. A step of a volatile scalar -- `bcir_quarantine.h`'s `return (*c)++;` of a `volatile unsigned long *`,
+    the first refusal of both quarantine units -- is one read and one write on both rails, to one digest: through a
+    pointer (`*c`, `c[k]`, `*(c + k)`, `**pp`), of a volatile array's element, a volatile member or a plain one of a
+    device struct, a volatile struct's member, member array element or array element, and a named object as a
+    statement or a value. The oracle had refused every one of them but the named object, whose postfix value it read
+    twice; the twin lowered the members only, and `gv++;` without its device accesses. A pointer sum of a pointer to
+    volatile storage is a `volatile T *` on the twin, which had typed it a `T *` -- every access through it lost. A
+    prefix step that narrows (its value a re-read), a bitfield of a device region, and an assignment through a pointer
+    to volatile storage used as a value stay refused alike. `cfront_csub2_volatile.c` runs as the original on each
+    rail's emit (`_ABI`), and each rail's linkable artifact of it, built as C11, returns what the original does."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CSUB2V_LOWERED):
+            src = _CSUB2V_HEAD + body + "\n"
+            r = compile_unit(src, check_clang=False)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"ok{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, emit = _c_run(exe, path)
+            assert f"digest={cfront_structural_digest(r.lowered):016x}" in summary, (body, summary)
+            emits = {"oracle": "\n".join(r.emitted.values()), "twin": emit}
+            _emits_compile_strictly(d, src, emits)
+            _same_volatile_accesses(emits)
+        for n, (body, why) in enumerate(_CSUB2V_REFUSED):
+            src = _CSUB2V_HEAD + body + "\n"
+            assert why in _oracle_refusal(src), (body, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"no{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                body,
+                run.stdout[-300:],
+                run.stderr[-300:],
+            )
+        if exe is not None:
+            _linkable_c11_runs_as_the_original(d, "cfront_csub2_volatile.c", "csub2_volatile")
 
 
 def test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails():
@@ -11797,6 +14067,1389 @@ def test_an_integer_constant_no_type_holds_is_refused_on_both_rails():
                 c_summary,
                 oracle_summary,
             )
+
+
+# C23's digit separators, read by one grammar on every rail (CF-DIGITSEP): a `'` is a pp-number's only before a digit
+# or a nondigit (6.4.8, `pp-number ' digit`, `pp-number ' nondigit`, the two one step), and a constant's only between
+# two digits of its part (6.4.4.1, 6.4.4.2: `digit-sequence '? digit`). Each probe's expansion is Clang's (`clang
+# -std=c23 -E -P`; GCC 13 reads each alike): the oracle had taken any `'` into a number, so `F(1',')` passed two
+# arguments.
+_DIGITSEP_PROBES = (
+    ("F(1',')", "[ 1 ',' ]"),  # one argument: `1`, then the character constant `','`
+    ("1'e+X", "1'e + 9"),  # a sign after `'e` is no exponent's
+    ("1'0e+X", "1'0e+X"),  # ... and after the `e` of a digit's it is
+    ("0x1'e+X", "0x1'e + 9"),
+    ("1'X", "1'X"),  # `'X` goes on with the number: no macro is named
+    ("1.'X", "1.'X"),
+    ("F(1'')", "[ 1 '' ]"),  # no separator before a `'`: `1`, then `''`
+    ("T(0xca'fe'u)", "\"0xca'fe'u\""),
+    # an open character constant is one token to the end of the line, its prefix with it: no macro is named
+    ("L'a", "L'a"),
+    ("u8'a", "u8'a"),
+)
+# The constants Clang and GCC take: each lowers alike and runs as Clang's build of it ...
+_DIGITSEP_INTS = ("1'000", "0x1'f", "0'7", "0b1'0", "1'2'3ull", "1'0u", "0xca'feu", "0xe'e")
+_DIGITSEP_FLOATS = (
+    "1'0.5",
+    "1.0'5",
+    "1e1'0",
+    "0x1'0p1'0",
+    "0x1.0'8p1",
+    "1'0.2'5e-1'0",
+    "0xe'ep1",
+    "0'1.5",
+)
+# ... and the units they refuse, each refused alike on both rails in the oracle's words: a separator beside no two
+# digits of its part (behind a base prefix, beside an exponent's letter, a `.` or a suffix), a `'` that is no
+# separator and so opens a character constant that never closes, and one that runs a macro's arguments out
+_DIGITSEP_INT_UNIT = "#include <stdint.h>\nuint64_t f(uint64_t s) {{ return s + {lit}; }}\n"
+_DIGITSEP_FLOAT_UNIT = "double f(double x) {{ return x + {lit}; }}\n"
+_DIGITSEP_REFUSED = (
+    (_DIGITSEP_INT_UNIT.format(lit="1'u"), 'invalid integer literal "1\'u"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="0xca'fe'u"), "invalid integer literal \"0xca'fe'u\"", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="0x'1"), 'invalid integer literal "0x\'1"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="0b'1"), 'invalid integer literal "0b\'1"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="1'_0"), 'invalid integer literal "1\'_0"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="1'c"), 'invalid integer literal "1\'c"', "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="1_0"), "invalid integer literal '1_0'", "PARSE"),
+    # a spelling is named by its first 48 characters, quoted as Python's repr quotes them: `"` where they hold a `'`
+    (
+        _DIGITSEP_INT_UNIT.format(lit="1'" + "0" * 60 + "'u"),
+        "invalid integer literal \"1'" + "0" * 46 + '"',
+        "PARSE",
+    ),
+    (
+        _DIGITSEP_INT_UNIT.format(lit="1" + "0" * 60 + "'u"),
+        "invalid integer literal '1" + "0" * 47 + "'",
+        "PARSE",
+    ),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1e'5"), 'invalid integer literal "1e\'5"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="0x1p'1"), 'invalid integer literal "0x1p\'1"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1'e5"), 'invalid floating constant "1\'e5"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1.'5"), 'invalid floating constant "1.\'5"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1.5'f"), 'invalid floating constant "1.5\'f"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1e5'f"), 'invalid floating constant "1e5\'f"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="0x1.'8p1"), 'invalid floating constant "0x1.\'8p1"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="0x1p1'f"), 'invalid floating constant "0x1p1\'f"', "PARSE"),
+    (_DIGITSEP_FLOAT_UNIT.format(lit="1'.5"), "unterminated character constant", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="1'0'"), "unterminated character constant", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="0'"), "unterminated character constant", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="L'a"), "unterminated character constant", "PARSE"),
+    (_DIGITSEP_INT_UNIT.format(lit="u8'a"), "unterminated character constant", "PARSE"),
+    ('const char *p = "ab;\n', "unterminated string literal", "PARSE"),
+    ('const char *p = u8"ab;\n', "unterminated string literal", "PARSE"),
+    ("#define S(x) #x\nconst char *p = S(1'c');\n", "unterminated macro argument list", "CPP"),
+    ("#define S(x) #x\nconst char *p = S(');\n", "unterminated macro argument list", "CPP"),
+    ('#define S(x) #x\nconst char *p = S("ab);\n', "unterminated macro argument list", "CPP"),
+    ("#if 1'c'\n#endif\nint x;\n", 'invalid integer literal "1\'c"', "CPP"),
+    ("#if 1'u == 1\n#endif\nint x;\n", 'invalid integer literal "1\'u"', "CPP"),
+    ("#if 0x'1\n#endif\nint x;\n", 'invalid integer literal "0x\'1"', "CPP"),
+)
+
+
+def _clang_c23_accepts(src: str) -> "bool | None":
+    """Whether Clang compiles `src` as C23 (`-fsyntax-only`); None where the host has no Clang."""
+    clang = shutil.which("clang")
+    if clang is None:
+        return None
+    r = subprocess.run(
+        [clang, "-std=c23", "-fsyntax-only", "-x", "c", "-"],
+        input=src,
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0
+
+
+def test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail():
+    """CF-DIGITSEP. C23 admits a `'` into a pp-number only as `pp-number ' digit` or `pp-number ' nondigit` (6.4.8), and
+    into a constant only between two digits of its part (6.4.4.1, 6.4.4.2). Every scanner had read it its own way:
+    both preprocessors took any `'` into a number, so `F(1',')` passed two arguments and `1'c'` was one number where
+    Clang and GCC read `1'c` and an unterminated `'`; both lexers dropped each `'` before reading the digits, so `1'u`,
+    `0x'1`, `1''0`, `1'.5` and `1.5'f` lowered; `1e1'0` was refused on both, and `0x1'0p1'0` on the twin alone. And the
+    oracle cut a lone quote off as a token of its own, so `S(')` stringized where the twin and both compilers ran out
+    of the argument list. Now each probe expands to Clang's tokens on both rails; each constant Clang takes lowers alike
+    and runs as Clang's build of it, its emit spelled without the separator, which C11 reads as a quote; and each unit
+    Clang refuses is refused alike, in one set of words."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = "#define S(x) #x\n#define T(x) S(x)\n#define F(a) [a]\n#define X 9\n#define L 7\n#define u8 7\n"
+    probes = head + "".join(
+        f"probe{k} {form}\n" for k, (form, _want) in enumerate(_DIGITSEP_PROBES)
+    )
+
+    def expansions(text: str) -> dict:
+        out = {}
+        for ln in text.splitlines():
+            toks = _cpp._tokens(ln)
+            if toks and toks[0].startswith("probe"):
+                out[int(toks[0][5:])] = toks[1:]
+        return out
+
+    want = {k: _cpp._tokens(w) for k, (_f, w) in enumerate(_DIGITSEP_PROBES)}
+    assert expansions(_cpp.preprocess(probes)) == want
+    clang = shutil.which("clang")
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "probes.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(probes)
+        if exe is not None:  # the twin's preprocessor, through `bcir-cc -E`
+            run = subprocess.run([_build_bcir_cc(d), "-E", path], capture_output=True, text=True)
+            assert run.returncode == 0 and expansions(run.stdout) == want, run.stdout + run.stderr
+        if clang is not None:
+            run = subprocess.run(
+                [clang, "-std=c23", "-E", "-P", path], capture_output=True, text=True
+            )
+            assert run.returncode == 0 and expansions(run.stdout) == want, run.stdout + run.stderr
+
+    def c11(text: str) -> str:
+        """Clang's verdict on `text` as C11 (`-fsyntax-only`), whose lexer reads a `'` as a quote: "" accepted."""
+        run = subprocess.run(
+            [clang, "-std=c11", "-fsyntax-only", "-I", _C, "-x", "c", "-"],
+            input=text,
+            capture_output=True,
+            text=True,
+        )
+        return "" if run.returncode == 0 else run.stderr[-800:]
+
+    for lit in _DIGITSEP_INTS + _DIGITSEP_FLOATS:
+        src = (_DIGITSEP_INT_UNIT if lit in _DIGITSEP_INTS else _DIGITSEP_FLOAT_UNIT).format(
+            lit=lit
+        )
+        assert _clang_c23_accepts(src) in (True, None), lit
+        _lowers_alike(exe, src)
+        _summary, r, entry = _oracle(src)
+        emits = [("oracle", "\n".join(r.emitted.values()))]
+        if exe is not None:
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "u.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(src)
+                emits.append(("twin", _c_run(exe, path)[1]))
+        for rail, emit in emits:  # each runs as Clang's build of the source, and is C11's
+            if _CC:
+                assert _equiv(src, emit, entry) == "MATCH", (lit, rail, emit)
+            if clang is not None:
+                assert c11("#include <stdint.h>\n" + emit) == "", (lit, rail)
+    # a floating constant a global is initialized with, spelled in each rail's linkable emit without the separator
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    src = "double g0 = 1'0.5, g1 = -2'5.0e-1'0;\ndouble f(double x) { return x + g0 + g1; }\n"
+    _summary, r, _entry = _oracle(src)
+    linkables = [("oracle", emit_linkable(r.lowered, r.emitted))]
+    if exe is not None:
+        linkables.append(("twin", _twin_linkable_of(src)))
+    for rail, linkable in linkables:
+        assert re.search(r"\bg0 = 10\.5;", linkable) and re.search(
+            r"\bg1 = -25\.0e-10;", linkable
+        ), (rail, linkable)
+        if clang is not None:
+            assert c11(linkable) == "", rail
+    for src, why, phase in _DIGITSEP_REFUSED:
+        assert _clang_c23_accepts(src) in (False, None), src
+        _refused_alike(exe, src, why, phase=phase)
+    # ... and each lexer's own rule, at its own entry: the preprocessor ends a number before a `'` that is no
+    # pp-number's and spaces the two apart, so through it neither lexer meets one. `clex.tokenize` is the oracle's
+    # entry; `bcir_cfront_compile` the twin's, which takes preprocessed text and is what a caller of the frontend
+    # alone uses. Each reads `1` and an open character constant, as the preprocessor does, not one floating constant.
+    from bcir.frontends.cfront.clex import CLexError, tokenize
+
+    lexed = ("uint32_t f(void) { return 1'.5; }\n", "double g(void) { return 0x1'.8p1; }\n")
+    for text in lexed:
+        try:
+            tokenize(text)
+        except CLexError as e:
+            assert str(e) == "unterminated character constant", (text, str(e))
+        else:
+            raise AssertionError(f"the oracle's lexer read {text!r}")
+    if clang is None:
+        return
+    units = ", ".join(
+        '"' + t.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"' for t in lexed
+    )
+    driver = (
+        '#include <string.h>\n#include "bcir_cfront.h"\nint main(void){\n'
+        f"  static const char *const units[] = {{{units}}};\n"
+        "  for (int k = 0; k < 2; k++) { bcir_cfront_result r; int rc = bcir_cfront_compile(units[k], &r);\n"
+        '    int ok = rc != 0 && !strcmp(r.diag, "unterminated character constant"); bcir_cfront_free(&r);\n'
+        "    if (!ok) return k + 1; }\n  return 0;\n}\n"
+    )
+    with tempfile.TemporaryDirectory() as d:
+        path, exe_path = os.path.join(d, "lexed.c"), os.path.join(d, "lexed")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(driver)
+        srcs = [
+            os.path.join(_C, f)
+            for f in ("bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_runtime.c")
+        ]
+        build = subprocess.run(
+            [clang, "-std=c11", "-O1", "-I", _C, *srcs, path, "-o", exe_path],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, build.stderr[-1500:]
+        run = subprocess.run([exe_path], capture_output=True, text=True)
+        assert run.returncode == 0, ("the twin's lexer", run.returncode)
+
+
+# The comment strippers' literals and the order of translation phases 2 and 3 (CF-STRIPQUOTE). Each unit Clang compiles
+# as C23 lowers alike on both rails, and each it refuses is refused alike, in one set of words.
+_STRIPQUOTE_FN = "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + 1u; }\n"
+_STRIPQUOTE_LOWERED = (
+    # an apostrophe in a skipped group, and a later comment holding one: the first had opened a literal that ran to the
+    # second, lines on, so the comment between them was never stripped
+    "#if 0\nwe don't build this\n#endif\n// it's fine\n" + _STRIPQUOTE_FN,
+    "#if 0\nit's\n#endif\n/* it's */\n" + _STRIPQUOTE_FN,
+    '#if 0\nan open "string\n#endif\n// a "quoted" word\n' + _STRIPQUOTE_FN,
+    # a comment inside a literal that closes is no comment, and a backslash-newline inside one splices it
+    "#include <stdint.h>\nuint32_t f(uint32_t x) {\n"
+    "  const char *s = \"a // b /* c */\"; char q = '/';\n  return x + (uint32_t)s[2] + (uint32_t)q; }\n",
+    '#include <stdint.h>\nuint32_t f(uint32_t x) { const char *s = "a\\\nb"; return x + (uint32_t)s[1]; }\n',
+)
+# a `//` comment a backslash continues, with LF and with CRLF ends of line: the twin had stripped before it spliced,
+# so the line after it was code there -- a function `g` the oracle and Clang read as part of the comment
+_STRIPQUOTE_CONTINUED = (
+    "// a comment continued \\\nuint32_t g(void) { return 7u; }\n" + _STRIPQUOTE_FN,
+    "// a comment continued \\\r\nuint32_t g(void) { return 7u; }\r\n" + _STRIPQUOTE_FN,
+)
+_STRIPQUOTE_REFUSED = (
+    # an open quote ends at its line in each lexer too, as the preprocessor's token does: each had read on to the next
+    # quote, lines on. Two open ones each, so a lexer reading on would pair them into one literal across the lines
+    (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { char c = 'a;\n  char d = 'b;\n  return x; }\n",
+        "unterminated character constant",
+    ),
+    (
+        '#include <stdint.h>\nconst char *p = "ab;\nconst char *q = "cd;\n'
+        "uint32_t f(uint32_t x) { return x; }\n",
+        "unterminated string literal",
+    ),
+    (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + L'a;\n}\nint k = 'b;\n",
+        "unterminated character constant",
+    ),
+    # a backslash-newline that splicing makes is not spliced again: two backslashes before two new-lines leave one
+    (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { return x; }\n\\\\\n\n",
+        "unexpected character '\\\\'",
+    ),
+)
+
+
+def test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails():
+    """CF-STRIPQUOTE. A literal whose quote does not close ends at its line on every rail, as Clang and GCC end one
+    (C 6.4p3 leaves it undefined). Both comment strippers had run it on to the next quote anywhere after it, so the `'`
+    of `don't` in a `#if 0` group kept a later `// it's fine` from being stripped, and the unit was refused where Clang
+    takes it; and both lexers had read an open one on to the next quote, lines on, where the preprocessor's token ends
+    at its line. The twin also stripped comments before it spliced lines, so a `//` comment a backslash continues
+    ended at its new-line: the function on the next line, which the oracle and Clang read as part of the comment,
+    lowered on the twin alone, from the unit and from a header alike. Now the twin splices the whole text first
+    (`splice_lines`), as the oracle does, and reads each line once."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for src in _STRIPQUOTE_LOWERED + _STRIPQUOTE_CONTINUED:
+        assert _clang_c23_accepts(src) in (True, None), src
+        summary = _lowers_alike(exe, src)
+        assert "funcs=1" in summary, (src, summary)
+        if _CC:
+            _summary, r, entry = _oracle(src)
+            assert _equiv(src, "\n".join(r.emitted.values()), entry) == "MATCH", src
+    for src, why in _STRIPQUOTE_REFUSED:
+        assert _clang_c23_accepts(src) in (False, None), src
+        _refused_alike(exe, src, why, phase="PARSE")
+    # ... and a header's text is spliced before its comments are stripped, as the unit's is
+    header = "// a header's comment continued \\\nuint32_t g(void) { return 7u; }\n#define HV 3u\n"
+    src = '#include <stdint.h>\n#include "h.h"\nuint32_t f(uint32_t x) { return x + HV; }\n'
+    summary, _r, _entry = _oracle(src, includes={"h.h": header})
+    assert "funcs=1" in summary, summary
+    if exe is None:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        with open(os.path.join(d, "h.h"), "w", encoding="utf-8") as fh:
+            fh.write(header)
+        path = os.path.join(d, "u.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        assert _c_run(exe, path)[0] == summary
+
+
+# `__LINE__` after a backslash-newline splice (CF-SPLICELINE): each probe is the line Clang and GCC give it, on both
+# rails, the unit read with LF and with CRLF ends of line. Both rails had numbered logical lines, one less than Clang's
+# for every splice above. Each probe stands where the two compilers agree: a probe after a spliced line, a `__LINE__`
+# before a splice on its line, and a macro named before the splice (Clang and GCC part over one named after it, and over
+# a `__LINE__` after it, which both rails refuse: `cpp.LINE_ON_SPLICED`).
+_SPLICELINE_UNIT = (
+    "#define A(x) __LINE__\n"
+    "int p0 = __LINE__;\n"
+    "int a = 1 + \\\n 2;\n"
+    "int p1 = __LINE__;\n"
+    "#define M(x) \\\n  ((x) + 1)\n"
+    "int p2 = __LINE__;\n"
+    "/* a block \\\n comment */\nint p3 = __LINE__;\n"
+    'const char *s = "a\\\nb";\nint p4 = __LINE__;\n'
+    # a continuation that holds `__LINE__` inside a comment expands none: the line is not refused
+    "// a comment continued \\\nint hidden = __LINE__;\n"
+    "int p5 = __LINE__;\n"
+    "int p6 = __LINE__ + \\\n1;\n"
+    "int p7 = A(1 \\\n);\n"
+    "#line 100\n"
+    "int x = \\\n 3;\n"
+    "int p8 = __LINE__;\n"
+)
+_SPLICELINE_PROBE = re.compile(r"\bint (p\d+|hline)\s*=\s*([^;]*);")
+
+
+def test_line_after_a_spliced_line_is_clangs_on_both_rails():
+    """CF-SPLICELINE. A backslash-newline deletes a new-line (translation phase 2), and both rails had numbered the
+    logical lines that left: every `__LINE__` after a spliced line was one less than Clang's and GCC's for each splice
+    above it -- after any multi-line `#define`, an assertion's line was wrong. Each rail now puts the new-lines a
+    logical line's splices deleted back where it ends (`cpp._splice`, the twin's `splice_lines`), so each line keeps
+    its physical number, in a header too and with CRLF ends of line; a function that returns `__LINE__` runs as
+    Clang's build of it. A `__LINE__` that stands after a splice on its own line, which the compilers give the
+    physical line it stands on, is refused alike in a text line and in a `#if`, as `LINE_IN_CONTINUED_ARGS` is."""
+
+    def probes(text: str) -> dict:
+        return {
+            m.group(1): "".join(_cpp._tokens(m.group(2))) for m in _SPLICELINE_PROBE.finditer(text)
+        }
+
+    clang = shutil.which("clang")
+    for eol in ("\n", "\r\n"):
+        src = _SPLICELINE_UNIT.replace("\n", eol)
+        got = probes(_cpp.preprocess(src))
+        assert len(got) == 9, got
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "u.c")
+            with open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write(src)
+            if clang is not None:
+                run = subprocess.run(
+                    [clang, "-std=c23", "-E", "-P", path], capture_output=True, text=True
+                )
+                assert run.returncode == 0 and probes(run.stdout) == got, (
+                    repr(eol),
+                    probes(run.stdout),
+                    got,
+                )
+            if _CC:
+                run = subprocess.run(
+                    [_build_bcir_cc(d), "-E", path], capture_output=True, text=True
+                )
+                assert run.returncode == 0 and probes(run.stdout) == got, (
+                    repr(eol),
+                    run.stdout + run.stderr,
+                )
+    # ... in a header too, which is spliced as the unit is
+    header = "#define HM(x) \\\n  ((x) + 1)\nstatic const int hline = __LINE__;\n"
+    unit = '#include "h.h"\nint p9 = __LINE__;\n'
+    got = probes(_cpp.preprocess(unit, includes={"h.h": header}))
+    assert got == {"hline": "3", "p9": "2"}, got
+    with tempfile.TemporaryDirectory() as d:
+        for name, text in (("h.h", header), ("u.c", unit)):
+            with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        if clang is not None:
+            run = subprocess.run(
+                [clang, "-std=c23", "-E", "-P", os.path.join(d, "u.c")],
+                capture_output=True,
+                text=True,
+            )
+            assert run.returncode == 0 and probes(run.stdout) == got, run.stdout
+        if _CC:
+            run = subprocess.run(
+                [_build_bcir_cc(d), "-E", os.path.join(d, "u.c")], capture_output=True, text=True
+            )
+            assert run.returncode == 0 and probes(run.stdout) == got, run.stdout + run.stderr
+    # a function that returns its line lowers alike with the line Clang gives it (`_equiv`'s harness sets lines before
+    # the source, which moves the original's own `__LINE__`, so the value is held where the preprocessor gives it)
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    src = "#include <stdint.h>\n#define K(x) \\\n  ((x) * 2u)\nuint32_t f(uint32_t x) { return K(x) + __LINE__; }\n"
+    assert "+4;" in _cpp.preprocess(src).replace(" ", ""), _cpp.preprocess(src)[-80:]
+    _lowers_alike(exe, src)
+    refused = (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + \\\n__LINE__; }\n",
+        "#if 1 + \\\n__LINE__ > 0\n#endif\nint z;\n",
+        # a splice that ends the text, and a line after an invocation its arguments' new-lines continued
+        "int z = 1 + \\\n__LINE__;",
+        "#define B(x) (x)\nint q = B(1\n);\nint z = 1 + \\\n__LINE__;\n",
+    )
+    for src in refused:
+        _refused_alike(exe, src, "__LINE__ on a line a backslash continues")
+    # ... and a header's line, whose splices are its own
+    header = "int hz = 1 + \\\n__LINE__;\n"
+    unit = '#include "h.h"\nint z;\n'
+    assert (
+        _oracle_refusal(unit, includes={"h.h": header})
+        == "__LINE__ on a line a backslash continues"
+    )
+    if exe is None:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        for name, text in (("h.h", header), ("u.c", unit)):
+            with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        run = subprocess.run([exe, os.path.join(d, "u.c")], capture_output=True, text=True)
+    assert (run.returncode, run.stdout.strip()) == (
+        1,
+        "CPP-ERR __LINE__ on a line a backslash continues",
+    ), run.stdout
+
+
+# A computed `#include`, `#embed`, `__has_include` and `__has_embed` operand, read by one predicate on both rails
+# (CF-INCLUDEX: the oracle's `_header_operand`, the twin's `header_operand`). The units run beside `h.h` (`HV` 3u),
+# `d.bin` (two bytes) and `e.bin` (none): the oracle reads them from its mounts, the twin from the directory.
+_INCLUDEX_FILES = {"h.h": b"#define HV 3u\n", "d.bin": b"AB", "e.bin": b""}
+_INCLUDEX_FN = "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + HV; }\n"
+_INCLUDEX_ARRAY = "#include <stdint.h>\nstatic const unsigned char b[] = {\n#embed %s\n};\n"
+_INCLUDEX_LOWERED = {
+    "a quoted computed include": '#define HDR "h.h"\n#include HDR\n' + _INCLUDEX_FN,
+    "a stringized one": "#define S(x) #x\n#include S(h.h)\n" + _INCLUDEX_FN,
+    "a computed <stdint.h>": "#define SYS <stdint.h>\n#include SYS\n#define HV 1u\n" + _INCLUDEX_FN,
+    "a computed <h.h>": "#define SH <h.h>\n#include SH\n" + _INCLUDEX_FN,
+    # a header name written as one is no macro's: the oracle had read `<h.h>` as `<nothere.h>` here
+    "a macro named inside <h.h>": "#define h nothere\n#include <h.h>\n" + _INCLUDEX_FN,
+    "a computed __has_include": '#define HDR "h.h"\n#if __has_include(HDR)\n#include HDR\n#endif\n'
+    + _INCLUDEX_FN,
+    "an embed": _INCLUDEX_ARRAY % '"d.bin"' + "uint32_t f(uint32_t x) { return x + b[1]; }\n",
+    "a computed embed": '#define E "d.bin"\n'
+    + _INCLUDEX_ARRAY % "E"
+    + "uint32_t f(uint32_t x) { return x + b[1] + (uint32_t)sizeof b; }\n",
+    # C23 6.10.1: 1 for a resource that holds bytes, 2 for an empty one, 0 for one not found
+    "__has_embed's three answers": '#if __has_embed("e.bin") == 2 && __has_embed("d.bin") == 1 '
+    '&& __has_embed("no.bin") == 0\n#define HV 1u\n#endif\n' + _INCLUDEX_FN,
+}
+_INCLUDEX_REFUSED = (
+    ('#define HDR "nope.h"\n#include HDR\n' + _INCLUDEX_FN, "#include nope.h not found"),
+    ("#include h.h\n" + _INCLUDEX_FN, "malformed #include"),
+    ("#define B <h.h\n#include B\n" + _INCLUDEX_FN, "unterminated #include name"),
+    (
+        "#include <stdint.h\n#define HV 1u\nuint32_t f(uint32_t x) { return x + HV; }\n",
+        "unterminated #include name",
+    ),
+    ("#if __has_include(foo)\n#endif\n" + _INCLUDEX_FN, "malformed __has_include"),
+    ("#define E nothing\n" + _INCLUDEX_ARRAY % "E", "malformed #embed"),
+    (_INCLUDEX_ARRAY % '"nope.bin"', "#embed nope.bin not found"),
+    # one bound on both rails: a header name past 1023 bytes
+    ('#include "' + "a" * 1024 + '.h"\n' + _INCLUDEX_FN, "#include name too long"),
+)
+# ... and C23's `#embed` parameters, which neither rail reads, refused alike where Clang reads them: both had embedded
+# the whole file past a `limit(1)`, two bytes where Clang's build has one
+_INCLUDEX_PARAMETERS = (
+    _INCLUDEX_ARRAY % '"d.bin" limit(1)',
+    '#if __has_embed("d.bin" limit(1))\n#endif\nint z;\n',
+)
+
+
+def _clang_c23_in(d: str, src: str) -> "bool | None":
+    """Whether Clang compiles `src` as C23 beside the files in `d` (`-fsyntax-only`, `-I d`); None where the host has no
+    Clang, or one that predates `#embed` (Clang 19)."""
+    clang = shutil.which("clang")
+    if clang is None:
+        return None
+    path = os.path.join(d, "probe.c")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(src)
+    if "embed" in src:
+        with open(os.path.join(d, "embed_probe.c"), "w", encoding="utf-8") as fh:
+            fh.write('static const unsigned char p[] = {\n#embed "d.bin"\n};\n')
+        old = subprocess.run(
+            [clang, "-std=c23", "-fsyntax-only", os.path.join(d, "embed_probe.c")],
+            capture_output=True,
+        )
+        if old.returncode != 0:
+            return None
+    return (
+        subprocess.run(
+            [clang, "-std=c23", "-fsyntax-only", "-I", d, path], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
+def test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails():
+    """CF-INCLUDEX. A `#include` or `#embed` whose operand is no header name is macro-expanded and must then be one
+    (C11 6.10.2p4): the oracle did so, the twin refused every computed operand (`malformed #include`). A header name
+    written as one is read as it stands, no macro replaced inside it (6.10.2p2-3): the oracle had expanded `<h.h>` too,
+    so a macro named `h` changed the header, and had taken a bare `#include h.h` for a quoted one and an unterminated
+    `<stdint.h` for a whole one. `__has_include` reads its operand alike, and the twin now evaluates `__has_embed`,
+    which it had read as a malformed expression, with C23's three answers, which the oracle now gives too (an empty
+    resource is 2). A file not found is refused in one set of words, and C23's `#embed` parameters, which neither rail
+    reads, are refused alike: both had embedded the whole file past a `limit(1)`."""
+    from bcir.frontends.cfront.cpp import EMBED_PARAMETERS
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    includes = {"h.h": _INCLUDEX_FILES["h.h"].decode()}
+    embeds = {k: v for k, v in _INCLUDEX_FILES.items() if k.endswith(".bin")}
+
+    def oracle(src: str):
+        """The oracle's summary of `src`, or its refusal's reason."""
+        try:
+            r = compile_unit(src, check_clang=False, includes=includes, embeds=embeds)
+        except Exception as e:  # noqa: BLE001 -- each front-end phase's refusal, by its reason
+            return None, str(e)
+        return _summary_line(r), ""
+
+    with tempfile.TemporaryDirectory() as d:
+        for name, data in _INCLUDEX_FILES.items():
+            with open(os.path.join(d, name), "wb") as fh:
+                fh.write(data)
+
+        def twin(src: str) -> tuple:
+            path = os.path.join(d, "u.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            return run.returncode, (run.stdout.splitlines() or [""])[0]
+
+        for label, src in _INCLUDEX_LOWERED.items():
+            assert _clang_c23_in(d, src) in (True, None), label
+            summary, why = oracle(src)
+            assert summary is not None, (label, why)
+            if exe is not None:
+                assert twin(src) == (0, summary), (label, twin(src), summary)
+        for src, want in _INCLUDEX_REFUSED:
+            assert _clang_c23_in(d, src) in (False, None), src
+            assert oracle(src) == (None, want), (src, oracle(src))
+            if exe is not None:
+                assert twin(src) == (1, f"CPP-ERR {want}"), (src, twin(src))
+        for src in _INCLUDEX_PARAMETERS:
+            assert oracle(src) == (None, EMBED_PARAMETERS), (src, oracle(src))
+            if exe is not None:
+                assert twin(src) == (1, f"CPP-ERR {EMBED_PARAMETERS}"), (src, twin(src))
+
+
+def test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more():
+    """CF-MACROCAP. The twin's macro table held 1024 macros of 2 KiB each, whatever each spelled, and refused the
+    1025th (`too many macros`); the oracle took any number. The twin now holds each macro at its own size in a table
+    grown from its allocator, found by a hash index, up to one bound on both rails: 65 534 macros at once, the 5
+    predefined ones and each `-D` included, for the twin's hide sets name a macro by a 16-bit index. A unit at the bound
+    lowers alike and one past it is refused alike; at the bound a redefinition, and a new macro where one was undefined,
+    are taken. The index keeps every name as macros are undefined and redefined, and a chain of 2 000 macros, whose hide
+    sets outgrow the old table, expands alike."""
+    from bcir.frontends.cfront.cpp import _MAX_MACROS, TOO_MANY_MACROS, Preprocessor
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    assert (
+        len(Preprocessor().macros) == 5
+    )  # the bound lands at one count of the unit's own on both rails
+    defs = "".join(f"#define M{k} {k}\n" for k in range(_MAX_MACROS - 5))
+    last = f"M{_MAX_MACROS - 6}"
+    _lowers_alike(exe, defs + f"unsigned f(unsigned x) {{ return x + {last} + M0; }}\n")
+    _refused_alike(
+        exe,
+        defs + f"#define MX 1\nunsigned f(unsigned x) {{ return x + {last}; }}\n",
+        TOO_MANY_MACROS,
+    )
+    # (a function-like one too, whose parameters are held beside its body)
+    _lowers_alike(
+        exe,
+        defs
+        + "#undef M7\n#undef M8\n#define MX 1\n#define MF(a, b) ((a) * (b) + M0)\n#define M0 5\n"
+        + f"unsigned f(unsigned x) {{ return MF(x, MX) + {last}; }}\n",
+    )
+    # the index under churn: 3 000 macros, every third undefined and every fifth (re)defined, each name then tested
+    lines = [f"#define N{k} {k}" for k in range(3000)]
+    lines += [f"#undef N{k}" for k in range(0, 3000, 3)]
+    lines += [f"#define N{k} {k + 7}" for k in range(0, 3000, 5)]
+    live = {k: k + 7 if k % 5 == 0 else k for k in range(3000) if k % 3 or k % 5 == 0}
+    for k in range(3000):
+        lines.append(
+            f"#if !defined(N{k}) || N{k} != {live[k]}\n#error N{k}\n#endif"
+            if k in live
+            else f"#ifdef N{k}\n#error N{k}\n#endif"
+        )
+    _lowers_alike(exe, "\n".join(lines) + "\nunsigned f(unsigned x) { return x + N1 + N5; }\n")
+    # a chain of 2 000 macros, past the old table: its hide sets grow to 2 000 elements (2 001 000 charged in all)
+    chain = "".join(f"#define C{k} C{k + 1}\n" for k in range(1, 2000)) + "#define C2000 7u\n"
+    _lowers_alike(exe, chain + "unsigned f(unsigned x) { return x + C1; }\n")
+
+
+# CSUB-2e: an address folded into a member access, `(&v)->m` -- as `bcir_kplan.c`'s `MS_OP(&v, i)` writes it over an
+# object -- is the object's own member, `v.m`, on both rails (C11 6.5.2.3p4, 6.5.3.2p3), and `(&*p)->m` is `p->m` (`&*E`
+# is `E`). The twin's CF-PAREN pass folds the tokens (`unparen_body`), the oracle its parse (`_name_rooted`); both had
+# refused them. On the way the twin takes `&(x)` and `*(p)`, a parenthesized operand of `&` and `*`, which the oracle's
+# parentheses never kept, and an inner run's own closers (`(&(x))`, `(++(y))`), which it had refused as a whole.
+_AMP_H = "#include <stdint.h>\nstruct v { uint32_t n; uint32_t data[4]; };\n"
+_AMP_LOWERED = tuple(
+    _AMP_H + body
+    for body in (
+        "uint32_t f(uint32_t k){ struct v x = {2, {1,2,3,4}}; (&x)->data[k & 3u] = 9u;"
+        " return (&x)->data[k & 3u] + (&x)->n; }\n",
+        "uint32_t f(uint32_t k){ struct v a[3] = {{1, {0}}, {3, {0}}, {5, {0}}}; return (&a[k % 3u])->n + (&a[0])->n; }\n",
+        "static struct v g[2] = {{1, {2}}, {3, {4}}};\n"
+        "uint32_t f(uint32_t k){ struct v *p = g + (k & 1u); return p->n + (&g[1])->data[0]; }\n",
+        "struct in { uint32_t a, b; };\nstruct w { uint32_t n; struct in i; };\n"
+        "uint32_t f(uint32_t k){ struct w x = {1, {2, 3}}; (&x.i)->b = k; return (&x.i)->a + (&x.i)->b; }\n",
+        "#define MS_OP(s, i) ((s)->data[(i)])\n"
+        "uint32_t f(uint32_t k){ struct v x = {2, {1,2,3,4}}; return MS_OP(&x, k & 3u) + 1u; }\n",
+        "uint32_t f(uint32_t k){ struct v x = {k, {0}}; return ((&x))->n + ((&(x)))->n + (&(x))->n; }\n",
+        "struct d { volatile uint32_t r; uint32_t n; };\n"
+        "uint32_t f(uint32_t k){ struct d x = {1, 2}; (&x)->r = k; return (&x)->r + (&x)->n; }\n",
+        "uint32_t f(struct v *p){ (&*p)->n = 4u; return (&*p)->n + (&p[0])->n + (&*(p))->data[1] + (&(p[0]))->n; }\n",
+        "uint32_t f(uint32_t k){ struct v x = {k, {1, 2}}; uint32_t *p = &(x.n); uint32_t *q = &((x).data[1]);"
+        " return *p + *q + (&(x.data[1]) == &x.data[1]); }\n",
+        "uint32_t f(uint32_t k){ uint32_t y = k; uint32_t *p = &(y), *q = &((y)); return *p + *q; }\n",
+        "uint32_t f(uint32_t k){ uint32_t y = k; return (++(y)) + (--((y))) + (y++); }\n",
+        "static uint32_t g(uint32_t a, uint32_t b){ return a - b; }\n"
+        "uint32_t f(uint32_t k){ uint32_t y = k; return g(1u, (y)) + g((y), 2u) + g(((y)), ((k))); }\n",
+        "uint32_t f(struct v *p){ (*(p)).n = 2u; return (*(p)).n + (*((p))).data[0]; }\n",
+        "uint32_t f(uint32_t *p, uint32_t k, uint32_t m){ *(p) = 3u; return *(p) + *((p)) * 2u + k * (m) + (k) * ((m)); }\n",
+    )
+)
+# ... each spelled form with its plain one's summary on both rails
+_AMP_SPELLED = tuple(
+    (_AMP_H + a, _AMP_H + b)
+    for a, b in (
+        (
+            "uint32_t f(uint32_t k){ struct v x = {2, {1,2,3,4}}; return (&x)->data[k & 3u] + (&x)->n; }\n",
+            "uint32_t f(uint32_t k){ struct v x = {2, {1,2,3,4}}; return x.data[k & 3u] + x.n; }\n",
+        ),
+        (
+            "uint32_t f(struct v *p){ return (&*p)->n; }\n",
+            "uint32_t f(struct v *p){ return p->n; }\n",
+        ),
+        (
+            "uint32_t f(uint32_t k){ uint32_t y = k; uint32_t *p = &(y); return *p; }\n",
+            "uint32_t f(uint32_t k){ uint32_t y = k; uint32_t *p = &y; return *p; }\n",
+        ),
+        (
+            "uint32_t f(struct v *p){ return (*(p)).n; }\n",
+            "uint32_t f(struct v *p){ return p->n; }\n",
+        ),
+        (
+            "uint32_t f(uint32_t k, uint32_t m){ return k * (m) + (k & (m)); }\n",
+            "uint32_t f(uint32_t k, uint32_t m){ return k * m + (k & m); }\n",
+        ),
+    )
+)
+
+
+def test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails():
+    """CSUB-2e. `(&v)->m` is `v.m` and `(&*p)->m` is `p->m` on both rails -- `bcir_kplan.c`'s `MS_OP(&v, i)`, which
+    had stopped it at `parse error: )`, now compiles clean (the ratchet's 32nd unit). Of a local, an element, a global's
+    element, a member, a device member, through a pointer, under a macro and under parentheses; and `&(x)`, `*(p)` and
+    an inner run's own closers on the twin, as the oracle reads them. Each unit lowers alike, each rail's emit runs as
+    Clang's build of the source and compiles as C11 strictly, and each spelled form has its plain one's summary."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_AMP_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"a{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for spelled, plain in _AMP_SPELLED:
+        assert _lowers_alike(exe, spelled) == _lowers_alike(exe, plain), (spelled, plain)
+
+
+# CSUB-2e: a pointer assigned as a value -- a member (`!(t->pieces = alloc(..))`), an element of an array of pointers, of
+# function pointers or through a `T **` (`r = (v[1] = x)`), a dereferenced `T **` (`*low = *high = &absent`), a function
+# pointer member -- is stored, then reloaded, as a scalar one is, on both rails. Both had refused it (a function pointer
+# member the oracle alone).
+_PTRVALUE_LOWERED = tuple(
+    "#include <stdint.h>\n" + body
+    for body in (
+        "static uint32_t absent = 7u;\nuint32_t f(uint32_t k){ uint32_t a = k, b = 2u; uint32_t *pa = &a, *pb = &b; uint32_t **low = &pa, **high = &pb; *low = *high = &absent; return **low + **high + *pa; }\n",
+        "struct t { uint32_t *pieces; uint32_t n; };\nstatic uint32_t buf[4] = {5, 6, 7, 8};\nuint32_t f(uint32_t k){ struct t s = {0, k}; struct t *t = &s; if (!(t->pieces = buf)) return 0; return t->pieces[k & 3u] + 1u; }\n",
+        "struct t { uint32_t *p; };\nstatic uint32_t buf[2] = {3, 4};\nuint32_t f(uint32_t k){ struct t s = {0}; uint32_t *r = (s.p = buf + (k & 1u)); return *r + *s.p; }\n",
+        "uint32_t f(uint32_t k){ uint32_t x = k, y = 9u; uint32_t *v[2] = {&y, &y}; uint32_t *r = (v[1] = &x); return *r + *v[1] + *v[0]; }\n",
+        "uint32_t f(uint32_t k){ uint32_t y = 9u; uint32_t *v[2] = {&y, &y}; return (v[k & 1u] = 0) == 0; }\n",
+        "uint32_t f(uint32_t k){ uint32_t x = k; uint32_t *p = 0; uint32_t **pp = &p; uint32_t *r = (*pp = &x); return *r + *p; }\n",
+        "struct n { uint32_t v; };\nuint32_t f(uint32_t k){ struct n a = {k}; struct n *p = 0; struct n **pp = &p; struct n *r = (*pp = &a); return r->v + p->v; }\n",
+        "struct t { uint32_t *p; };\nstatic uint32_t buf[2] = {3, 4};\nuint32_t f(uint32_t k){ struct t s = {0}; struct t *t = &s; return (t->p = (k & 1u) ? buf : 0) != 0; }\n",
+        "struct t { uint32_t *cur; };\nstatic uint32_t buf[4] = {1, 2, 3, 0};\nuint32_t f(uint32_t k){ struct t s = {buf}; struct t *t = &s; uint32_t n = 0; while (*(t->cur = t->cur + 1) != 0u) n++; return n + k; }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstruct t { op_t fn; };\nuint32_t f(uint32_t k){ struct t s = {0}; op_t g = (s.fn = inc); return g(k); }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstatic uint32_t dbl(uint32_t x){ return x * 2u; }\nstruct t { op_t fn; uint32_t n; };\nuint32_t f(uint32_t k){ struct t s = {0, 1}; struct t *t = &s; op_t g = (s.fn = inc); op_t h = (t->fn = (k & 1u) ? dbl : inc); op_t a[2] = {inc, inc}; op_t i = (a[1] = dbl); return g(k) + h(k) + i(k) + s.fn(1u); }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstatic uint32_t dbl(uint32_t x){ return x * 2u; }\nuint32_t f(uint32_t k){ op_t a[2] = {inc, inc}; op_t i = (a[k & 1u] = 0) ? inc : dbl; return i(k); }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstatic uint32_t dbl(uint32_t x){ return x * 2u; }\nuint32_t f(uint32_t k){ uint32_t x = k, y = 1u; uint32_t *s[2] = {&y, &y}; uint32_t **v = s; uint32_t *r = (v[1] = &x); return *r + *s[1] + ((v[0] = 0) == 0); }\n",
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t inc(uint32_t x){ return x + 1u; }\nstatic uint32_t dbl(uint32_t x){ return x * 2u; }\nuint32_t f(uint32_t k){ uint32_t x = k; uint32_t *s[2][2] = {{0, 0}, {0, 0}}; uint32_t *r = (s[1][0] = &x); return *r; }\n",
+        "static uint32_t absent;\nuint32_t f(uint32_t **low, uint32_t **high){ *low = *high = &absent; return **low; }\n",
+        "struct t { uint32_t *pieces; };\nstatic uint32_t buf[4];\nuint32_t f(struct t *t){ if (!(t->pieces = buf)) return 0; return t->pieces[0] + 1u; }\n",
+        "uint32_t f(uint32_t **v, uint32_t *x){ uint32_t *r = (v[1] = x); return *r; }\n",
+    )
+)
+# ... and the value form beside its spelled statements, to one summary
+_PTRVALUE_SPELLED = tuple(
+    (
+        "#include <stdint.h>\nstruct t { uint32_t *p; };\nstatic uint32_t buf[2] = {3, 4};\n" + a,
+        "#include <stdint.h>\nstruct t { uint32_t *p; };\nstatic uint32_t buf[2] = {3, 4};\n" + b,
+    )
+    for a, b in (
+        (
+            "uint32_t f(uint32_t k){ struct t s = {0}; uint32_t *r = (s.p = buf + (k & 1u)); return *r; }\n",
+            "uint32_t f(uint32_t k){ struct t s = {0}; s.p = buf + (k & 1u); uint32_t *r = s.p; return *r; }\n",
+        ),
+        (
+            "uint32_t f(uint32_t k){ uint32_t x = k; uint32_t *p = 0; uint32_t **pp = &p; uint32_t *r = (*pp = &x);"
+            " return *r; }\n",
+            "uint32_t f(uint32_t k){ uint32_t x = k; uint32_t *p = 0; uint32_t **pp = &p; *pp = &x; uint32_t *r = *pp;"
+            " return *r; }\n",
+        ),
+    )
+)
+
+# ... and what stays the oracle's follow-on is refused for its reason on both rails: a pointer's compound assignment as a
+# value (a member, an element, `*pp`), and an assignment into device storage as a value, whose reload would be a second
+# access -- a volatile struct's member through a pointer and of a local, a struct holding volatile storage, a volatile
+# bit-field. The twin had refused the first in its own words (`)`), and lowered the second with a reload.
+_ASSIGN_FO = "this lvalue form's assignment as a value is a follow-on"
+_COMPOUND_FO = "this lvalue form's compound assignment as a value is a follow-on"
+_PTRVALUE_REFUSED = tuple(
+    (
+        "#include <stdint.h>\nstruct t { uint32_t *p; uint32_t n; unsigned bf : 3; };\n"
+        "struct u { volatile uint32_t n; uint32_t m; };\nstatic uint32_t buf[4];\n" + body + "\n",
+        why,
+    )
+    for body, why in (
+        (
+            "uint32_t f(struct t *t){ uint32_t *r = (t->p += 1); return (uint32_t)(r - buf); }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(uint32_t k){ struct t s = {buf}; uint32_t *r = (s.p -= 0); return (uint32_t)(r - buf) + k; }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(uint32_t k){ uint32_t *v[2] = {buf, buf}; uint32_t *r = (v[1] += 2); return (uint32_t)(r - buf) + k; }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(uint32_t **v){ uint32_t *r = (v[1] += 2); return (uint32_t)(r - buf); }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(uint32_t **v){ uint32_t *r = (*v += 2); return (uint32_t)(r - buf); }",
+            _COMPOUND_FO,
+        ),
+        (
+            "uint32_t f(volatile struct t *t){ uint32_t *r = (t->p = buf); return r == buf; }",
+            _ASSIGN_FO,
+        ),
+        ("uint32_t f(volatile struct t *t){ uint32_t r = (t->n = 1u); return r; }", _ASSIGN_FO),
+        ("uint32_t f(volatile struct t *t){ uint32_t r = (t->n += 1u); return r; }", _COMPOUND_FO),
+        ("uint32_t f(volatile struct t *t){ uint32_t r = (t->bf = 1u); return r; }", _ASSIGN_FO),
+        ("uint32_t f(struct u *t){ uint32_t r = (t->m = 1u); return r; }", _ASSIGN_FO),
+        (
+            "uint32_t f(void){ volatile struct t s = {0}; uint32_t r = (s.n = 1u); return r; }",
+            _ASSIGN_FO,
+        ),
+    )
+)
+
+
+def test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails():
+    """CSUB-2e. A pointer assigned as a value is stored, then reloaded, as a scalar one is, on both rails: a member,
+    through a pointer and of a value; an element of an array of pointers, of function pointers and through a `T **`,
+    a null pointer stored too; a dereferenced `T **` of a scalar or a struct pointee, in a chain (`*low = *high =
+    &absent`); a function pointer member. Each unit lowers alike, each rail's emit runs as Clang's build of the source
+    and compiles as C11 strictly, and the value form has its spelled statements' summary. A compound assignment of a
+    pointer used as a value and an assignment into a device struct used as a value stay refused, as the oracle's
+    follow-ons."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_PTRVALUE_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"p{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for value, spelled in _PTRVALUE_SPELLED:
+        assert _lowers_alike(exe, value) == _lowers_alike(exe, spelled), (value, spelled)
+    for src, why in _PTRVALUE_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+
+
+# CSUB-2e: an object through a loaded pointer on the twin, as the oracle lowers it -- the address of a member of the
+# struct a loaded pointer reaches (`&s->t->arena`, `bcir_bpe.c`), of a scalar, nested, pointer or volatile member, of a
+# member array's element, and of a pointer element (`&s->pp[j]`); and a member array's element stored, compound-assigned,
+# assigned as a value and stepped (`s->t->arr[i]++`). The twin had refused each.
+_LOADED_HDR = (
+    "#include <stdint.h>\n"
+    "struct ar { uint8_t *base; uint32_t used; };\n"
+    "struct tk { struct ar arena; uint32_t n; uint32_t *p; uint32_t arr[3]; const char *name; uint16_t m[2][3];"
+    " _Atomic uint32_t aa[2]; };\n"
+    "struct st { struct tk *t; uint32_t k; uint32_t **pp; };\n"
+    "struct dv { volatile uint32_t r; uint32_t arr[2]; };\n"
+    "struct ds { struct dv *d; };\n"
+    "static uint32_t buf[4] = {1, 2, 3, 4};\n"
+    "static uint32_t used_of(struct ar *a){ return a->used + 1u; }\n"
+    "static uint32_t at(uint32_t *a){ return *a; }\n"
+)
+_LOADED_SETUP = (
+    'struct tk tk = {{0, 7u}, 3u, buf, {10u, 20u, 30u}, "ab", {{1, 2, 3}, {4, 5, 6}}, {5u, 6u}}; uint32_t *pv[2] = {buf, buf + 1};'
+    " struct st s0 = {&tk, 1u, pv}; struct st *s = &s0; "
+)
+_LOADED_LOWERED = tuple(
+    _LOADED_HDR + "uint32_t f(uint32_t k){ " + _LOADED_SETUP + body + " }\n"
+    for body in (
+        "return used_of(&s->t->arena) + k;",
+        "struct ar *a = &s->t->arena; a->used += k; return tk.arena.used;",
+        "return at(&s->t->n) + at(&s->t->arena.used) + k;",
+        "const char **q = &s->t->name; return (uint32_t)(*q)[1] + k;",
+        "uint32_t **q = &s->t->p; *q = buf + 2; return *tk.p + k;",
+        "uint32_t *e = &s->t->arr[1]; *e = k; return tk.arr[1] + at(&s->t->arr[2]);",
+        "uint32_t **q = &s->pp[1]; return **q + k;",
+        "uint16_t *e = &s->t->m[1][2]; return (uint32_t)*e + k;",
+        "s->t->arr[1]++; ++s->t->arr[2]; uint32_t r = s->t->arr[0]--; return r + tk.arr[0] + tk.arr[1] + tk.arr[2] + k;",
+        "s->t->arr[1] = k; s->t->arr[2] += k; s->t->arr[0] |= 1u; return tk.arr[0] + tk.arr[1] + tk.arr[2];",
+        "uint32_t r = (s->t->arr[1] = k); uint32_t q = (s->t->arr[2] += k); return r + q + tk.arr[2];",
+        "s->t->m[1][2] = (uint16_t)k; s->t->m[0][1] += 2u; return (uint32_t)tk.m[1][2] + tk.m[0][1];",
+        "s->t->aa[1]++; uint32_t r = (s->t->aa[0] += k); uint32_t q = s->t->aa[1]--; return r + q + s->t->aa[1];",
+        "uint32_t r = 0; for (s->t->arr[1] = 0; s->t->arr[1] < 3u; s->t->arr[1]++) r += s->t->arr[1]; return r + k;",
+        "struct dv dv = {0, {1u, 2u}}; struct ds d0 = {&dv}; struct ds *d = &d0; volatile uint32_t *r = &d->d->r; *r = k;"
+        " d->d->arr[1] = 3u; return dv.r + dv.arr[1];",
+    )
+)
+# ... and what stays the oracle's follow-on is refused for its reason: an assignment as a value into device storage
+# through a loaded pointer, whose reload would be a second access
+_LOADED_REFUSED = tuple(
+    (_LOADED_HDR + "uint32_t f(struct ds *d){ " + body + " }\n", why)
+    for body, why in (
+        (
+            "uint32_t r = (d->d->r = 5u); return r;",
+            "this lvalue form's assignment as a value is a follow-on",
+        ),
+        (
+            "uint32_t r = (d->d->arr[1] = 5u); return r;",
+            "this lvalue form's assignment as a value is a follow-on",
+        ),
+        (
+            "uint32_t r = (d->d->arr[1] += 5u); return r;",
+            "this lvalue form's compound assignment as a value is a follow-on",
+        ),
+    )
+)
+
+
+def test_an_object_through_a_loaded_pointer_lowers_alike_on_both_rails():
+    """CSUB-2e. Through a loaded pointer, both rails take the address of a struct, scalar, nested, pointer and volatile
+    member, of a member array's element (of two dimensions too) and of a pointer element, and store, compound-assign,
+    assign as a value and step a member array's element -- an `_Atomic` one as one atomic step -- in a for-step too. Each unit lowers alike, each rail's emit
+    runs as Clang's build of the source and compiles as C11 strictly; an assignment as a value into device storage is
+    refused alike, in the oracle's words."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_LOADED_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"l{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for src, why in _LOADED_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+
+
+# CSUB-5: the <string.h> reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`,
+# freestanding since C23 (4p7) -- are libc edges on both rails, as `memcpy` is: called verbatim, opaque to R18, each
+# typed by its declared result. Both had read each as a call of an undefined function (R18), the oracle typing its
+# result an `int32_t` -- the first refusal of `bcir_spm.c`, `bcir_bpe.c`, `bcir_channel.c`, `bcir_verify.c`,
+# `bcir_diag.c`, `bcir_decoder_gem.c` and `bcir_decoder_pack.c`.
+_STRREAD_HDR = (
+    '#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\nstatic const char hay[] = "gather.matmul";\n'
+    "static const uint8_t a8[4] = {1, 2, 3, 4};\n"
+)
+_STRREAD_LOWERED = tuple(
+    _STRREAD_HDR + "uint32_t f(uint32_t k){ " + body + " }\n"
+    for body in (
+        "uint8_t b[4] = {1, 2, 3, (uint8_t)k}; return memcmp(a8, b, 4) == 0;",
+        "uint8_t b[4] = {1, 2, 3, (uint8_t)k}; int r = memcmp(a8, b, sizeof b); return r < 0 ? 1u : r > 0 ? 2u : 0u;",
+        "return (uint32_t)strlen(hay) + k;",
+        "size_t n = strlen(hay + (k & 3u)); return (uint32_t)n;",
+        "const uint8_t *p = (const uint8_t *)memchr(a8, (int)(k & 7u), 4); return p ? (uint32_t)(p - a8) : 9u;",
+        'return (uint32_t)(strcmp(hay, "gather.matmul") == 0) + k;',
+        'return (uint32_t)(strncmp(hay, "gath", 4 + (k & 1u)) == 0);',
+        'const char *p = strstr(hay, "matmul"); return p ? (uint32_t)(p - hay) + k : 0u;',
+        'return strstr(hay, "gather") != NULL ? 1u + k : k;',
+        "const char *p = strchr(hay, '.'); const char *q = strrchr(hay, 'a');"
+        " return (uint32_t)(p - hay) * 100u + (uint32_t)(q - hay) + k;",
+        "char *p = strchr((char *)hay, 'm' + (int)(k & 0u)); return p != 0;",
+        "char b[8]; memset(b, 'x', 7); b[7] = 0; return (uint32_t)strlen(b) + (uint32_t)memcmp(b, \"xxxx\", 4) + k;",
+        # each result's type, where the value shows it: `strlen`'s unsigned `size_t`, a comparison's signed `int`
+        "return (uint32_t)(strlen(hay) - 20 > 0) + k;",
+        'return (uint32_t)(strcmp("a", hay) < 0) + (uint32_t)(strncmp(hay, "z", 1) < 0)'
+        " + (uint32_t)(memcmp(a8, hay, 1) < 0) + k;",
+    )
+) + (  # a prototype alone is the library's
+    "#include <stdint.h>\n#include <stddef.h>\nsize_t strlen(const char *s);\n"
+    'uint32_t f(uint32_t k){ return (uint32_t)strlen("abc") + k; }\n',
+)
+# ... and a unit's own definition of the name is its function on both rails (a reserved name, so no run: C11 7.1.3)
+_STRREAD_OWN = (
+    "#include <stdint.h>\n#include <stddef.h>\nstatic size_t strlen(const char *s){ size_t n = 0; while (s[n]) n++;"
+    ' return n + 1u; }\nuint32_t f(uint32_t k){ return (uint32_t)strlen("abc") + k; }\n'
+)
+
+
+def test_a_string_read_is_a_libc_edge_on_both_rails():
+    """CSUB-5. `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen` are libc edges on both
+    rails: each unit lowers alike and R18 clean, each rail's emit runs as Clang's build of the source and compiles as
+    C11 strictly, and each call is the library's verbatim (the linkable artifacts' <string.h>: the CF-RTWIDE test's
+    `string reads`). A unit that defines the name calls its own function."""
+    from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
+    from bcir.frontends.cfront.lower import _STRING_READ
+
+    assert sorted(_STRING_READ) == sorted(
+        ("memcmp", "strcmp", "strncmp", "memchr", "strchr", "strrchr", "strstr", "strlen")
+    )
+    for name in _STRING_READ:  # libc: no flag, and known as such (not an unknown callee)
+        assert library_for_callee(name) == NO_FLAG, name
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_STRREAD_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary and r.r18_ok, (src, summary)
+            ops = {cl.op for fn in r.lowered.functions.values() for cl in fn.claims}
+            assert any(op.startswith("c.call.libm:") for op in ops), (src, sorted(ops))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"s{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    summary, r, _ = _oracle(_STRREAD_OWN)
+    ops = {cl.op for fn in r.lowered.functions.values() for cl in fn.claims}
+    assert "funcs=2" in summary and not any(op.startswith("c.call.libm:") for op in ops), (
+        summary,
+        sorted(ops),
+    )
+    if exe is not None:
+        assert _lowers_alike(exe, _STRREAD_OWN) == summary
+
+
+# CSUB-3: C23's checked arithmetic. Both rails read `<stdckdint.h>` as Clang and GCC write it -- `ckd_add(R, A, B)` the
+# overflow builtin `__builtin_add_overflow((A), (B), (R))`, and `ckd_sub`, `ckd_mul` alike -- and lower the builtin as
+# the integer builtins are lowered: verbatim, opaque to R18, a `bool`, true when the mathematical result does not fit
+# `*R`, which takes it wrapped. Neither rail had the header or the builtins.
+_CKD_HDR = (
+    "#include <stdint.h>\n#include <stdbool.h>\n#include <stdckdint.h>\n"
+    "struct acc { uint32_t total; int64_t s; };\nstatic uint16_t g16;\n"
+)
+_CKD_LOWERED = tuple(
+    _CKD_HDR + "uint32_t f(uint32_t k){ " + body + " }\n"
+    for body in (
+        "uint32_t r; bool o = ckd_add(&r, k, 4000000000u); return r + (uint32_t)o;",
+        "int32_t r; bool o = ckd_sub(&r, (int32_t)k, INT32_MAX); return (uint32_t)r + (o ? 7u : 0u);",
+        "uint8_t r; bool o = ckd_mul(&r, k, 3u); return (uint32_t)r * 2u + (uint32_t)o;",
+        "int64_t r; if (ckd_mul(&r, (int64_t)k, INT64_MAX / 3)) return 1u; return (uint32_t)(r >> 32);",
+        "uint64_t r; bool o = ckd_add(&r, (int32_t)k, -5); return (uint32_t)r + (uint32_t)o * 9u;",
+        "struct acc a = {k, 0}; bool o = ckd_add(&a.total, a.total, 0xF0000000u); return a.total + (uint32_t)o;",
+        "struct acc a = {k, 0}; struct acc *p = &a; bool o = ckd_mul(&p->s, (int64_t)k, -3);"
+        " return (uint32_t)p->s + (uint32_t)o;",
+        "bool o = ckd_add(&g16, k, 60000u); return (uint32_t)g16 + (uint32_t)o;",
+        "uint32_t r = 0, n = 0; for (uint32_t i = 0; i < 40u; i++) if (!ckd_mul(&r, k + 1u, i * 100000u)) n++;"
+        " return n + r;",
+        "int r; return __builtin_add_overflow((int)k, 1, &r) ? 0u : (uint32_t)r;",
+    )
+)
+_CKD_OPERANDS = (
+    "an overflow builtin takes two integers and a pointer to an integer, none of them a bool"
+)
+# ... and what the builtins' constraints refuse is refused alike, as Clang refuses it -- but a result through a
+# pointer to volatile storage, which Clang takes and both rails leave to a follow-on (a device access)
+_CKD_REFUSED = tuple(
+    (_CKD_HDR + "uint32_t f(uint32_t k){ " + body + " }\n", why)
+    for body, why in (
+        ("bool r; return ckd_add(&r, k, 1u);", _CKD_OPERANDS),
+        ("uint32_t r; return ckd_add(&r, 1.5, k);", _CKD_OPERANDS),
+        ("uint32_t r; return ckd_add(&r, k, true);", _CKD_OPERANDS),
+        ("uint32_t r, *p = &r; return ckd_add(&r, p, 1u);", _CKD_OPERANDS),
+        ("uint32_t *q = 0; return ckd_add(&q, k, 1u);", _CKD_OPERANDS),
+        ("uint32_t r; return __builtin_add_overflow(k, 1u);", _CKD_OPERANDS),
+        ("uint32_t r; return ckd_add(r, k, 1u);", _CKD_OPERANDS),
+        (
+            "_Atomic uint32_t r; return ckd_add(&r, k, 1u);",
+            "an overflow builtin's result through a pointer to volatile or atomic storage is a follow-on",
+        ),
+        (
+            "volatile uint32_t r; return ckd_add(&r, k, 1u);",
+            "an overflow builtin's result through a pointer to volatile or atomic storage is a follow-on",
+        ),
+    )
+)
+
+
+def test_checked_arithmetic_is_the_overflow_builtin_on_both_rails():
+    """CSUB-3. `<stdckdint.h>` is Clang's and GCC's on both rails, and `ckd_add`, `ckd_sub` and `ckd_mul` lower as the
+    overflow builtins they are: of signed, unsigned, narrow and wide operands and results, of mixed types, into a
+    local, a member, a member through a pointer and a global, in a condition and a loop, and the builtin by its own
+    name. Each unit lowers alike and R18 clean, each rail's emit runs as Clang's build of the source -- the wrapped
+    result and the overflow flag -- and compiles as C11 strictly. What the builtins' constraints refuse is refused
+    alike, as Clang refuses it; a result through a pointer to volatile storage, which Clang takes, is a follow-on."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_CKD_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            ops = {cl.op for fn in r.lowered.functions.values() for cl in fn.claims}
+            assert " ok=1 " in summary and ops & {
+                f"c.call.builtin:{k}_overflow" for k in ("add", "sub", "mul")
+            }, (
+                src,
+                summary,
+            )
+            if exe is None:
+                continue
+            path = os.path.join(d, f"k{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for src, why in _CKD_REFUSED:
+        assert _clang_c23_accepts(src) in (False, None) or "volatile" in src, src
+        _refused_alike(exe, src, why, phase="PARSE")
+
+
+# CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through
+# a pointer (`t->p += 1`, `a[i] = 0`, `*pp += 1`), an `( E ) OP= v` the parentheses of which are redundant -- and so is an
+# unbraced statement after a condition, `else` or `do`. The twin had read a step through the expression grammar: it
+# reloaded a stored member or element, left a pointer member's `+=` unread (the loop never advanced: the emit ran
+# forever) and lowered the part of a step it read, dropping the rest.
+_STEP_HDR = (
+    "#include <stdint.h>\nstruct t { uint32_t *p; uint32_t n; uint8_t b; uint32_t a[4]; struct t *nx; unsigned bf : 3; };\n"
+    "static uint32_t buf[4] = {1, 2, 3, 4};\nstatic uint32_t g;\n"
+)
+_STEP_LOWERED = tuple(
+    _STEP_HDR + "uint32_t f(uint32_t k){ " + body + " }\n"
+    for body in (
+        "struct t s = {buf, 0}; struct t *t = &s; uint32_t r = 0; for (t->p = buf; t->p != buf + 4; t->p += 1) r += *t->p;"
+        " return r + k;",
+        "struct t s = {buf, 0}; struct t *t = &s; uint32_t r = 0; for (t->p = buf; t->p != buf + 4; t->p = t->p + 1)"
+        " r += *t->p; return r + k;",
+        "struct t s = {buf, 0}; uint32_t x = 0, r = 0; for (; x < 4u; x++, s.p += 1) r += *s.p; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->b = 0; t->b < 4u; t->b += 1u) r++; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->n = 0; t->n < 4u; t->n = t->n + 1u) r++; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->bf = 0; t->bf < 4u; t->bf += 1u) r++; return r + k;",
+        "struct t s = {0}, u = {0}; struct t *t = &s; s.nx = &u; uint32_t r = 0; for (t->nx->n = 0; t->nx->n < 4u;"
+        " t->nx->n += 1u) r++; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0, i; for (i = 0; i < 4u; t->a[i] = i + k, i++) r += i;"
+        " return r + t->a[3];",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0, i; for (i = 0; i < 4u; i++, t->n = i) r++; return r + t->n;",
+        "uint32_t a[4] = {9, 9, 9, 9}; uint32_t r = 0, i; for (i = 0; i < 4u; a[i] = k, i++) r++; return r + a[2];",
+        "uint32_t x = k & 1u; uint32_t *a = &x; uint32_t r = 0; for (; *a < 4u; *a = *a + 1u) r++; return r;",
+        "uint32_t *p = buf; uint32_t **pp = &p; uint32_t r = 0; for (; *pp != buf + 4; *pp += 1) r += **pp; return r + k;",
+        "uint32_t *v[1] = {buf}; uint32_t r = 0; for (v[0] = buf; v[0] != buf + 4; v[0] += 1) r += *v[0]; return r + k;",
+        "volatile uint32_t x = 0; volatile uint32_t *a = &x; uint32_t r = 0; for (; *a < 4u; *a += 1u) r++; return r + k;",
+        "volatile struct t s = {0}; volatile struct t *t = &s; uint32_t r = 0; for (t->n = 0; t->n < 4u; t->n += 1u) r++;"
+        " return r + k;",
+        "uint32_t r = 0; for (g = 0; g < 4u; g += 1u) r++; return r + k;",
+        "uint32_t x = 0, r = 0; for (; x < 4u; r++, (x) += 1u, ((r)) += 0u) r++; return r + k;",
+        "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->n = 0; t->n < 4u; (t->n) += 1u) r++; return r + k;",
+        "uint32_t x = 0, r = 0; for (; x < 4u; x++) for (; r < 2u; (r) += 1u) r += 0u; return r + x + k;",
+        "uint32_t x = 0, r = 0; if (k) for (; x < 4u; (x) += 1u) r++; else while (x < 2u) (x) += 1u; return r + x + k;",
+        "uint32_t x = 0, r = 0; do (x) += 1u; while ((x) < 3u); switch (k) { case 1: (r) = 2u; break; default: (r) += 1u; }"
+        " if (k) {(r) += 1u;} else if (x) (r) -= 1u; return r + x + k;",
+        "uint32_t a[2] = {0, 0}; if (k) (a)[1] = 3u; else (a[0]) += 1u; return a[0] + a[1];",
+        "uint32_t x, r = 0; for (x = 0; x < 2u; x++) (r) += x + k; return r;",
+    )
+)
+# ... and a step neither rail lowers is refused for one reason on both: never a part of it lowered, the rest dropped
+_STEP_REFUSED = (
+    (
+        _STEP_HDR
+        + "uint32_t f(uint32_t k){ struct t s = {buf, 0}; uint32_t x = 0, r = 0; for (; x < 4u; x++, s.p -= 0,"
+        " s.p++) r += *s.p; return r + k; }\n",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+)
+
+
+def test_a_for_step_store_is_a_statement_on_both_rails():
+    """CF-STEP. A for-step lowers as a statement on both rails: a store to a member, through a pointer member, a narrow
+    or bit-field member, an element and an element of an array of pointers, `*p` and `*pp`, a volatile object's, a
+    global's, a step of several pieces, an `( E ) OP= v` -- and an unbraced statement after a condition, `else` or
+    `do` is a statement start to CF-PAREN's pass. Each unit lowers alike, each rail's emit runs as Clang's build of
+    the source and compiles as C11 strictly; a step neither rail lowers is refused for one reason on both."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_STEP_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"s{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for src, why in _STEP_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+    # a step the twin reads only part of is refused, never lowered without the rest: a store through a call's result,
+    # `h()->n = 1u`, which the twin takes in no position (the oracle lowers it, a recorded split)
+    partial = _STEP_HDR + (
+        "struct t *h(void);\nuint32_t f(uint32_t k){ uint32_t r = 0, x = 0; for (; x < 2u; x++, h()->n = 1u) r++;"
+        " return r + k; }\n"
+    )
+    assert _oracle_refusal(partial) == "", partial
+    if exe is not None:
+        assert _twin_line(exe, partial) == (1, "PARSE-ERR )"), _twin_line(exe, partial)
+
+
+# CF-TYPEOFARR: `typeof` of an array object is the array it is, on both rails, each as Clang builds it. The twin had
+# declared one element of it (`sizeof b` read 2 where C reads 6, `b[2]` refused, an uninitialized pointer stored through
+# for a member array); now it types the operand with `sizeof`'s static walk and hands the dimensions on as an array
+# typedef's (`typeof_array`), and the oracle lays a global's or a member's nested arrays out as a declared one
+# (`_typeof_array`). Each unit lowers alike, and each rail's emit runs as Clang's build of the source.
+_TYPEOF_H = "#include <stdint.h>\n"
+_TYPEOF_LOWERED = tuple(
+    _TYPEOF_H + body
+    for body in (
+        # a local, its size and its elements
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b; b[0] = 7; b[2] = 9;"
+        " return (uint32_t)sizeof b + b[0] + b[2] + a[1]; }\n",
+        # C23's keyword, with an initializer
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; typeof(a) b = {4, 5, 6}; return (uint32_t)sizeof b + b[1]; }\n",
+        # a global of two dimensions, a local of two
+        "static uint8_t g[2][4];\n"
+        "uint32_t f(void){ __typeof__(g) h; h[1][3] = 5; return (uint32_t)sizeof h + h[1][3] + g[0][0]; }\n",
+        "uint32_t f(uint32_t k){ int32_t m[2][3] = {{1,2,3},{4,5,6}}; __typeof__(m) n = {{7}}; n[1][2] = (int32_t)k;"
+        " return (uint32_t)(sizeof n + sizeof n[0]) + (uint32_t)n[1][2] + (uint32_t)n[0][0] + (uint32_t)m[1][0]; }\n",
+        # a member array through a pointer (the twin's was an uninitialized pointer), of one and two dimensions
+        "struct s { uint16_t v[4]; };\n"
+        "uint32_t f(struct s *p){ __typeof__(p->v) w = {1, 2, 3, 4}; w[3] = 2; return (uint32_t)sizeof w + w[3] + w[0]; }\n",
+        "struct s { uint16_t v[2][3]; };\n"
+        "uint32_t f(struct s *p){ __typeof__(p->v) w; w[1][2] = 5; return (uint32_t)sizeof w + w[1][2] + p->v[0][0]; }\n",
+        # a member array of an element, and through a pointer parameter's element
+        "struct ch { char name[8]; uint16_t w; };\n"
+        "uint32_t f(struct ch *p, uint32_t k){ __typeof__(p[k & 1u].name) t = {2}; __typeof__(p->name) u = {3};"
+        " return (uint32_t)sizeof t + (uint32_t)t[0] + (uint32_t)sizeof u + (uint32_t)u[0]; }\n",
+        # as a type name, and its own dimensions after the declarator's
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; return (uint32_t)sizeof(__typeof__(a)) + a[0]; }\n",
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; return (uint32_t)sizeof(__typeof__(a)[2]) + a[0]; }\n",
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b[2] = {{4}}; b[1][2] = 4;"
+        " return (uint32_t)sizeof b + b[1][2] + b[0][0]; }\n",
+        # a const global, a string literal (the twin's emit had returned another value), a compound literal
+        "static const uint16_t tab[5] = {1,2,3,4,5};\n"
+        "uint32_t f(void){ __typeof__(tab) c = {9}; return (uint32_t)sizeof c + c[0] + tab[4]; }\n",
+        'uint32_t f(void){ __typeof__("ab") s = "xy"; return (uint32_t)sizeof s + (uint32_t)s[1]; }\n',
+        "uint32_t f(void){ __typeof__((uint16_t[3]){1, 2, 3}) c = {7}; return (uint32_t)sizeof c + c[0]; }\n",
+        # arrays of structs, of pointers, of volatile storage
+        "struct p { uint16_t x, y; };\n"
+        "uint32_t f(void){ struct p ps[2] = {{1,2},{3,4}}; __typeof__(ps) qs; qs[1].y = 8;"
+        " return (uint32_t)sizeof qs + qs[1].y + ps[0].x; }\n",
+        "uint32_t f(uint32_t k){ uint16_t v = 1, w = 2; uint16_t *ap[2] = {&v, &w}; __typeof__(ap) bp = {&w, &v};"
+        " return (uint32_t)sizeof bp + *bp[k & 1u] + *ap[0]; }\n",
+        "uint32_t f(void){ volatile uint32_t va[2] = {1, 2}; __typeof__(va) vb = {3, 4}; return (uint32_t)sizeof vb + vb[1]; }\n",
+        # a typeof'd array's own typeof, a typedef'd array's, and a typeof of a typeof (the oracle's had dropped it)
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b = {4}; __typeof__(b) c = {5};"
+        " return (uint32_t)sizeof c + c[0] + b[0]; }\n",
+        "typedef uint16_t A3[3];\n"
+        "uint32_t f(void){ A3 a = {1,2,3}; __typeof__(a) b = {4}; return (uint32_t)sizeof b + b[0] + a[2]; }\n",
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(__typeof__(a)) b = {4}; return (uint32_t)sizeof b + b[0]; }\n",
+        # qualifiers: before `typeof` and after it, on an array's elements; `typeof_unqual` of volatile storage
+        "uint32_t f(void){ uint32_t a[2] = {1, 2}; volatile __typeof__(a) b = {3, 4}; return b[1] + a[0]; }\n",
+        "uint32_t f(void){ uint32_t a[2] = {1, 2}; __typeof__(a) volatile b = {3, 4}; return b[1] + a[0]; }\n",
+        "uint32_t f(void){ volatile uint32_t va[2] = {1, 2}; typeof_unqual(va) wb = {3, 4}; wb[0]++; return wb[0] + va[1]; }\n",
+        "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; typeof_unqual(a) b; b[0] = 1; return (uint32_t)sizeof b + b[0]; }\n",
+    )
+)
+# ... each beside its form spelled out, to one summary on both rails: a typeof'd array is the array it names, its
+# qualifiers as written
+_TYPEOF_SPELLED = tuple(
+    (_TYPEOF_H + a, _TYPEOF_H + b)
+    for a, b in (
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b; b[2] = 9; return (uint32_t)sizeof b + b[2]; }\n",
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; uint16_t b[3]; b[2] = 9; return (uint32_t)sizeof b + b[2]; }\n",
+        ),
+        (
+            "static uint8_t g[2][4];\n"
+            "uint32_t f(void){ __typeof__(g) h; h[1][3] = 5; return (uint32_t)sizeof h + h[1][3]; }\n",
+            "static uint8_t g[2][4];\n"
+            "uint32_t f(void){ uint8_t h[2][4]; h[1][3] = 5; return (uint32_t)sizeof h + h[1][3]; }\n",
+        ),
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) b[2]; b[1][2] = 4; return (uint32_t)sizeof b + b[1][2]; }\n",
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; uint16_t b[2][3]; b[1][2] = 4; return (uint32_t)sizeof b + b[1][2]; }\n",
+        ),
+        (
+            "uint32_t f(void){ uint32_t x = 1; volatile __typeof__(x) y = x; y = 3; return y; }\n",
+            "uint32_t f(void){ uint32_t x = 1; volatile uint32_t y = x; y = 3; return y; }\n",
+        ),
+        (
+            "uint32_t f(void){ uint32_t x = 1; __typeof__(x) volatile y = x; y = 3; return y; }\n",
+            "uint32_t f(void){ uint32_t x = 1; volatile uint32_t y = x; y = 3; return y; }\n",
+        ),
+        (
+            "uint32_t f(void){ uint32_t a[2] = {1, 2}; volatile __typeof__(a) b = {3, 4}; return b[1]; }\n",
+            "uint32_t f(void){ uint32_t a[2] = {1, 2}; volatile uint32_t b[2] = {3, 4}; return b[1]; }\n",
+        ),
+        (
+            "uint32_t f(void){ volatile uint32_t v = 1; typeof_unqual(v) w = v; w++; return w; }\n",
+            "uint32_t f(void){ volatile uint32_t v = 1; uint32_t w = v; w++; return w; }\n",
+        ),
+        (
+            "uint32_t f(void){ _Atomic uint32_t v = 1; typeof_unqual(v) w = 2; w++; return w + v; }\n",
+            "uint32_t f(void){ _Atomic uint32_t v = 1; uint32_t w = 2; w++; return w + v; }\n",
+        ),
+    )
+)
+# ... and the forms refused alike, for one reason each, every one of which Clang takes
+_TYPEOF_REFUSED = tuple(
+    (_TYPEOF_H + body, why)
+    for body, why in (
+        # a pointer to the array, as a declarator, a cast and a type name's
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(a) *q = &a; return (uint32_t)sizeof *q; }\n",
+            TYPEOF_ARR_PTR,
+        ),
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; return (uint32_t)((__typeof__(a) *)0 == 0) + a[0]; }\n",
+            TYPEOF_ARR_PTR,
+        ),
+        (
+            "uint32_t f(void){ uint16_t a[3] = {1, 2, 3}; __typeof__(__typeof__(a) *) q = &a; return (uint32_t)sizeof *q; }\n",
+            TYPEOF_ARR_PTR,
+        ),
+        # an array of no constant size: a VLA, an unsized `extern`
+        (
+            "uint32_t f(uint32_t n){ uint16_t a[n]; a[0] = 3; __typeof__(a) b; b[0] = 4; return b[0] + a[0]; }\n",
+            TYPEOF_UNSIZED,
+        ),
+        (
+            "extern uint16_t ext[];\nuint32_t f(void){ __typeof__(ext) *p = 0; return p == 0; }\n",
+            TYPEOF_UNSIZED,
+        ),
+        # more dimensions than a declarator holds
+        (
+            "static uint8_t g4[2][2][2][2];\nuint32_t f(void){ __typeof__(g4) h; (void)h; return 0; }\n",
+            TYPEOF_DIMS,
+        ),
+        (
+            "uint32_t f(void){ uint8_t m[2][2][2]; m[0][0][0] = 1; __typeof__(m) h[2]; (void)h; return m[0][0][0]; }\n",
+            "a multi-dimensional local array of more than 3 dims is not yet supported",
+        ),
+        # a row, of a local's array and of a member's, as before
+        (
+            "uint32_t f(uint32_t k){ uint16_t m[2][3] = {{1,2,3},{4,5,6}}; __typeof__(m[1]) r; r[0] = 1; return k; }\n",
+            ROW_VALUE,
+        ),
+        (
+            "struct s { uint16_t v[2][3]; };\n"
+            "uint32_t f(struct s *p){ __typeof__(p->v[1]) w; w[0] = 1; return (uint32_t)sizeof w; }\n",
+            ROW_VALUE,
+        ),
+        # an expression where no function's scope types it -- before a function and after one (the twin had
+        # crashed, and lowered into the previous function's graph), a member's, a typedef's, a return type's
+        ("uint16_t s;\n__typeof__(s) t;\nuint32_t f(void){ t = 2; return t; }\n", TYPEOF_SCOPE),
+        (
+            "uint32_t f0(void){ return 1; }\nuint16_t s;\n__typeof__(s + 1) t;\n"
+            "uint32_t f(void){ t = 2; return (uint32_t)t; }\n",
+            TYPEOF_SCOPE,
+        ),
+        (
+            "uint16_t g[4];\n__typeof__(g) h;\nuint32_t f(void){ h[3] = 2; return h[3]; }\n",
+            TYPEOF_SCOPE,
+        ),
+        (
+            "uint16_t s;\nstruct q { __typeof__(s + 1) m; };\nuint32_t f(void){ struct q v = {2}; return (uint32_t)v.m; }\n",
+            TYPEOF_SCOPE,
+        ),
+        (
+            "uint32_t f(void){ uint16_t x = 1; struct { __typeof__(x) m; } v = {2}; return v.m + x; }\n",
+            TYPEOF_SCOPE,
+        ),
+        (
+            "uint16_t s;\ntypedef __typeof__(s) T;\nuint32_t f(void){ T x = 1; return x; }\n",
+            TYPEOF_SCOPE,
+        ),
+        ("uint16_t s;\n__typeof__(s) g(void);\nuint32_t f(void){ return 1; }\n", TYPEOF_SCOPE),
+        # a volatile pointer object, as its spelled form `T *volatile` is refused: the qualifier before `typeof`
+        # and after it, of an expression's pointer and a type name's
+        ("uint32_t f(uint32_t *p){ volatile __typeof__(p) q = p; return *q; }\n", VOLATILE_PTR),
+        ("uint32_t f(uint32_t *p){ __typeof__(p) volatile q = p; return *q; }\n", VOLATILE_PTR),
+        (
+            "uint32_t f(uint32_t *p){ volatile __typeof__(uint32_t *) q = p; return *q; }\n",
+            VOLATILE_PTR,
+        ),
+        (
+            "uint32_t f(uint32_t *p){ __typeof__(uint32_t *) volatile q = p; return *q; }\n",
+            VOLATILE_PTR,
+        ),
+    )
+)
+
+
+def test_typeof_of_an_array_object_is_the_array_on_both_rails():
+    """CF-TYPEOFARR. `typeof` of an array object is the array it is (C23 6.7.3.6p4), on both rails:
+    - the twin had declared one element of it -- `sizeof b` 2 where C reads 6, `b[2]` refused, and a member array an
+      uninitialized pointer stored through;
+    - the oracle laid a global's and a member's nested arrays out apart from a declared array of the same type.
+
+    Each unit of `_TYPEOF_LOWERED` lowers alike, each rail's emit runs as Clang's build of the source and compiles as
+    C11 with a wrong pointer type an error; each of `_TYPEOF_SPELLED` has the summary of its form spelled out. Each of
+    `_TYPEOF_REFUSED`, which Clang takes, is refused alike in one set of words: a pointer to the array; an array of no
+    constant size; more dimensions than a declarator holds; a row; an expression where no function's scope types it,
+    which the twin had crashed on (it dereferenced no function) or lowered into the previous function's graph; and a
+    volatile pointer object, which the twin had dropped and the oracle read as a pointer to volatile."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_TYPEOF_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"t{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            if " typeof(" not in src and "typeof_unqual" not in src:  # C23's keywords are no C11's
+                _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for typeof_src, spelled in _TYPEOF_SPELLED:
+        assert _lowers_alike(exe, typeof_src) == _lowers_alike(exe, spelled), (typeof_src, spelled)
+    for src, why in _TYPEOF_REFUSED:
+        assert _clang_c23_accepts(src) in (True, None), src
+        _refused_alike(exe, src, why, phase="PARSE")
+    # an operand `sizeof`'s walk refuses -- a function designator, a call of an undeclared function -- keeps the twin's
+    # own typing, as before: never refused in `sizeof`'s words. (Both are a split the guide records: the oracle refuses
+    # `typeof` of a call or a function designator as not yet supported.)
+    if exe is not None:
+        for body in (
+            "static uint32_t g(uint32_t x){ return x + 1u; }\n"
+            "uint32_t f(uint32_t k){ __typeof__(g) *fp = g; return fp(k); }\n",
+            "uint32_t f(uint32_t k){ __typeof__(nofn(k)) v = 3; return v + k; }\n",
+        ):
+            _rc, line = _twin_line(exe, _TYPEOF_H + body)
+            assert line.startswith("funcs=") and "sizeof" not in line, (body, line)
 
 
 # CF-GARRAY: file-scope arrays and character tables pass through cfront as local ones do. Each function writes the
@@ -15836,8 +19489,9 @@ _PPARITH_FORMS = (
 # are of type int and therefore signed"); Clang reads it by `char`'s signedness, as a single one. Both rails read
 # Clang's, so GCC judges these only with a signed `char`.
 _PPARITH_GCC_APART = frozenset({"'\\xff\\xff\\xff\\xff' < 0"})
-# the cfront target each machine host GCC preprocesses for is (`platform.machine()`)
-_PPARITH_HOSTS = {
+# the cfront target each machine (`platform.machine()`) is: the target its host GCC preprocesses for, and on a glibc
+# Linux host the one its C library's headers describe (`_glibc_host_target`)
+_HOST_TARGETS = {
     "x86_64": "x86_64-linux",
     "amd64": "x86_64-linux",
     "aarch64": "aarch64-linux",
@@ -15926,7 +19580,7 @@ def test_if_expressions_take_the_branch_clang_takes_on_each_target():
 
     clang = shutil.which("clang")
     gcc = shutil.which("gcc")
-    host = _PPARITH_HOSTS.get(platform.machine().lower())  # the machine host GCC preprocesses for
+    host = _HOST_TARGETS.get(platform.machine().lower())  # the machine host GCC preprocesses for
     exe = _build_frontend(_session_build_dir())
     judged = 0
     with tempfile.TemporaryDirectory() as d:
@@ -15945,7 +19599,7 @@ def test_if_expressions_take_the_branch_clang_takes_on_each_target():
                 assert _pparith_branch(run.stdout) == oracle, f"#if {expr} on {t}: the rails part"
                 if clang:
                     ref = subprocess.run(
-                        [clang, "-target", abi.triple, "-std=c2x", "-E", "-P", path],
+                        [clang, *abi.clang_target, "-std=c2x", "-E", "-P", path],
                         capture_output=True,
                         text=True,
                     )
@@ -16017,7 +19671,9 @@ _PPARITH_TOKENS = (
     "#define P L\n#define L 7\n#define Q u8\n"
     "int x = P'a';\nint y = L'a';\nint z = L;\nint w = 1'000;\nint v = Q'a';\n"
 )
-_PPARITH_TOKENS_TEXT = "int x=7'a';\nint y=L'a';\nint z=7;\nint w=1'000;\nint v=u8 'a';\n"
+# `P'a'` is the two tokens `7` and `'a'`, kept apart by a space: written `7'a'`, C23's digit separator reads the pp-number
+# `7'a` and a stray `'` (CSUB-1; Clang's own -E spells it so, and does not re-lex to its tokens)
+_PPARITH_TOKENS_TEXT = "int x=7 'a';\nint y=L'a';\nint z=7;\nint w=1'000;\nint v=u8 'a';\n"
 
 
 def test_a_prefixed_character_constant_is_one_token_on_both_rails():
@@ -16311,3 +19967,318 @@ def test_an_indexed_atomic_member_of_a_defined_object_is_a_lock_free_atomic_unde
                 assert len(atomics) >= 3, (rail, fn, atomics, body)
                 libcalls = re.findall(r"call [^\n]*@__atomic_\w+", body)
                 assert not libcalls, (rail, fn, libcalls)
+
+
+# PORT-3: a statement's timing, the metadata the timing laws R19 and R20 read. `[[bcir::timing(field = value, ...)]]`
+# leads a statement, and every claim the statement lowers carries it -- on both rails, the cross-rail canon holding each
+# claim's (`|t:...`), so a claim one rail timed and the other did not is a digest apart. R19/R20 then run on the C
+# verifier as they do on the oracle and the law rail: a unit that breaks one lowers on both rails and is refused by
+# each verdict, every diagnostic in the oracle's words. Claim and RID numbers are each rail's own.
+_TIMED = (
+    "#if __has_c_attribute(bcir::timing)\n#define TIMED(...) [[bcir::timing(__VA_ARGS__)]]\n#else\n"
+    "#define TIMED(...)\n#endif\n"
+)
+_TIMING_LOWERED = (
+    'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc", latency_cycles = 2)]] g = x;\n'
+    "  return g + 1u;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(clock_domain = "hpet", latency_cycles = 4, '
+    'min_throughput_q16 = 65536, critical_path = 1, power_domain = "aon", sync_type = "synchronous", '
+    "clock_frequency_mhz = 14, setup_hold_margin = 1)]] y = x * 3u;\n  return y;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing(clock_domain = "a")]] { y = x + 1u; y = y * 2u; }\n'
+    "  return y;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned y = 1u;\n  [[bcir::timing(clock_domain = "a", latency_cycles = 1)]] '
+    "if (x > 3u) y = x; else y = 2u;\n  return y;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned s = 0u;\n  [[bcir::timing(clock_domain = "a")]] while (x) { s += x; '
+    "x = x - 1u; }\n  return s;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned s = 0u;\n  [[bcir::timing(clock_domain = "a")]] for (unsigned i = 0u; '
+    "i < (x & 7u); i++) s += i;\n  return s;\n}\n",
+    "unsigned f(unsigned x) {\n  unsigned s = 0u;\n  [[bcir::timing(latency_cycles = 2)]] do { s += 3u; } "
+    "while (s < (x & 15u));\n  return s;\n}\n",
+    'unsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "a")]] return x ^ 5u;\n}\n',
+    'unsigned f(unsigned x) {\n  unsigned y = 0u;\n  if (x) [[bcir::timing(clock_domain = "a")]] y = x + 9u;\n'
+    "  return y;\n}\n",
+    "typedef unsigned int uint32_t;\nunsigned f(volatile uint32_t *r, unsigned x) {\n"
+    '  [[bcir::timing(clock_domain = "dev", sync_type = "asynchronous")]] *r = x;\n  unsigned v;\n'
+    '  [[bcir::timing(clock_domain = "dev")]] v = *r;\n  return v;\n}\n',
+    _TIMED
+    + 'unsigned g;\nunsigned f(unsigned x) {\n  TIMED(clock_domain = "rtc", latency_cycles = 3) g = x + 1u;\n'
+    '  TIMED(clock_domain = "rtc") return g;\n}\n',
+    'unsigned f(unsigned x) {\n  unsigned y;\n  [[__bcir__::__timing__(clock_domain = "a")]] y = x;\n'
+    '  [[bcir_hint, bcir::timing(clock_domain = "a"), other_hint("no")]] y = y + 1u;\n  return y;\n}\n',
+    "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing]] y = x;\n  [[bcir::timing()]] y = y + 2u;\n"
+    "  return y;\n}\n",
+    "enum { L = 6 };\nunsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = L * 2, "
+    "setup_hold_margin = sizeof(int), clock_frequency_mhz = 9223372036854775807, critical_path = true)]] y = x;\n"
+    "  return y;\n}\n",
+    "unsigned h(unsigned a) { return a + 1u; }\nunsigned f(unsigned x) {\n  unsigned y;\n"
+    '  [[bcir::timing(clock_domain = "a")]] y = h(x);\n  return y;\n}\n',
+    'unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing(clock_domain = "a")]] { y = x; goto out; }\n'
+    "out:\n  return y;\n}\n",
+    'unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing(clock_domain = "a", latency_cycles = 1)]] '
+    "switch (x & 3u) { case 0u: y = 5u; break; case 1u: y = 6u; break; default: y = 7u; }\n  return y;\n}\n",
+    "unsigned f(unsigned x) {\n  unsigned y = 0u;\n"
+    '  [[bcir::timing(clock_domain = "' + "a" * 63 + '")]] y = x;\n  return y;\n}\n',
+    # what a timing does not break: a margin with no latency to fit in, a mixed consumer, one domain, an untimed or
+    # rewritten writer
+    "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(critical_path = 0, latency_cycles = 0, "
+    "setup_hold_margin = 5)]] y = x;\n  return y;\n}\n",
+    'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n  unsigned y;\n'
+    '  [[bcir::timing(clock_domain = "cpu", sync_type = "mixed")]] y = g;\n  return y;\n}\n',
+    'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n  unsigned y;\n'
+    '  [[bcir::timing(clock_domain = "rtc")]] y = g;\n  return y;\n}\n',
+    'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n  g = x + 1u;\n'
+    '  unsigned y;\n  [[bcir::timing(clock_domain = "cpu")]] y = g;\n  return y;\n}\n',
+    # a device register written in one domain and read in another: R20 follows the claim graph's resources, and a store
+    # through a pointer writes none of them -- memory, not a RID -- so it sees no writer, on the oracle as here (the
+    # read is barriered besides). A crossing through memory is outside what R20 reads, on every rail
+    "typedef unsigned int uint32_t;\nunsigned f(volatile uint32_t *r, unsigned x) {\n"
+    '  [[bcir::timing(clock_domain = "dev")]] *r = x;\n  unsigned v;\n'
+    '  [[bcir::timing(clock_domain = "cpu.0")]] v = *r;\n  return v;\n}\n',
+    # each function is its own module, as on the oracle: a crossing through a global between two is not one (R20)
+    'unsigned g;\nvoid w(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n}\n'
+    'unsigned f(unsigned x) {\n  w(x);\n  unsigned y;\n  [[bcir::timing(clock_domain = "cpu")]] y = g;\n'
+    "  return y;\n}\n",
+    # the standard attributes, which lead a statement and a declaration now on both rails, dropped
+    "unsigned f(unsigned x) {\n  [[maybe_unused]] unsigned y = x;\n  [[maybe_unused, deprecated]] unsigned z = 1u;\n"
+    "  switch (x) { case 1u: x = 7u; [[fallthrough]]; case 2u: x = x + 1u; break; default: break; }\n"
+    "  return x + y + z;\n}\n",
+    "struct s { [[maybe_unused]] unsigned a; unsigned b; };\nunsigned f(struct s *p) { return p->a + p->b; }\n",
+)
+# R19 and R20, each rule, and the oracle's words for each: both rails lower the unit and refuse it at the verdict
+_TIMING_BROKEN = (
+    (
+        'unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(sync_type = "rising")]] y = x;\n  return y;\n}\n',
+        ["R19 f: claim #: unknown sync_type 'rising'"],
+    ),
+    (
+        "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = -1, setup_hold_margin = -2, "
+        "clock_frequency_mhz = -3)]] y = x;\n  return y;\n}\n",
+        [
+            "R19 f: claim #: negative latency_cycles -1",
+            "R19 f: claim #: negative setup_hold_margin -2",
+            "R19 f: claim #: negative clock_frequency_mhz -3",
+        ],
+    ),
+    (
+        'unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(sync_type = "synchronous")]] y = x;\n  return y;\n}\n',
+        ["R19 f: claim #: a synchronous claim needs a positive clock_frequency_mhz"],
+    ),
+    (
+        "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = 2, setup_hold_margin = 3)]] y = x;\n"
+        "  return y;\n}\n",
+        ["R19 f: claim #: setup_hold_margin 3 exceeds the stage latency_cycles 2"],
+    ),
+    (
+        "unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = -9223372036854775807 - 1)]] y = x;\n"
+        "  return y;\n}\n",
+        ["R19 f: claim #: negative latency_cycles -9223372036854775808"],
+    ),
+    (
+        'unsigned g;\nunsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "rtc")]] g = x;\n  unsigned y;\n'
+        '  [[bcir::timing(clock_domain = "cpu")]] y = g;\n  return y;\n}\n',
+        [
+            "R20 f: claim #: reads RID # from clock domain 'rtc' into 'cpu' without a synchronizer (declare "
+            "sync_type='mixed' or a barriered hazard) -- an unguarded clock-domain crossing"
+        ],
+    ),
+    (
+        "unsigned f(unsigned x) {\n  unsigned y = 0u, i;\n  [[bcir::timing(latency_cycles = -1)]] {\n"
+        "    for (i = 0u; i < (x & 3u); i++) { if (i == 2u) continue; y += i; }\n"
+        "    switch (x & 1u) { case 0u: y += 4u; break; default: y += 5u; }\n"
+        "    while (y > 100u) { y -= 1u; if (y == 50u) break; }\n    do { y += 1u; } while (y < 3u);\n"
+        "    if (y == 7u) goto out;\n    y += 1u;\n  }\nout:\n  [[bcir::timing(latency_cycles = -2)]] return y;\n}\n",
+        None,  # every claim of each control statement, its markers none of them, as on the oracle
+    ),
+)
+_TIMING_BODY = "unsigned f(unsigned x) {\n  unsigned y;\n  {} y = x;\n  return y;\n}\n"
+_TIMING_REFUSED = tuple(
+    (_TIMING_BODY.replace("{}", attr), why)
+    for attr, why in (
+        ('[[bcir::timeing(clock_domain = "a")]]', TIMING_UNKNOWN),
+        ("[[bcir::]]", TIMING_UNKNOWN),
+        ("[[bcir::timing, bcir::timing]]", TIMING_TWICE),
+        ("[[bcir::timing]] [[bcir::timing(latency_cycles = 1)]]", TIMING_TWICE),
+        ("[[bcir::timing(latency_cycles 2)]]", TIMING_SYNTAX),
+        ("[[bcir::timing(latency_cycles = 2 setup_hold_margin = 1)]]", TIMING_SYNTAX),
+        ("[[bcir::timing(latency_cycles = 2) junk]]", TIMING_SYNTAX),
+        ("[[bcir::timing(3 = 1)]]", TIMING_SYNTAX),
+        ("[[bcir::timing(latency_cycles = 1]]", TIMING_SYNTAX),
+        ("[[bcir::timing(latency = 2)]]", TIMING_FIELD),
+        ("[[bcir::timing(latency_cycles = 2, latency_cycles = 3)]]", TIMING_FIELD),
+        ("[[bcir::timing(clock_domain = 3)]]", TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = "a b")]]', TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = "' + "a" * 64 + '")]]', TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = "a" "b")]]', TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = u8"a")]]', TIMING_TEXT),
+        ('[[bcir::timing(clock_domain = "a\\x41")]]', TIMING_TEXT),
+        ("[[bcir::timing(latency_cycles = 0x8000000000000000)]]", TIMING_COUNT),
+        ("[[bcir::timing(latency_cycles = x)]]", "not an integer constant expression"),
+        ("[[bcir::timing(critical_path = 2)]]", TIMING_FLAG),
+        ("[[bcir::timing(critical_path = -1)]]", TIMING_FLAG),
+        ("[[gnu::bcir::timing]]", ATTR_VENDOR),
+    )
+) + (
+    ('unsigned f(unsigned x) {\n  [[bcir::timing(clock_domain = "a")]] unsigned y = x;\n  return y;\n}\n', TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  [[bcir::timing]] static unsigned k = 3u;\n  return x + k;\n}\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  [[bcir::timing]] static_assert(1);\n  return x;\n}\n", TIMING_PLACE),
+    ("typedef unsigned u;\nunsigned f(unsigned x) {\n  [[bcir::timing]] u y = x;\n  return y;\n}\n", TIMING_PLACE),
+    ("[[bcir::timing]] unsigned f(unsigned x) { return x; }\n", TIMING_PLACE),
+    ("[[bcir::timing]] unsigned g;\nunsigned f(unsigned x) { return x + g; }\n", TIMING_PLACE),
+    ("struct s { [[bcir::timing]] unsigned a; };\nunsigned f(struct s *p) { return p->a; }\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing]] { [[bcir::timing]] y = x; }\n  return y;\n}\n",
+     TIMING_NESTED),
+    ("unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing]] y = ({ [[bcir::timing]] x + 1u; });\n  return y;\n}\n",
+     TIMING_NESTED),
+    ("unsigned f(unsigned x) {\n  unsigned y;\n  [[bcir::timing(latency_cycles = 1) y = x;\n  return y;\n}\n",
+     TIMING_SYNTAX),
+    ("unsigned f(unsigned x) {\n  unsigned y = 0u;\n  [[bcir::timing]] L: y = x;\n  return y;\n}\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  [[bcir::timing]];\n  return x;\n}\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  switch (x) { [[bcir::timing]] case 1u: x = 2u; break; default: break; }\n"
+     "  return x;\n}\n", TIMING_PLACE),
+    ("unsigned f(unsigned x) {\n  switch (x) { case 1u: break; [[bcir::timing]] default: x = 3u; }\n  return x;\n}\n",
+     TIMING_PLACE),
+)  # fmt: skip
+
+
+def _timing_lines(lines) -> list:
+    """`<law> <func>: <message>` R19/R20 lines, each rail's claim and RID numbers made `#`."""
+    out = []
+    for line in lines:
+        if line.startswith(("R19 ", "R20 ")):
+            out.append(re.sub(r"RID \d+", "RID #", re.sub(r"claim \d+", "claim #", line)))
+    return out
+
+
+def test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails():
+    """PORT-3. R19 (synchronous timing) and R20 (clock-domain crossing) ran on the oracle and the law rail only, over a
+    claim's optional timing, which no C front end could give one: neither rail took an attribute before a statement at
+    all. A C23 attribute `[[bcir::timing(field = value, ...)]]` now leads a statement on both rails, and every claim the
+    statement lowers carries the model's `Timing`; `__has_c_attribute(bcir::timing)` is 1 on both, so a unit Clang
+    builds too guards it. The canon holds each claim's timing, so each unit lowers digest-equal and each rail's emit
+    runs as Clang's build of the source (which drops the attribute). A unit that breaks R19 or R20 lowers on both rails
+    and each verdict refuses it, the twin's every diagnostic the oracle's (`bcir_verify_timing`): the C verifier holds
+    the two laws now, for driver code `bcir-cc` compiles without the oracle. A malformed or misplaced timing is refused
+    alike, in one set of words."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_TIMING_LOWERED):
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src, summary)
+            timed = [
+                c for fn in r.lowered.functions.values() for c in fn.claims if c.timing is not None
+            ]
+            # every unit annotated gives a claim its timing
+            assert timed or "maybe_unused" in src, src
+            if exe is None:
+                continue
+            path = os.path.join(d, f"t{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+        # the canon holds each claim's timing: the same unit with another value in one field is another digest
+        base = _oracle(_TIMING_LOWERED[0])[0]
+        moved = _oracle(_TIMING_LOWERED[0].replace("latency_cycles = 2", "latency_cycles = 3"))[0]
+        bare = _oracle(
+            _TIMING_LOWERED[0].replace(
+                '[[bcir::timing(clock_domain = "rtc", latency_cycles = 2)]] ', ""
+            )
+        )[0]
+        assert len({base, moved, bare}) == 3, (base, moved, bare)
+    for src, words in _TIMING_BROKEN:
+        summary, r, _entry = _oracle(src)
+        oracle = _timing_lines(f"{d.law} {d.message}" for d in r.diagnostics)
+        assert " ok=0 " in summary and oracle, (src, summary)
+        assert all(d.law in ("R19", "R20") for d in r.diagnostics), (src, r.diagnostics)
+        if words is not None:
+            assert oracle == words, (src, oracle)
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "u.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+        lines = run.stdout.splitlines()
+        assert run.returncode == 1 and lines[0] == summary, (src, lines[:2], summary)
+        assert _timing_lines(lines) == oracle, (src, _timing_lines(lines), oracle)
+        first = oracle[0].split(" ", 2)  # the verdict names the first, `R19: claim N: ...`
+        assert re.sub(r"claim \d+", "claim #", re.sub(r"RID \d+", "RID #", lines[1])) == (
+            f"diag: {first[0]}: {first[2]}"
+        ), (src, lines[1])
+    for src, why in _TIMING_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+    # what each rail refused before, in its own words, both still refuse: an attribute before a for-loop's first clause
+    # (an expression there, to C23 6.8.5), a run that ends a block, a block `typedef`, a statement expression's last
+    for src in (
+        "unsigned f(unsigned x) {\n  unsigned s = 0u, i;\n  for ([[bcir::timing]] i = 0u; i < x; i++) s += 2u;\n"
+        "  return s;\n}\n",
+        "unsigned f(unsigned x) {\n  [[bcir::timing]]\n}\n",
+        "unsigned f(unsigned x) {\n  [[bcir::timing]] typedef unsigned v;\n  return x;\n}\n",
+        "unsigned f(unsigned x) {\n  unsigned y;\n  y = ({ x = x + 1u; [[bcir::timing]] x + 2u; });\n  return y;\n}\n",
+    ):
+        assert _oracle_refusal(src), src
+        if exe is not None:
+            status, line = _twin_line(exe, src)
+            assert status == 1 and line.startswith("PARSE-ERR "), (src, line)
+    if exe is None:
+        return
+    # ... and the compiler a driver is built with refuses the unit at its verdict, naming the law
+    cc = _build_bcir_cc(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "crossing.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_TIMING_BROKEN[5][0])
+        run = subprocess.run([cc, "--emit-c", path], capture_output=True, text=True)
+    assert run.returncode == 1 and "verify error: R20: claim " in run.stderr, (
+        run.returncode,
+        run.stderr,
+    )
+
+
+def test_has_c_attribute_answers_the_timing_attribute_alone_on_both_rails():
+    """PORT-3. `__has_c_attribute(bcir::timing)` is 1 on both preprocessors, with each name also written `__x__` and
+    space around the names; any other operand is 0, as before -- another `bcir` attribute, a standard attribute the
+    rails drop, a space inside the `::`, a name of no prefix."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    one = "unsigned f(unsigned x) { return x + 1u; }\n"
+    two = "unsigned f(unsigned x) { return x + 2u; }\n"
+    for test, want in (
+        ("__has_c_attribute(bcir::timing) == 1", one),
+        ("__has_c_attribute(__bcir__::__timing__) && __has_c_attribute( bcir :: timing )", one),
+        ("__has_c_attribute(bcir::other) || __has_c_attribute(maybe_unused)", two),
+        ("__has_c_attribute(bcir: :timing) || __has_c_attribute(timing)", two),
+    ):
+        src = f"#if {test}\n{one}#else\n{two}#endif\n"
+        assert _lowers_alike(exe, src) == _oracle(want)[0], test
+
+
+def test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning():
+    """CF-VENDORATTR. Both rails read a C23 attribute run over and dropped what it held -- the oracle at file scope and
+    before a member, so `[[gnu::aligned(8)]]` and `[[gnu::packed]]` laid a struct out at offsets Clang's are not:
+    `sizeof` 8 where Clang's is 16 and 5. A vendor's attribute is refused alike now, wherever a run is read, unless it
+    is a GNU or Clang hint both rails know (`VENDOR_HINTS`: a promise about a function or an object, or a placement
+    hint), which is dropped as a standard attribute is, and lowers alike."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for src in (
+        "struct s { unsigned a; [[gnu::aligned(8)]] unsigned b; };\nunsigned f(void) { return (unsigned)sizeof(struct s); }\n",
+        '[[gnu::section(".x")]] unsigned f(unsigned x) { return x + 1u; }\n',
+        "unsigned f(unsigned x) {\n  [[clang::likely]] x = x + 1u;\n  return x;\n}\n",
+        "unsigned f(unsigned x) {\n  [[maybe_unused, gnu::mode(DI)]] unsigned y = x;\n  return x;\n}\n",
+        "unsigned f(unsigned x) {\n  [[__gnu__::__packed__]] x = x + 1u;\n  return x;\n}\n",
+        "[[msvc::forceinline]] unsigned f(unsigned x) { return x + 1u; }\n",
+        "unsigned f(unsigned x) {\n  [[gnu::hot, gnu::vector_size(16)]] unsigned y = x;\n  return y;\n}\n",
+    ):
+        _refused_alike(exe, src, ATTR_VENDOR, phase="PARSE")
+    for src in (
+        'unsigned f(unsigned x) {\n  [[deprecated("gnu::x")]] unsigned y = x;\n  return y;\n}\n',
+        "[[gnu::const]] unsigned h(unsigned x) { return x * 3u; }\n[[__gnu__::__hot__, clang::noinline]] unsigned "
+        "f(unsigned x) { return h(x) + 1u; }\n",
+        "struct s { [[gnu::unused]] unsigned a; unsigned b; };\n[[gnu::nonnull(1), gnu::warn_unused_result]] unsigned "
+        "f(struct s *p) { return p->a + p->b; }\n",
+    ):
+        summary = _lowers_alike(exe, src)
+        assert " ok=1 " in summary, (src, summary)

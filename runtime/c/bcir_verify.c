@@ -22,17 +22,22 @@ static int unit_shape_valid(const bcir_unit *u,char *diag,size_t dn){
        f->n_host_literals<0||f->n_ptr_extents<0||f->n_qcasts<0||
        (f->n_params&&!f->params)||(f->n_calls&&!f->calls)||
        (f->n_statics&&!f->statics)||(f->n_host_literals&&!f->host_literals)||
-       (f->n_ptr_extents&&!f->ptr_extents)||(f->n_qcasts&&!f->qcasts)){
+       (f->n_ptr_extents&&!f->ptr_extents)||(f->n_qcasts&&!f->qcasts)||
+       f->n_timings<0||(f->n_timings&&!f->timings)){
       snprintf(diag,dn,"invalid function shape");return 0;}
     for(int k=0;k<f->n_calls;k++) if(!fixed_string(f->calls[k],BCIR_CIR_NAME)){
       snprintf(diag,dn,"unterminated call name");return 0;}
     for(int k=0;k<f->n_qcasts;k++) if(!fixed_string(f->qcasts[k].type,sizeof f->qcasts[k].type)){
       snprintf(diag,dn,"unterminated cast");return 0;}
+    for(int k=0;k<f->n_timings;k++){ const bcir_timing *t=&f->timings[k];
+      if(!fixed_string(t->clock_domain,sizeof t->clock_domain)||!fixed_string(t->power_domain,sizeof t->power_domain)||
+         !fixed_string(t->sync_type,sizeof t->sync_type)){
+        snprintf(diag,dn,"unterminated timing name");return 0;} }
     for(size_t k=0;k<f->n_claims;k++){
       const bcir_claim *cl=&f->claims[k];
       if(cl->n_rd>BCIR_CLAIM_MAX_RD||cl->n_wr>BCIR_CLAIM_MAX_WR||
          cl->n_imm>BCIR_CLAIM_MAX_IMM||!fixed_string(cl->op,sizeof cl->op)||
-         cl->qcast>(uint32_t)f->n_qcasts){
+         cl->qcast>(uint32_t)f->n_qcasts||cl->timing>(uint32_t)f->n_timings){
         snprintf(diag,dn,"invalid claim shape");return 0;}
     }
   }
@@ -157,6 +162,68 @@ static int claim_ids_unique(const bcir_unit *u,const bcir_host_allocator *al,cha
   return 1;
 }
 
+/* --- R19 / R20 (synchronous timing, clock-domain crossing; PORT-3) ----------
+ * The exact mirror of bcir/verify::verify_timing, over the timings a `[[bcir::timing(...)]]` statement gave its claims --
+ * vacuous without one. Each function is one module, its claims walked IN ORDER, its control-flow markers (NOP) not among
+ * them, as the oracle's claims have none. R19: a claim's timing is consistent --
+ * a known sync_type; no negative latency, margin or clock; a positive clock for a synchronous claim; a margin within a
+ * positive latency. R20: a claim whose timing names a clock domain, and which is not synchronized (sync_type `mixed`, or
+ * a barriered hazard), reads no RID the last claim to write it wrote from another named domain. Each diagnostic in the
+ * oracle's words goes to `report`, which returns nonzero to stop the walk; the count is returned. The oracle prints a
+ * name as its `repr`, `'name'`, which the front ends' alphabet makes exact. */
+typedef int (*timing_sink)(const bcir_func *f,const char *law,const char *message,void *ctx);
+static const bcir_timing *timing_of(const bcir_func *f,const bcir_claim *cl){
+  return cl->timing && cl->timing<=(uint32_t)f->n_timings ? &f->timings[cl->timing-1] : NULL;
+}
+static int timing_func(const bcir_func *f,timing_sink sink,void *ctx,size_t *count){
+  char m[512];
+  #define TIMING_SAY(law,...) do{ snprintf(m,sizeof m,__VA_ARGS__); ++*count; if(sink(f,law,m,ctx)) return 1; }while(0)
+  for(size_t i=0;i<f->n_claims;i++){ const bcir_claim *cl=&f->claims[i]; const bcir_timing *t=timing_of(f,cl);
+    if(!t || cl->opcode==BCIR_OP_NOP) continue;   /* a control-flow marker is emit-only: the oracle's claims have none */
+    if(t->sync_type[0] && !seq(t->sync_type,"synchronous") && !seq(t->sync_type,"asynchronous") && !seq(t->sync_type,"mixed"))
+      TIMING_SAY("R19","claim %u: unknown sync_type '%s'",cl->id,t->sync_type);
+    if(t->latency_cycles<0) TIMING_SAY("R19","claim %u: negative latency_cycles %lld",cl->id,(long long)t->latency_cycles);
+    if(t->setup_hold_margin<0)
+      TIMING_SAY("R19","claim %u: negative setup_hold_margin %lld",cl->id,(long long)t->setup_hold_margin);
+    if(t->clock_frequency_mhz<0)
+      TIMING_SAY("R19","claim %u: negative clock_frequency_mhz %lld",cl->id,(long long)t->clock_frequency_mhz);
+    if(seq(t->sync_type,"synchronous") && t->clock_frequency_mhz<=0)
+      TIMING_SAY("R19","claim %u: a synchronous claim needs a positive clock_frequency_mhz",cl->id);
+    if(t->latency_cycles>0 && t->setup_hold_margin>t->latency_cycles)
+      TIMING_SAY("R19","claim %u: setup_hold_margin %lld exceeds the stage latency_cycles %lld",cl->id,
+                 (long long)t->setup_hold_margin,(long long)t->latency_cycles);
+    int synchronized = seq(t->sync_type,"mixed") || cl->hazard==BCIR_HZ_BARRIERED;
+    if(!t->clock_domain[0] || synchronized) continue;
+    for(int k=0;k<cl->n_rd;k++){ uint32_t rid=cl->rd[k];
+      /* the domain of the last claim before this one to write it: its timing's, "" for none (the oracle's writer map) */
+      for(size_t q=i;q-- >0;){ const bcir_claim *w=&f->claims[q]; int hit=0;
+        if(w->opcode==BCIR_OP_NOP) continue;
+        for(int r=0;r<w->n_wr;r++) if(w->wr[r]==rid){ hit=1; break; }
+        if(!hit) continue;
+        const bcir_timing *wt=timing_of(f,w);
+        if(wt && wt->clock_domain[0] && !seq(wt->clock_domain,t->clock_domain))
+          TIMING_SAY("R20","claim %u: reads RID %u from clock domain '%s' into '%s' without a synchronizer (declare "
+                     "sync_type='mixed' or a barriered hazard) -- an unguarded clock-domain crossing",
+                     cl->id,rid,wt->clock_domain,t->clock_domain);
+        break; } } }
+  #undef TIMING_SAY
+  return 0;
+}
+typedef struct { void (*report)(const char *,const char *,const char *,void *); void *ctx; } timing_relay;
+static int timing_relay_all(const bcir_func *f,const char *law,const char *message,void *vc){
+  const timing_relay *r=vc; r->report(f->name,law,message,r->ctx); return 0; }
+size_t bcir_verify_timing(const bcir_unit *u,
+                          void (*report)(const char *funcname,const char *law,const char *message,void *ctx),
+                          void *ctx){
+  size_t count=0; timing_relay relay={report,ctx};
+  if(!report||!unit_shape_valid(u,NULL,0)) return 0;
+  for(int i=0;i<u->n_funcs;i++) (void)timing_func(&u->funcs[i],timing_relay_all,&relay,&count);
+  return count;
+}
+typedef struct { char *diag; size_t dn; } timing_first;
+static int timing_keep_first(const bcir_func *f,const char *law,const char *message,void *vc){
+  const timing_first *t=vc; (void)f; snprintf(t->diag,t->dn,"%s: %s",law,message); return 1; }
+
 int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
                                     const bcir_host_allocator *allocator){
   bcir_host_allocator selected=bcir_host_allocator_or_default(allocator);
@@ -172,7 +239,10 @@ int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
    * unit -- claim arrays are small per function; for a large unit this stays well within the verifier
    * budget (the cost model never runs on a dirty graph). */
   if(!claim_ids_unique(u,&selected,diag,dn)) return 0;
-  for(int i=0;i<u->n_funcs;i++) if(!verify_func(&u->funcs[i],diag,dn)) return 0;
+  for(int i=0;i<u->n_funcs;i++){ size_t n=0; timing_first first={diag,dn};
+    if(!verify_func(&u->funcs[i],diag,dn)) return 0;
+    if(timing_func(&u->funcs[i],timing_keep_first,&first,&n)) return 0; }   /* R19/R20, each function's after its
+                                                                              * R1-R12, as the oracle orders them */
   for(int i=0;i<u->n_funcs;i++) for(int k=0;k<u->funcs[i].n_calls;k++)
     if(func_index(u,u->funcs[i].calls[k])<0){snprintf(diag,dn,"R18: call to undefined function %s",u->funcs[i].calls[k]);return 0;}
   state_count=(size_t)(u->n_funcs>0?u->n_funcs:1);

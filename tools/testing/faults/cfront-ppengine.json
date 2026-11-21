@@ -1,0 +1,127 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_the_preprocessors_give_one_answer_on_generated_macro_programs",
+    "bcir.tests.test_c_cfront:test_the_preprocessors_share_their_expansion_bounds",
+    "bcir.tests.test_c_cfront:test_preprocessor_differential_against_clang_and_gcc",
+    "bcir.tests.test_c_cfront:test_c_twin_preprocessor_differential_against_reference",
+    "bcir.tests.test_c_cfront:test_a_directive_keeps_its_operand_spacing_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_preprocessors_give_one_answer_on_generated_macro_programs",
+      "label": "PE1 twin: no painting",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "      if (mi >= 0 && !hs_has(st, t.hs, mi)) {",
+      "new": "      if (mi >= 0) {"
+    },
+    {
+      "expects": "test_the_preprocessors_give_one_answer_on_generated_macro_programs",
+      "label": "PE2 twin: no prescan",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "        if (!ppx_prescan(st, sb, q)) return 0;\n        if (!ppx_put(st, &st->ppx_out, sb->p[q].pre0, sb->p[q].pre1, t.ws, &carry)) return 0;",
+      "new": "        if (!ppx_put(st, &st->ppx_args, sb->p[q].raw0, sb->p[q].raw1, t.ws, &carry)) return 0;"
+    },
+    {
+      "expects": "test_the_preprocessors_give_one_answer_on_generated_macro_programs",
+      "label": "PE3 twin: stringize drops spacing",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "    if (k > r0 && t->ws) *p++ = ' ';",
+      "new": ""
+    },
+    {
+      "expects": "test_c_twin_preprocessor_differential_against_reference",
+      "label": "PE4 twin: an empty replacement hands nothing on",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "    if ((carry || (ws && !n)) && S->n > base)",
+      "new": "    if (carry && S->n > base)"
+    },
+    {
+      "expects": "test_c_twin_preprocessor_differential_against_reference",
+      "label": "PE5 twin: a trailing empty run hands nothing on",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "    if ((carry || (ws && !n)) && S->n > base)",
+      "new": "    if ((ws && !n) && S->n > base)"
+    },
+    {
+      "expects": "test_the_preprocessors_share_their_expansion_bounds",
+      "label": "PE6 twin: prescan depth off by one",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "  if (sb->depth >= PPX_MAX_DEPTH)",
+      "new": "  if (sb->depth > PPX_MAX_DEPTH)"
+    },
+    {
+      "expects": "test_the_preprocessors_share_their_expansion_bounds",
+      "label": "PE7 twin: output bytes uncharged",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "    if (!ppx_charge(st, t.len) || !toks_push(st, &st->ppx_out, t)) return 0;",
+      "new": "    if (!toks_push(st, &st->ppx_out, t)) return 0;"
+    },
+    {
+      "expects": "test_c_twin_preprocessor_differential_against_reference",
+      "label": "PE8 twin: the `)`'s hide set ignored",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "hs_and(st, t.hs, a.close, &h0)",
+      "new": "hs_and(st, t.hs, t.hs, &h0)"
+    },
+    {
+      "expects": "test_c_twin_preprocessor_differential_against_reference",
+      "label": "PE9 twin: variadic commas unspaced",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "          comma.ws = a->comma_ws[k - 1];",
+      "new": "          comma.ws = 0;"
+    },
+    {
+      "expects": "test_the_preprocessors_give_one_answer_on_generated_macro_programs",
+      "label": "PE10 twin: pp-number then quote unspaced",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "  if (anum && (b == '.' || b == '\\'' ||",
+      "new": "  if (anum && (b == '.' ||"
+    },
+    {
+      "expects": "test_the_preprocessors_share_their_expansion_bounds",
+      "label": "PE11 twin: new hide sets uncharged",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "  if (!ppx_charge(st, n)) return 0;\n  if (!ppx_grow(st, (void **)&st->hs_el",
+      "new": "  if (!ppx_grow(st, (void **)&st->hs_el"
+    },
+    {
+      "expects": "test_a_directive_keeps_its_operand_spacing_on_both_rails",
+      "label": "PE12 twin: #if unspaced (the old bit append)",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "    if(w&&ws)app(state,buf,sizeof state->conditional_buffer,&w,\" \");",
+      "new": ""
+    },
+    {
+      "expects": "test_the_preprocessors_give_one_answer_on_generated_macro_programs",
+      "label": "PE13 oracle: no painting",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "            if _is_id(t) and t in self.macros and t not in hs:",
+      "new": "            if _is_id(t) and t in self.macros:"
+    },
+    {
+      "expects": "test_the_preprocessors_share_their_expansion_bounds",
+      "label": "PE14 oracle: new hide sets uncharged",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "        if seen is None:\n            self._charge(len(hs))\n",
+      "new": "        if seen is None:\n"
+    },
+    {
+      "expects": "test_the_preprocessors_share_their_expansion_bounds",
+      "label": "PE15 oracle: prescan depth off by one",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "                if depth >= _MAX_PRESCAN_DEPTH:",
+      "new": "                if depth > _MAX_PRESCAN_DEPTH:"
+    },
+    {
+      "expects": "test_the_preprocessors_give_one_answer_on_generated_macro_programs",
+      "label": "PE16 oracle: stringize drops spacing",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "        if n and ws:\n            out.append(\" \")",
+      "new": "        if False:\n            out.append(\" \")"
+    }
+  ]
+}

@@ -145,6 +145,27 @@ show_section sp_listing || exit 1
 echo "[c-runtime] MC1 BCAB listing (PORT-1): bcir-bundle's list/hexdump/select/extract/dis/mnemonics == the oracle's"
 show_section bundle_listing || exit 1
 
+echo "[c-runtime] tokenizers (PORT-2): bcir-tokenize's BPE and SentencePiece loads, ids and octets == the oracle's"
+show_section tokenizer || exit 1
+echo "[c-runtime] event transducer (PORT-4): test_etl's contracts, and bcir-etl's verdicts == the oracle's (bcir/etl)"
+show_section etl || exit 1
+echo "[c-runtime] counter-based RNG (Philox4x32-10): test_rng's known answers and contracts, and its answers == the oracle's"
+show_section rng || exit 1
+echo "[c-runtime] hardware digests: SHA-256 and CRC-32 on SHA-NI / ARMv8 SHA-2 and carry-less multiply / ARMv8 CRC32, == the portable code, hashlib and zlib"
+show_section digest_hw || exit 1
+echo "[c-runtime] native data loader: test_tokload's contracts, and bcir-tokload's shards, verdicts and batches == the oracle's"
+show_section tokload || exit 1
+echo "[c-runtime] DMA programs from strided views (N12): test_dma's contracts, and its admissions and rings == the oracle's"
+show_section dma || exit 1
+echo "[c-runtime] serving control plane (N10): test_serve's contracts, and its page tables and constrained steps == the oracle's"
+show_section serve || exit 1
+echo "[c-runtime] device manifests bound at instantiation (N11): test_devman's contracts, and its loads, probes and bound admissions == the oracle's"
+show_section devman || exit 1
+echo "[c-runtime] telemetry export, the Prometheus exposition (N13): test_prom's contracts, and its text == the oracle's octet for octet"
+show_section prom || exit 1
+echo "[c-runtime] budgeted planning (N14): the budgeted planner's API laws, and its plans under budgets == the oracle's (kbcir.rcsp)"
+show_section rcsp || exit 1
+
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1
 
@@ -220,6 +241,9 @@ echo "[c-runtime] bcir-cc compiler driver: compile a driver (sibling header) + e
 # bcir_cc.c is the cc-like driver over the full C pipeline (bcir_cpp_run_ex -I/-D -> bcir_cfront ->
 # plan -> hydrate). It must compile a driver with sibling headers via a normal compile command.
 show_section bcir_cc || exit 1
+
+echo "[c-runtime] the C subset's ratchet (CSUB-1): bcir-cc over every production unit == runtime/c/csub_ratchet.json"
+show_section csub_ratchet || exit 1
 
 echo "[c-runtime] bcir-cc --emit-c links the runtime: self-contained masked unit (#emitlink)"
 show_section emitlink || exit 1
@@ -618,6 +642,19 @@ elif bash "${ROOT}/tools/cpp/check_sycl.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATU
   echo "  PASS SYCL SAXPY differential (portable C++ fallback == BCIR reference; device path when -fsycl present)"
 else
   echo "  FAIL: the SYCL backend differential oracle did not compile or agree"; exit 1
+fi
+
+# The hosted C++ solver library (runtime/cpp: PORT-5's bcir_exact.cpp, PORT-6's bcir_csp.cpp): C++23 behind C ABIs, built
+# warning-clean without RTTI, one exported symbol and no global state, its contracts (every
+# allocation refused in turn), ASan + UBSan and a bounded libFuzzer run over each facade. Their parity
+# with the oracle is bcir/tests/test_cpp_exact.py's and test_cpp_csp.py's. Self-skips with no C++23 compiler.
+echo "[c-runtime] hosted C++ solver library: each solver behind its C ABI (tools/cpp/check_solver.sh)"
+if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
+  echo "  SKIP hosted C++ solver library (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as cpp-solver)"
+elif bash "${ROOT}/tools/cpp/check_solver.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+  echo "  PASS hosted C++ solver library (facade, contracts, sanitizers, fuzzing)"
+else
+  echo "  FAIL: the hosted C++ solver library did not build or broke a contract"; exit 1
 fi
 
 echo "[c-runtime] ok"

@@ -12,7 +12,12 @@ The tokenizer's sha256 digest ties it to `ModelManifest.tokenizer_ref` (rung-1 i
 Scope honesty: this is the REFERENCE rail for round-trip + fixture parity. Byte-for-byte parity
 against a specific released model's tokenizer (its exact pre-tokenizer regex + normalizer) is
 validated when that model's real `tokenizer.json` is ingested -- the loader accepts the real
-file shape; the pre-tokenizer here is the simple leading-space word splitter."""
+file shape; the pre-tokenizer here is the simple leading-space word splitter.
+
+The C twin is runtime/c/bcir_bpe.c with its command line `bcir-tokenize` (PORT-2a). It reads the
+file through the same bounded JSON reader under the same limits (`TOKENIZER_LIMITS`), applies the
+same laws, and gives the same ids and octets; bcir/tests/test_c_bpe_tokenizer.py holds the two
+rails together."""
 
 from __future__ import annotations
 
@@ -20,9 +25,29 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 
 _DEFAULT_MAX_TOKENIZER_BYTES = 256 * 1024 * 1024
+
+#: The bounded JSON reader's limits for a tokenizer.json (the `JerLimits` fields), field for field
+#: the C twin's `bcir_bpe_limits` (runtime/c/bcir_bpe.c): a named profile, as the reader's
+#: `STRICT_LIMITS` is, sized for the largest released vocabularies. `members` and `elements` bound
+#: one object and one array each, so a million vocab tokens and two million merges fit.
+TOKENIZER_LIMITS = MappingProxyType(
+    {
+        "input_bytes": _DEFAULT_MAX_TOKENIZER_BYTES,
+        "depth": 64,
+        "nodes": 8 << 20,
+        "members": 1 << 20,
+        "elements": 2 << 20,
+        "string_bytes": 1 << 20,
+        "number_bytes": 128,
+        "integer_digits": 64,
+        "exponent_magnitude": 4096,
+        "work": 1 << 30,
+    }
+)
 
 
 def bytes_to_unicode() -> dict[int, str]:
@@ -139,6 +164,25 @@ def _reject_duplicate_json_keys(pairs):
     return result
 
 
+def _reject_json_constant(name: str):
+    """`json` accepts NaN, Infinity and -Infinity, none of which is JSON (ECMA-404 clause 8)."""
+    raise ValueError(f"{name!r} is not a JSON token")
+
+
+def _read_json(raw: bytes):
+    """The one reader both rails use: the bounded scan under TOKENIZER_LIMITS (depth, nodes,
+    members, elements, string and number lengths, total work, and no escaped lone surrogate),
+    then UTF-8, then the grammar -- with no member name repeated in one object and no NaN."""
+    from bcir.asn1.jer_bounded import JerLimits, scan  # lazy: the reader is a large import
+
+    scan(raw, JerLimits(**TOKENIZER_LIMITS))
+    return json.loads(
+        raw.decode("utf-8"),
+        object_pairs_hook=_reject_duplicate_json_keys,
+        parse_constant=_reject_json_constant,
+    )
+
+
 def _token_id(value, *, path: str, where: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0x7FFFFFFF:
         raise ValueError(f"{path}: {where} must be an integer token id in [0, 2^31-1]")
@@ -147,7 +191,8 @@ def _token_id(value, *, path: str, where: str) -> int:
 
 def load_tokenizer(path: str, *, max_bytes: int = _DEFAULT_MAX_TOKENIZER_BYTES) -> Tokenizer:
     """Load a HF-shaped `tokenizer.json` (model.type == "BPE"): vocab, merges (either the
-    "a b" string form or the [a, b] pair form), and added special tokens."""
+    "a b" string form or the [a, b] pair form), and added special tokens. The file is read by the
+    bounded JSON reader (`_read_json`) the C twin (runtime/c/bcir_bpe.c) shares."""
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
         raise ValueError("max_bytes must be a positive integer")
     try:
@@ -161,7 +206,7 @@ def load_tokenizer(path: str, *, max_bytes: int = _DEFAULT_MAX_TOKENIZER_BYTES) 
     if len(raw) > max_bytes:
         raise ValueError(f"{path}: tokenizer.json exceeds {max_bytes} bytes")
     try:
-        d = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
+        d = _read_json(raw)
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError, RecursionError) as exc:
         raise ValueError(f"{path}: malformed tokenizer.json: {exc}") from exc
     if not isinstance(d, dict):

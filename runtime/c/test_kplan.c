@@ -7,6 +7,12 @@
  *   test_kplan --batch IN OUT        IN: a sequence of (u32 length, BKPI bytes); OUT: for each,
  *                                    (u32 status, u32 length, BKPR bytes) -- one process for a
  *                                    whole corpus
+ *   test_kplan --batch-budget IN OUT   N14: IN a sequence of (u32 length, BKPI, u32 caps, caps x
+ *                                    (u32 dim, u64 cap)); OUT for each (u32 status, u32 the
+ *                                    infeasible claim, u32 labels kept, u32 length, BKPR) -- the
+ *                                    budgeted plan
+ *   test_kplan --api-budget IN       N14: the budgeted planner's fail-closed API laws over the seed;
+ *                                    prints "API OK <checks>"
  *   test_kplan --decode-realization IN   prints the BKPR decoder's status name
  *   test_kplan --api                 the fail-closed API laws (NULL, short scratch, short output,
  *                                    zeroing on failure); prints "API OK <checks>"
@@ -64,6 +70,7 @@ static const char *status_name(bcir_status s) {
     case BCIR_ERR_LIFETIME:    return "BCIR_ERR_LIFETIME";
     case BCIR_ERR_SHARD:       return "BCIR_ERR_SHARD";
     case BCIR_ERR_PLANNER:     return "BCIR_ERR_PLANNER";
+    case BCIR_ERR_INFEASIBLE:  return "BCIR_ERR_INFEASIBLE";
   }
   return "BCIR_ERR_UNKNOWN";
 }
@@ -180,6 +187,101 @@ static int run_batch(const char *in_path, const char *out_path) {
   return ok ? 0 : 2;
 }
 
+static uint64_t rd64(const uint8_t *p) { return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32); }
+
+/* N14: plan one record under its caps (bcir_kp_plan_budgeted), labels sized by the record */
+static bcir_status plan_budget(const uint8_t *data, size_t len, const bcir_kp_cap *caps, size_t n_caps,
+                               uint8_t **out, size_t *out_len, uint32_t *infeasible, size_t *kept) {
+  bcir_kp_input in;
+  *out = NULL;
+  *out_len = 0;
+  *infeasible = 0xFFFFFFFFu;
+  *kept = 0;
+  bcir_status st = bcir_kp_decode_input(data, len, &in);
+  if (st != BCIR_OK) return st;
+  size_t scratch_len = 0, cap = 0;
+  st = bcir_kp_scratch_size(&in, &scratch_len);
+  if (st == BCIR_OK) st = bcir_kp_realization_size(&in, &cap);
+  if (st != BCIR_OK) return st;
+  size_t labels_len = bcir_kp_label_bytes(n_caps, (size_t)1u << 18);
+  void *scratch = malloc(scratch_len ? scratch_len : 1u), *labels = malloc(labels_len ? labels_len : 1u);
+  uint8_t *buf = (uint8_t *)malloc(cap);
+  if (!scratch || !buf || !labels) {
+    free(scratch);
+    free(labels);
+    free(buf);
+    return BCIR_ERR_NOSPACE;
+  }
+  st = bcir_kp_plan_budgeted(&in, caps, n_caps, scratch, scratch_len, labels, labels_len, buf, cap, out_len,
+                             infeasible, kept);
+  free(scratch);
+  free(labels);
+  if (st != BCIR_OK) {
+    free(buf);
+    *out_len = 0;
+    return st;
+  }
+  bcir_kp_realization r;
+  bcir_status back = bcir_kp_decode_realization(buf, *out_len, &r);
+  if (back != BCIR_OK || r.n_steps != in.n_claims) {
+    fprintf(stderr, "the budgeted planner wrote a realization its decoder refuses (%s)\n", status_name(back));
+    exit(3);
+  }
+  *out = buf;
+  return BCIR_OK;
+}
+
+static int run_batch_budget(const char *in_path, const char *out_path) {
+  size_t len = 0;
+  uint8_t *all = read_file(in_path, &len);
+  if (!all) return 2;
+  FILE *out = fopen(out_path, "wb");
+  if (!out) {
+    free(all);
+    return 2;
+  }
+  size_t pos = 0, cases = 0;
+  int ok = 1;
+  while (ok && pos + 4u <= len) {
+    size_t n = rd32(all + pos);
+    pos += 4u;
+    if (n > len - pos || len - pos - n < 4u) {
+      ok = 0;
+      break;
+    }
+    const uint8_t *rec = all + pos;
+    pos += n;
+    size_t k = rd32(all + pos);
+    pos += 4u;
+    if (k > BCIR_KP_BUDGET_MAX + 1u || (len - pos) / 12u < k) {
+      ok = 0;
+      break;
+    }
+    bcir_kp_cap caps[BCIR_KP_BUDGET_MAX + 1u];
+    for (size_t t = 0; t < k; t++, pos += 12u) {
+      caps[t].dim = rd32(all + pos);
+      caps[t].cap = rd64(all + pos + 4u);
+    }
+    uint8_t *plan = NULL;
+    size_t plan_len = 0;
+    uint32_t infeasible = 0;
+    size_t kept = 0;
+    bcir_status st = plan_budget(rec, n, caps, k, &plan, &plan_len, &infeasible, &kept);
+    put32(out, (uint32_t)st);
+    put32(out, infeasible);
+    put32(out, (uint32_t)kept);
+    put32(out, (uint32_t)plan_len);
+    if (plan_len) fwrite(plan, 1, plan_len, out);
+    free(plan);
+    cases++;
+  }
+  if (pos != len) ok = 0;
+  if (fclose(out) != 0) ok = 0;
+  free(all);
+  printf("BATCH %zu\n", cases);
+  return ok ? 0 : 2;
+}
+
 static int checks = 0, failures = 0;
 #define CHECK(cond, what)                     \
   do {                                        \
@@ -288,6 +390,83 @@ static int run_api(const char *path) {
   free(scratch);
   free(out);
   free(data);
+  if (failures) return 1;
+  printf("API OK %d\n", checks);
+  return 0;
+}
+
+/* N14: bcir_kp_plan_budgeted's laws -- no cap is bcir_kp_plan's plan, every refusal zeroes the output */
+static int run_api_budget(const char *path) {
+  size_t len = 0;
+  uint8_t *data = read_file(path, &len);
+  if (!data) return 2;
+  bcir_kp_input in;
+  size_t scratch_len = 0, cap = 0, out_len = 0, got_len = 7;
+  if (bcir_kp_decode_input(data, len, &in) != BCIR_OK || bcir_kp_scratch_size(&in, &scratch_len) != BCIR_OK ||
+      bcir_kp_realization_size(&in, &cap) != BCIR_OK || in.n_claims < 3u) {
+    free(data);
+    return 2;
+  }
+  size_t lab_len = bcir_kp_label_bytes(3, 4096);
+  uint8_t *scratch = (uint8_t *)malloc(scratch_len + 1u), *plain = (uint8_t *)malloc(cap);
+  uint8_t *out = (uint8_t *)malloc(cap), *lab = (uint8_t *)malloc(lab_len + 1u);
+  if (!scratch || !plain || !out || !lab) {
+    free(scratch), free(plain), free(out), free(lab), free(data);
+    return 2;
+  }
+  CHECK(bcir_kp_label_bytes(BCIR_KP_BUDGET_MAX + 1u, 1) == 0 && bcir_kp_label_bytes(0, 1) > 0 &&
+            bcir_kp_label_bytes(1, SIZE_MAX) == 0,
+        "label_bytes: past the caps, past a size_t");
+  CHECK(bcir_kp_plan(&in, scratch, scratch_len, plain, cap, &out_len) == BCIR_OK, "the unconstrained plan");
+  uint32_t inf = 0;
+  CHECK(bcir_kp_plan_budgeted(&in, NULL, 0, scratch, scratch_len, lab, lab_len, out, cap, &got_len, &inf, NULL) ==
+                BCIR_OK &&
+            got_len == out_len && memcmp(out, plain, cap) == 0 && inf == 0xFFFFFFFFu,
+        "no cap: bcir_kp_plan's plan, byte for byte");
+  bcir_kp_cap caps[BCIR_KP_BUDGET_MAX + 1u];
+  for (unsigned t = 0; t <= BCIR_KP_BUDGET_MAX; t++) caps[t].dim = t, caps[t].cap = UINT64_MAX;
+  CHECK(bcir_kp_plan_budgeted(&in, caps, BCIR_KP_BUDGET_MAX, scratch, scratch_len, lab + 1, lab_len, out, cap,
+                              &got_len, &inf, NULL) == BCIR_OK &&
+            memcmp(out, plain, cap) == 0,
+        "every dimension capped at 2**64 - 1, over misaligned labels: the unconstrained plan");
+  struct {
+    const char *what;
+    unsigned n;
+    unsigned d0, d1;
+  } bad[] = {{"thirteen caps", BCIR_KP_BUDGET_MAX + 1u, 0, 1}, {"a dimension past cost.DIMS", 1, 12, 0},
+             {"dimensions falling", 2, 5, 1}, {"a dimension twice", 2, 5, 5}};
+  for (unsigned b = 0; b < sizeof bad / sizeof bad[0]; b++) {
+    bcir_kp_cap c[BCIR_KP_BUDGET_MAX + 1u];
+    for (unsigned t = 0; t < bad[b].n; t++) c[t].dim = t, c[t].cap = UINT64_MAX;
+    if (bad[b].n <= 2u) c[0].dim = bad[b].d0, c[bad[b].n - 1u].dim = bad[b].n == 2u ? bad[b].d1 : bad[b].d0;
+    memset(out, 0xA5, cap);
+    got_len = 7;
+    CHECK(bcir_kp_plan_budgeted(&in, c, bad[b].n, scratch, scratch_len, lab, lab_len, out, cap, &got_len, &inf, NULL) ==
+                  BCIR_ERR_PLANNER &&
+              got_len == 0 && all_zero(out, cap),
+          bad[b].what);
+  }
+  memset(out, 0xA5, cap);
+  CHECK(bcir_kp_plan_budgeted(&in, caps, 1, scratch, scratch_len, NULL, lab_len, out, cap, &got_len, &inf, NULL) ==
+                BCIR_ERR_NOSPACE &&
+            all_zero(out, cap),
+        "no label storage");
+  memset(out, 0xA5, cap);
+  CHECK(bcir_kp_plan_budgeted(&in, caps, 1, scratch, scratch_len, lab, bcir_kp_label_bytes(1, 2), out, cap,
+                              &got_len, &inf, NULL) == BCIR_ERR_NOSPACE &&
+            got_len == 0 && all_zero(out, cap),
+        "label storage short of the plan's columns");
+  caps[0].cap = 0; /* no realization computes for free: refused at a claim, the output zeroed */
+  memset(out, 0xA5, cap);
+  inf = 0xFFFFFFFFu;
+  CHECK(bcir_kp_plan_budgeted(&in, caps, 1, scratch, scratch_len, lab, lab_len, out, cap, &got_len, &inf, NULL) ==
+                BCIR_ERR_INFEASIBLE &&
+            got_len == 0 && all_zero(out, cap) && inf != 0xFFFFFFFFu,
+        "compute capped at 0: infeasible, the claim named");
+  CHECK(bcir_kp_plan_budgeted(&in, caps, 1, scratch, scratch_len, lab, lab_len, out, cap, NULL, &inf, NULL) ==
+            BCIR_ERR_NOSPACE,
+        "no out_len");
+  free(scratch), free(plain), free(out), free(lab), free(data);
   if (failures) return 1;
   printf("API OK %d\n", checks);
   return 0;
@@ -675,6 +854,8 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (argc == 4 && strcmp(argv[1], "--batch") == 0) return run_batch(argv[2], argv[3]);
+  if (argc == 4 && strcmp(argv[1], "--batch-budget") == 0) return run_batch_budget(argv[2], argv[3]);
+  if (argc == 3 && strcmp(argv[1], "--api-budget") == 0) return run_api_budget(argv[2]);
   if (argc == 3 && strcmp(argv[1], "--decode-realization") == 0) {
     size_t len = 0;
     uint8_t *data = read_file(argv[2], &len);

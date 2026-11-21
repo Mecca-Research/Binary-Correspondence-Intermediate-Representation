@@ -135,7 +135,10 @@ def render() -> str:
         "(pointer lifetime: use-after-free / double-free) ride **optional** claim metadata that defaults"
     )
     a(
-        "to absent, so they are vacuous over the entire scalar/C subset (the non-disturbance invariant) —"
+        "to absent, so they are vacuous over the scalar/C subset (the non-disturbance invariant) until a"
+    )
+    a(
+        "statement carries `[[bcir::timing(...)]]`, which the C verifier then holds R19/R20 over (PORT-3) —"
     )
     a("their negative cases live in `verify_timing_lifetime.mlir`.\n")
     a("| " + " | ".join(law for law, _ in laws) + " |")

@@ -412,8 +412,16 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # emit names; a `_BitInt` stored to a bit-field converts to the unit's type -- `cfront_fnptrmember.c`,
     # `cfront_signedfnptr.c`, `cfront_complexalign.c`, `cfront_bitint_bitfield.c`, `cfront_fnptrlocal.c` and
     # `cfront_fpret.c` joined.
-    assert len(included) == 123, (
-        f"included-set size changed from the pinned 123 to {len(included)} -- a "
+    # 124 since CSUB-1: the new `cfront_stdheaders.c` round-trips -- its standard headers' constants, `offsetof`,
+    # `bool` and `<math.h>`'s floating builtins re-parse from the emit as the constants they lowered to.
+    # 125 since CSUB-2c's struct members: the new `cfront_csub2_structmembers.c` round-trips -- its aggregate
+    # member loads and stores of array elements re-parse from the emit as the strided accesses they lowered to.
+    # 126 since CSUB-2c's array members used as values: the new `cfront_csub2_elemarrays.c` round-trips -- the
+    # address of a member array's first element re-parses from the emit as the strided address it lowered to.
+    # 127 since CSUB-2e's volatile steps: the new `cfront_csub2_volatile.c` round-trips -- each step's one device read
+    # and one device write re-parse from the emit as the volatile accesses they lowered to.
+    assert len(included) == 127, (
+        f"included-set size changed from the pinned 127 to {len(included)} -- a "
         f"fixture moved across the round-trip boundary; re-classify + re-pin. "
         f"included={sorted(included)}"
     )

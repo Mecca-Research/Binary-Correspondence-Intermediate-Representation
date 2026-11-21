@@ -1,0 +1,1435 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+  "bcir.tests.test_c_cfront:test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A1 oracle emit: a local's _Alignas dropped",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "        return f\"_Alignas({n}) \" if n else \"\"\n",
+   "new": "        return \"\"\n"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A2 twin emit: a local's _Alignas dropped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      char spb[48]; if(r->align){",
+   "new": "      char spb[48]; if(0 && r->align){"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A3 oracle linkable: a global's _Alignas dropped",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "        al = f\"_Alignas({aligns[gname]}) \" if gname in aligns else \"\"",
+   "new": "        al = \"\""
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A4 twin linkable: a global's _Alignas dropped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    char alb[24]=\"\"; if(g->lk_align) snprintf",
+   "new": "    char alb[24]=\"\"; if(0) snprintf"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A5 oracle: an alignment no power of two accepted",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        if n < 0 or n & (n - 1):\n",
+   "new": "        if n < 0:\n"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A6 twin: an alignment no power of two accepted",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(n<0 || (n & (n-1))){ fail(c,CC_ALIGN_POW2); return 1; }",
+   "new": "  if(n<0){ fail(c,CC_ALIGN_POW2); return 1; }"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A7 oracle: an alignment weaker than the type accepted",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "    if align < (elem.align or 1):\n",
+   "new": "    if align < 0:\n"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A8 twin: a local's alignment weaker than the type accepted",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(align<al){ fail(c,CC_ALIGN_WEAK); return 1; }",
+   "new": "    if(align<0){ fail(c,CC_ALIGN_WEAK); return 1; }"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A9 twin: a global's alignment weaker than the type accepted",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(c->decl_align<al){ fail(c,CC_ALIGN_WEAK); return; } }",
+   "new": "    if(c->decl_align<0){ fail(c,CC_ALIGN_WEAK); return; } }"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A10 oracle: an alignment specifier taken where no object is declared",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        if not align_ok:\n            raise CParseError(ALIGN_PLACE, pos=pos)\n",
+   "new": "        if False:\n            raise CParseError(ALIGN_PLACE, pos=pos)\n"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A11 twin: a file-scope object's alignment not asked for",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  c->align_ok=1;                                     /* a global's specifiers may ask an alignment (CSUB-2) */",
+   "new": "  c->align_ok=0;                                     /* a global's specifiers may ask an alignment (CSUB-2) */"
+  },
+  {
+   "expects": "test_alignment_specifiers_and_array_parameters_of_function_types_on_both_rails",
+   "label": "CS2A12 twin: a function-pointer parameter's array of arrays taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(is(c,\"[\") || tdn){ fail(c,CC_FP_PARAM_ROWS); return 1; }",
+   "new": "  if(0){ fail(c,CC_FP_PARAM_ROWS); return 1; }"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B1 oracle image: `?` spelled as itself (a trigraph under -std=c11)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            chr(u) if 0x20 <= u < 0x7F and chr(u) not in '\"\\\\?' else f\"\\\\{u:03o}\" for u in units",
+   "new": "            chr(u) if 0x20 <= u < 0x7F and chr(u) not in '\"\\\\' else f\"\\\\{u:03o}\" for u in units"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B2 twin image: `?` spelled as itself (a trigraph under -std=c11)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(ch>=0x20 && ch<0x7f && ch!='\"' && ch!='\\\\' && ch!='?') s[l++]=(char)ch;",
+   "new": "    if(ch>=0x20 && ch<0x7f && ch!='\"' && ch!='\\\\') s[l++]=(char)ch;"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B3 oracle image: an octal escape spelled short, merging with the next digit",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "f\"\\\\{u:03o}\" for u in units",
+   "new": "f\"\\\\{u:o}\" for u in units"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B4 twin image: an octal escape spelled short, merging with the next digit",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    else { s[l++]='\\\\'; s[l++]=(char)('0'+((ch>>6)&7u)); s[l++]=(char)('0'+((ch>>3)&7u));",
+   "new": "    else { s[l++]='\\\\'; if(ch>>6) s[l++]=(char)('0'+((ch>>6)&7u)); if(ch>>3) s[l++]=(char)('0'+((ch>>3)&7u));"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B5 oracle: a string literal taken into any pointer slot",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if pt is None or pt.kind != \"scalar\" or pt.name != \"char\" or bw:",
+   "new": "        if pt is None or bw:"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B6 twin: a string literal taken into any pointer slot",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(u->k!=IK_SCAL || s->kind!=2 || !u->ptee_char || u->bit_w){ fail(c,KV_STRSLOT); return 0; }",
+   "new": "    if(u->k!=IK_SCAL || s->kind!=2 || u->bit_w){ fail(c,KV_STRSLOT); return 0; }"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B7 twin: a member pointer's pointee taken as plain char whatever its sign",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      f->ptee_plain_char=(isptr||elptr) && ty.kind==2 && ty.is_plain_char && !ty.ptr_to_struct && !ty.ptr_to_fp;",
+   "new": "      f->ptee_plain_char=(isptr||elptr) && ty.kind==2 && !ty.ptr_to_struct && !ty.ptr_to_fp;"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B8 oracle: a wide or UTF literal taken as a plain one",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if prefix:\n                raise CLowerError(STATIC_STR)\n            return _KVal(0, 0, False, \"s\", _kstr(units))",
+   "new": "            return _KVal(0, 0, False, \"s\", _kstr(units))"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B9 twin: a wide or UTF literal taken as a plain one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(str_tok_prefix_len(tat(c,k))){ fail(c,KV_STRSLOT); return 1; }",
+   "new": "  if(0 && str_tok_prefix_len(tat(c,k))){ fail(c,KV_STRSLOT); return 1; }"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B10 oracle: an entry that evaluates to a literal taken as the literal",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if strings and isinstance(expr, cast.StringLit) and v in self.str_globals:",
+   "new": "        if strings and v in self.str_globals:"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B11 twin: an entry whose tokens run past its literal taken as the literal",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(np || j!=c->i) return 0;                          /* more than the literal: what it evaluates to is no constant */",
+   "new": "  if(0 && (np || j!=c->i)) return 0;                          /* more than the literal: what it evaluates to is no constant */"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B12 twin image: a string entry dropped as a zero",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(r[k].v || r[k].sp) r[m++]=r[k]; }",
+   "new": "    if(r[k].v) r[m++]=r[k]; }"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B13 oracle emit: a block aggregate's typedef dropped",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "    types = [\n        f\"    typedef {spelling} __bcir_anon{tag[len('$anon') :]};\"\n        for tag, spelling in lf.block_types\n    ]\n",
+   "new": "    types = []\n"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B14 twin emit: a block aggregate's typedef dropped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(f->block_types) w+=snprintf(o+EO,on-EO,\"%s\",f->block_types);",
+   "new": "  if(0 && f->block_types) w+=snprintf(o+EO,on-EO,\"%s\",f->block_types);"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B15 oracle: a block declaration's untagged aggregate refused",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        self.agg_ok = True\n",
+   "new": "        self.agg_ok = False\n"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B16 twin: a block declaration's untagged aggregate refused",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    c->agg_ok=1;                                         /* ... and the untagged aggregate it defines (CSUB-2) */",
+   "new": "    c->agg_ok=0;                                         /* ... and the untagged aggregate it defines (CSUB-2) */"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B17 oracle: a block aggregate's type left unnamed (`struct $anonN` in the emit)",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        self._anon_typedef[tag] = f\"__bcir_anon{tag[len('$anon') :]}\"\n",
+   "new": ""
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B18 twin: a block aggregate's type left unnamed (`struct $anonN` in the emit)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  snprintf(S->tdname,sizeof S->tdname,\"__bcir_anon%d\",si);",
+   "new": "  S->tdname[0]=0;"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B19 oracle: an untagged aggregate taken where a type is named",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        if not agg_ok:\n            raise CParseError(AGG_TYPE_NAME, pos=pos)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B20 twin: an untagged aggregate taken where a type is named",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!agg_ok){ fail(c,CC_AGG_TYPE_NAME); return -1; }",
+   "new": "  if(0){ fail(c,CC_AGG_TYPE_NAME); return -1; }"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B21 oracle: a nested type name inherits the block declaration's leave to define one",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        agg_ok, self.agg_ok = self.agg_ok, False\n",
+   "new": "        agg_ok = self.agg_ok\n"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B22 twin: a nested type name inherits the block declaration's leave to define one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  int gok=c->agg_ok; c->agg_ok=0;",
+   "new": "  int gok=c->agg_ok;"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B23 oracle: a block-scope tag refused as a type name",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "                        AGG_BLOCK_TAGGED if agg_ok else AGG_TYPE_NAME, pos=self.peek().pos\n",
+   "new": "                        AGG_TYPE_NAME, pos=self.peek().pos\n"
+  },
+  {
+   "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B24 twin: a block-scope tag refused as a type name",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      fail(c,gok?CC_AGG_BLOCK_TAGGED:CC_AGG_TYPE_NAME); return 1; }",
+   "new": "      fail(c,CC_AGG_TYPE_NAME); return 1; }"
+  },
+  {
+   "expects": "test_string_literals_in_a_static_image_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2B25 twin: an inferred array of pointers declared without its pointee (`uint32_t *a[n]`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      else if(is_arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`",
+   "new": "      else if(arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C1 oracle: a pointer member of an element subscripted as a member array (`t[i].p[1]` refused)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "ptr_leaf = aos is not None and aos[2].kind == \"pointer\" and not aos[5]",
+   "new": "ptr_leaf = False"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C2 oracle: an element's pointer member refused as a non-scalar field again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "if fbw or ftype.kind not in (\"scalar\", \"pointer\", \"struct\", \"union\"):",
+   "new": "if fbw or ftype.kind not in (\"scalar\", \"struct\", \"union\"):"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C3 oracle: an element's pointer member no base of `->` or `*` (`t[i].next->v`)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(node, cast.Member) and self._aos_rooted(node):\n",
+   "new": "        if False:\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C4 oracle: `.` of an element's pointer member walked as a struct's (`t[i].q.x`)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if ftype.kind not in (\"struct\", \"union\"):\n                raise CLowerError(DOT_NOT)\n",
+   "new": "            if False:\n                raise CLowerError(DOT_NOT)\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C5 oracle: a subscript of an element's scalar member refused for the element's form, not C's",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                if aos is not None and aos[2].kind not in (\"array\", \"pointer\"):\n",
+   "new": "                if False:\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C6 oracle: `->` of an element's member that is no pointer, unchecked before lowering (`t[i].v->x`)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                self._member_agg(self._static_type(node.base), node.arrow)\n",
+   "new": "                pass\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C7 oracle: an element's member strided by the member, not the element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            bit_width=fbw,\n            member=True,\n            stride=elem.size,\n",
+   "new": "            bit_width=fbw,\n            member=True,\n            stride=ftype.size,\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C8 twin: an element's pointer member refused as a non-scalar field again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "(s.fp_sig && !s.is_ptr)){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }",
+   "new": "s.is_ptr){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C9 twin: an element's function-pointer member loaded as an integer",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "||(s.fp_sig && !s.is_ptr)){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }",
+   "new": "){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C10 twin: `a[i].p` loaded into an integer temp",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub):",
+   "new": "static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {\n  uint32_t t="
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C11 twin: `s.arr[i].p` loaded into an integer temp",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub):",
+   "new": "static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {\n  uint32_t t="
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C12 twin: a subscript of an element's member that is no pointer, unrefused (`t[i].v[0]`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!sub->is_ptr && is(c,\"[\")){ fail(c,CC_SUBSCRIPT_NOT); return 1; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C13 twin: `->` of an element's member that is no pointer, unrefused (`t[i].v->x`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!sub->is_ptr && is(c,\"->\")){ fail(c,CC_ARROW_NOT); return 1; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C14 twin: `.` of an element's pointer member, unrefused (`t[i].q.x`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(sub->is_ptr && is(c,\".\")){ fail(c,CC_DOT_NOT); return 1; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C15 twin: `a[i].p` not walked on through (`t[i].next->v`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  uint32_t t=emit_index_field(c,base,idx,sub);\n  if(sub->is_ptr && !c->failed && (is(c,\"->\")||is(c,\"[\"))) return postfix_ptr_chain(c,t,sub->ptee_sidx,*sub);\n",
+   "new": "  uint32_t t=emit_index_field(c,base,idx,sub);\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C16 twin: `s.arr[i].p` not walked on through (`d->notes[i].message[0]`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  uint32_t t=emit_member_index_field(c,base,arr,idx,sub);\n  if(sub->is_ptr && !c->failed && (is(c,\"->\")||is(c,\"[\"))) return postfix_ptr_chain(c,t,sub->ptee_sidx,*sub);\n",
+   "new": "  uint32_t t=emit_member_index_field(c,base,arr,idx,sub);\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C17 twin: `->` through a pointer to no struct refused for the twin's own reason (`s->p->x`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "if(psidx<0){ fail(c,is(c,\".\")?CC_DOT_NOT:CC_ARROW_NOT); return ptr; }",
+   "new": "if(psidx<0){ fail(c,\"member access through a pointer to a non-struct\"); return ptr; }"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C18 twin: `a[i].p[j]++;` taken as a store through the member (no `=` asked for)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(member_is_store(c,c->i)){\n            uint32_t ptr=emit_index_field(c,v,idx,&sub);\n",
+   "new": "          if(1){\n            uint32_t ptr=emit_index_field(c,v,idx,&sub);\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C19 twin: `s.arr[i].p[j] = v` not stored through the member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(soa && sub.is_ptr && (is(c,\"->\")||is(c,\"[\"))){",
+   "new": "        if(0 && soa && sub.is_ptr && (is(c,\"->\")||is(c,\"[\"))){"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C20 twin: `t[i].p++` -- the pointer member itself -- stepped as a scalar",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(got && sub.is_ptr){                                 /* `a[i].p->v++`",
+   "new": "    if(got && sub.is_ptr && (is(c,\"->\")||is(c,\"[\"))){                                 /* `a[i].p->v++`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C21 twin: an inc/dec through an element's pointer member not stepped (`t[i].p[0]++`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!ok || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */\n  *out=plv_incdec(c,&lv,prefix,ch); return 1;\n}\n",
+   "new": "  if(!ok || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */\n  return 0;\n}\n"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C22 twin: an inc/dec through a member array element's pointer member not dispatched (`s->b[i].cell[0]++`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(soa && sub.is_ptr){                              /* `s.arr[i].p->v++`",
+   "new": "      if(0){                              /* `s.arr[i].p->v++`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C23 twin: `&t->name` of a `const char *` member typed `int8_t **` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    tr->is_plain_char=(uint8_t)(mf->ptee_plain_char?1:0);\n    if(mf->ptee_sidx>=0)",
+   "new": "    if(mf->ptee_sidx>=0)"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C24 twin: `&t->pp` of a `T **` member typed `T **` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    tr->ptr_depth=(uint8_t)((mf->ptee_depth>0?mf->ptee_depth:1)+1);\n    tr->is_atomic",
+   "new": "    tr->ptr_depth=2;\n    tr->is_atomic"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C25 twin: `&a[i].p[j]` not taken through the member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(sub.is_ptr && (is(c,\"->\")||is(c,\"[\")))   /* `&a[i].p[j]`",
+   "new": "            if(0)   /* `&a[i].p[j]`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C26 twin: `&s.arr[i].p[j]` not taken through the member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(ef.is_ptr && !ef.fp_sig && (is(c,\"->\")||is(c,\"[\")))",
+   "new": "      if(0 && ef.is_ptr && !ef.fp_sig && (is(c,\"->\")||is(c,\"[\")))"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C27 twin: `&a[i].p` typed an integer's address",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(sub.is_ptr){                        /* `&a[i].p`: a `T **` (CSUB-2) */",
+   "new": "            if(0){                        /* `&a[i].p`: a `T **` (CSUB-2) */"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C28 twin: `&s.arr[i].p` refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(ef.is_ptr){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */",
+   "new": "      if(0){                       /* `&s.arr[i].p`: a `T **` (CSUB-2) */"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C29 twin: `&s.arr[i].in` of a struct member refused, which the oracle takes",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)){   /* a bit-field or function-pointer leaf",
+   "new": "      if(ef.bit_w||(ef.fp_sig && !ef.is_ptr)||ef.sidx>=0){   /* a bit-field or function-pointer leaf"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C30 twin: `&s.arr[i].x[0]` refused for the twin's own reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(!ef.bit_w && !farr(&ef) && !ef.fp_sig && elem_leaf_refused(c,&ef)) return 0;   /* for C's reason */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C31 twin: `--s.arr[i].p` -- a member array element's pointer member itself -- stepped as a scalar",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(soa && sub.is_ptr){                              /* `s.arr[i].p->v++`",
+   "new": "      if(soa && sub.is_ptr && (is(c,\"->\")||is(c,\"[\"))){                              /* `s.arr[i].p->v++`"
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C32 twin: `&a[i].q.x` refused for the twin's own reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(elem_leaf_refused(c,&sub)) return 0;     /* `&a[i].v[0]`, `&a[i].p.x`: for C's reason (CF-FPTAB) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E1 oracle: `a[i]->m` of a struct element read as `a[i].m`",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if n.arrow:  # `a[i]->m` of a struct element: `->` takes a pointer (C11 6.5.2.3p2; CSUB-2e)\n            raise CLowerError(ARROW_NOT)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E2 twin: `a[i]->m` of a struct element read as `a[i].m`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(is(c,\"->\")){ fail(c,CC_ARROW_NOT); return 0; }\n  c->i++; tok fn=adv(c);",
+   "new": "  c->i++; tok fn=adv(c);"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E3 twin: the lvalue walk through a loaded pointer stopping at a struct element again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(pfld.ptee_depth>1) return 0;                 /* a pointer element: not a scalar */\n      if(pfld.ptee_sidx>=0){",
+   "new": "      if(pfld.ptee_sidx>=0 || pfld.ptee_depth>1) return 0;\n      if(0){"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E4 twin: a pointer member of a struct element not walked on through (`s->slots[j].next->id++`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          ptr=emit_index_field(c,&e,ix,&sub); psidx=sub.ptee_sidx; pfld=sub; continue; }",
+   "new": "          return 0; }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E5 twin: `->` after a struct element through a loaded pointer refused for no reason of C's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(is(c,\"->\")){ fail(c,CC_ARROW_NOT); return 0; }\n          if(is(c,\"[\")){",
+   "new": "          if(is(c,\"->\")) return 0;\n          if(is(c,\"[\")){"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E6 twin: `[` after a struct element through a loaded pointer refused for no reason the rails share",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(is(c,\"[\")){ fail(c,\"a subscript of an element that is not a pointer\"); return 0; }",
+   "new": "          if(is(c,\"[\")) return 0;"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E7 twin: a bit-field member of a struct element through a loaded pointer addressed",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(sub.bit_w || (sub.fp_sig && !sub.is_ptr)){   /* what the read paths refuse too */",
+   "new": "        if((sub.fp_sig && !sub.is_ptr)){   /* what the read paths refuse too */"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E8 twin: a struct element's member read as the element's scalar (`emit_index`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(lv->kind==3) return emit_index_field(c,&lv->b,lv->idx,&lv->f);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E9 twin: a struct element's member stored as the element's scalar",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(lv->kind==3) return store_index_field(c,&lv->b,lv->idx,&lv->f,val);   /* strided by the element (CSUB-2e) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E10 twin: `&p->a[i]` strided by a word, not the element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=es; }",
+   "new": "      cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=4; }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E11 twin: `&p->a[i].m` strided by the member, not the element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "cl->n_imm=2; cl->imm[0]=lv->f.byte_off; cl->imm[1]=lv->b.type.size; }",
+   "new": "cl->n_imm=2; cl->imm[0]=lv->f.byte_off; cl->imm[1]=lv->f.size; }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E12 twin: `p->a[i].cnt++` of an `_Atomic` member not one atomic step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(lv->kind==3) return emit_rmw(c,incdec_kind(prefix,ch),&slot,lv->b.rid,1,lv->idx,0,0,lv->f.byte_off,lv->f.size,\n                                    lv->b.type.size,plv_volatile(c,lv),BCIR_BND_ASSUMED);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E13 twin: `p->a[i].cnt += v` of an `_Atomic` member as a value not one atomic step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(lv->kind==3) return emit_rmw(c,suf,&slot,lv->b.rid,1,lv->idx,1,rhs,lv->f.byte_off,lv->f.size,lv->b.type.size,\n                                    plv_volatile(c,lv),BCIR_BND_ASSUMED);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E14 twin: `(p->a[i] += o)` of a struct element refused for no reason of the oracle's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(is_compound_op(aop)){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E15 twin: `(p->a[i] = o)` of a struct element refused for no reason of the oracle's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(aop->k==T_PUN && aop->n==1 && aop->s[0]=='='){ fail(c,CC_ASSIGN_VALUE_FO); return 0; } }",
+   "new": " }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E16 twin: a store through a struct element's pointer member asking for an `=` (`s->rows[j].buf[1] = v`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        uint32_t nptr=emit_index_field(c,&e,idx,&sub); store_through_ptr(c,nptr,sub.ptee_sidx,sub); return; }",
+   "new": "        if(0) store_through_ptr(c,0,sub.ptee_sidx,sub); }"
+  },
+  {
+   "expects": "test_struct_elements_through_a_loaded_pointer_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2E17 twin: a store to a struct element's member C refuses refused for no reason of C's (`s->a[i].v[0] = x`)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(elem_leaf_refused(c,&sub)) return;            /* `...->p[i].v[j]`, `...->p[i].q.x`: C's reason */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C33 oracle: a struct member of an element refused as a non-scalar field again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "if fbw or ftype.kind not in (\"scalar\", \"pointer\", \"struct\", \"union\"):",
+   "new": "if fbw or ftype.kind not in (\"scalar\", \"pointer\"):"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C34 twin: a struct member of an element refused as a non-scalar field again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(s.bit_w||farr(&s)||(s.fp_sig && !s.is_ptr)){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }",
+   "new": "  if(s.bit_w||farr(&s)||s.sidx>=0||(s.fp_sig && !s.is_ptr)){ fail(c,\"array-of-structs non-scalar element field\"); return 0; }"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C35 twin: `a[i].in` loaded into an integer temp, not the aggregate",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub):sub->sidx>=0?tempagg(c,sub->sidx)\n    :",
+   "new": "static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub)\n    :"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C36 twin: `s.arr[i].in` loaded into an integer temp, not the aggregate",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub):sub->sidx>=0?tempagg(c,sub->sidx)\n    :",
+   "new": "static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {\n  uint32_t t=sub->is_ptr?tempptr_field(c,sub)\n    :"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C37 twin: `(a[i].in = v)` of a struct member taken as a value, which the oracle refuses",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(sub.sidx>=0){ fail(c,is_eq?CC_ASSIGN_VALUE_FO:CC_COMPOUND_VALUE_FO); return 0; }",
+   "new": "    if(0){ fail(c,is_eq?CC_ASSIGN_VALUE_FO:CC_COMPOUND_VALUE_FO); return 0; }"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C38 twin: `(s.arr[i].in = v)` of a struct member taken as a value, which the oracle refuses",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(soa && sub.sidx>=0 && (a_eq || is_compound_op(aop))){",
+   "new": "      if(0 && soa && sub.sidx>=0 && (a_eq || is_compound_op(aop))){"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C39 twin: `(p->a[i].in = v)` of a struct member through a loaded pointer taken as a value",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(ok && (lv.kind==4 || (lv.kind==3 && lv.f.sidx>=0))){",
+   "new": "      if(ok && lv.kind==4){"
+  },
+  {
+   "expects": "test_struct_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2C40 twin: `&p->a[i].in` typed no pointer to the struct",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(lv->kind==3 && lv->f.sidx>=0)               /* `&p->a[i].in`: a pointer to the struct member (CSUB-2c) */\n      fits(",
+   "new": "    if(0)               /* `&p->a[i].in`: a pointer to the struct member (CSUB-2c) */\n      fits("
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D1 oracle: a `T (*m)[N]` member read as a function-pointer declarator again",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "                if self._row_ptr_declarator_at(self._skip_stars(0)):  # `T (*name)[N]` (CSUB-2d)",
+   "new": "                if False:  # `T (*name)[N]` (CSUB-2d)"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D2 oracle: a `T (*m)[N]` member laid out as an array of rows",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "    if tref.row_ptr:\n        elem = _resolve_member_type(",
+   "new": "    if False:\n        elem = _resolve_member_type("
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D3 oracle: a `T (*m)[N]` member's pointer without the row's shape, `p->m[k][j]` flat",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        return replace(pointer(elem, abi), shape=tuple(tref.array))",
+   "new": "        return pointer(elem, abi)"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D4 oracle: `*p->m` of a row pointer, and `*m` of a two-dimensional array, read as the row's first element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if self._row_valued(self._static_type(operand)):\n                raise CLowerError(ROW_VALUE)",
+   "new": "            if False:\n                raise CLowerError(ROW_VALUE)"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D5 oracle: `*m` of a two-dimensional array read as its first element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        return len(t.shape) > 1 or (t.kind == \"array\" and t.of is not None and t.of.kind == \"array\")",
+   "new": "        return t.kind == \"pointer\" and len(t.shape) > 1"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D6 oracle: a row of pointers `T *(*m)[N]` refused in the declarator's words",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        if not self.at(\"PUNCT\", \"(\"):  # `T *(*m)[N]`: a row of pointers\n            raise CParseError(ROW_PTR_ELEM, pos=pos)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D7 oracle: a row of structs taken",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "            or base.funcptr\n            or base.aggregate\n",
+   "new": "            or base.funcptr\n"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D8 oracle: a row of no size, or past the bound, taken",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "            or not 0 < tref.array[1] <= 65535\n",
+   "new": "            or tref.array[1] < 0\n"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D9 oracle: a row of `_BitInt` taken",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "            or base.bit_width\n            or \"volatile\" in base.quals",
+   "new": "            or \"volatile\" in base.quals"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D10 oracle: a file-scope `T (*g)[N]` read as an array of rows again",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "            if tref.row_ptr:  # `T (*g)[N]` at file scope (CSUB-2d)",
+   "new": "            if False:  # `T (*g)[N]` at file scope (CSUB-2d)"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D11 oracle: a typedef of a pointer to an array refused in the declarator's words",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "        if self._row_ptr_declarator_at(self._skip_stars(0)):  # `typedef T (*NAME)[N];` (CSUB-2d)",
+   "new": "        if False:  # `typedef T (*NAME)[N];` (CSUB-2d)"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D12 twin: a `T (*m)[N]` member read as a function-pointer declarator again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(row_ptr_at(c,c->i)){             /* `T (*m)[N]`: a pointer to a row of N scalars (CSUB-2d) -- a pointer member",
+   "new": "      if(0){             /* `T (*m)[N]`: a pointer to a row of N scalars (CSUB-2d) -- a pointer member"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D13 twin: a `T (*m)[N]` member's row not recorded",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      f->row_n=isptr?row_n:0;\n",
+   "new": "      f->row_n=0;\n"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D14 twin: `p->m[k][j]` of a row pointer subscripted as a plain pointer's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(pf->row_n<=0){ c->i++; uint32_t ix=p_expr(c); eat(c,\"]\"); return ix; }",
+   "new": "  if(1){ c->i++; uint32_t ix=p_expr(c); eat(c,\"]\"); return ix; }"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D15 twin: `p->m[k][j]` strided by one element, not the row",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "rv.type.nadims=2; rv.type.adims[1]=pf->row_n;\n  uint32_t lin=array_index_n(c,&rv,2);",
+   "new": "rv.type.nadims=2; rv.type.adims[1]=1;\n  uint32_t lin=array_index_n(c,&rv,2);"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D16 twin: a row of a member, `p->m[k]`, read as its first element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(sub_group_count(c,c->i)<2){ fail(c,CC_ROW_VALUE); return 0; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D17 twin: a subscript of a row's element taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!c->failed && is(c,\"[\")) fail(c,\"a subscript of an element that is not a pointer\");\n  return lin;",
+   "new": "  return lin;"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D18 twin: a loaded row pointer unmarked, its arithmetic stepping by one element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    t->row_n=(uint16_t)fld->row_n;                        /* `T (*m)[N]`: a pointer to a row (CSUB-2d) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D19 twin: `*p->m` of a row pointer read as its first element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(r && r->kind==BCIR_RK_POINTER && rid_multidim(c,rid)){ fail(c,CC_ROW_VALUE); return rid; }",
+   "new": "  if(0){ fail(c,CC_ROW_VALUE); return rid; }"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D20 twin: `*m` of a two-dimensional array read as its first element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(rid_multidim(c,pv->rid)){ fail(c,CC_ROW_VALUE); return pv->rid; }   /* `*rows` of a `T (*rows)[N]` parameter,",
+   "new": "  if(0){ fail(c,CC_ROW_VALUE); return pv->rid; }   /* `*rows` of a `T (*rows)[N]` parameter,"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D21 twin: `sizeof *p->m` of a row pointer an element's size",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(f->row_n>0){ e->nadims=2; e->adims[1]=f->row_n; }",
+   "new": "    if(0){ e->nadims=2; e->adims[1]=f->row_n; }"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D22 twin: `typeof(p->m)` a plain pointer",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(r->row_n){ ty->nadims=2; ty->adims[1]=r->row_n; }",
+   "new": "      if(0){ ty->nadims=2; ty->adims[1]=r->row_n; }"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D23 twin: a row of no scalar taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(nd!=1 || d<=0 || d>65535 || ty.kind!=0 ||",
+   "new": "        if(nd!=1 || d<=0 || d>65535 ||"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D24 twin: a row past the bound taken, its length truncated",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(nd!=1 || d<=0 || d>65535 ||",
+   "new": "        if(nd!=1 || d<=0 ||"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D25 twin: a row of volatile scalars taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": " btd || ty.is_volatile || ty.is_atomic ||",
+   "new": " btd || ty.is_atomic ||"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D26 twin: a file-scope `T (*g)[N]` refused in the declarator's words",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(row_ptr_at(c,c->i)){ fail(c,CC_ROW_PTR_PLACE); return; }   /* `T (*g)[N]` at file scope (CSUB-2d) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D27 twin: a file-scope `T (*g)[N]` read as a function",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    else if(row_ptr_at(c,c->i)) global=1; }",
+   "new": "    }"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2D28 twin: a typedef of a pointer to an array refused in the declarator's words",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(row_ptr_at(c,skip_stars(c,c->i))){ fail(c,CC_ROW_PTR_PLACE); return; }   /* `typedef T (*NAME)[N];` (CSUB-2d) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2P1 twin: a struct or union returned through a prototype refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(ptt->kind==1 && asi<0){ fail(c,\"aggregate return through a prototype is not supported\"); return temp(c,4); }",
+   "new": "      if(ptt->kind==1){ fail(c,\"aggregate return through a prototype is not supported\"); return temp(c,4); }"
+  },
+  {
+   "expects": "test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2P2 twin: a struct returned through a prototype loaded into an integer temp, not the aggregate",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      uint32_t t = ptt->kind==1 ? tempagg(c,asi)      /*",
+   "new": "      uint32_t t = ptt->kind==1 ? temp(c,4)      /*"
+  },
+  {
+   "expects": "test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2P3 twin: a struct returned through a prototype written by no claim",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}\n      qcast_call(c,cl,0,na,c->protos[pk].params,c->protos[pk].n_params,ptt);   /* (CF-QUALS) */\n      return t;",
+   "new": "      if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=(uint8_t)(ptt->kind==1?0:1);cl->wr[0]=t;}\n      qcast_call(c,cl,0,na,c->protos[pk].params,c->protos[pk].n_params,ptt);   /* (CF-QUALS) */\n      return t;"
+  },
+  {
+   "expects": "test_struct_returns_through_a_prototype_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2P4 twin: a member, `->` or `[]` of a prototyped callee's result read by the definitions only",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      const bcir_ctype *rt=declared_ret(c,&id);   /* a struct-returning call: `mk(x).field` postfixes the result --",
+   "new": "      const bcir_ctype *rt=callee_ret(c,&id);   /* a struct-returning call: `mk(x).field` postfixes the result --"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W1 oracle: a row of scalars used as a value refused again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(node, (cast.Index, cast.Member)) and self._scalar_row(node):",
+   "new": "        if False and isinstance(node, (cast.Index, cast.Member)) and self._scalar_row(node):"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W2 oracle: a row of structs taken as a row of scalars",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            and t.of.kind == \"scalar\"\n        )",
+   "new": "            and t.of.kind in (\"scalar\", \"struct\", \"union\")\n        )"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W3 oracle: a row's address no longer refused as one",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                if self._row_of(operand):\n                    elem = operand",
+   "new": "                if False:\n                    elem = operand"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W4 oracle: `*m[k]` of a row refused again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                if self._scalar_row(operand):\n                    rid = self._rvalue(operand)",
+   "new": "                if False:\n                    rid = self._rvalue(operand)"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W5 oracle: `*(m[k] + i)` read as the element `m[k][i]`, not through the row's pointer",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            row_sum = row_sum or (term is not operand and self._scalar_row(term))",
+   "new": "            row_sum = row_sum or False"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W6 oracle: `typeof` of a row typed as its element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if self._row_of(te):\n                raise CLowerError(ROW_VALUE)",
+   "new": "            if False:\n                raise CLowerError(ROW_VALUE)"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W7 oracle: an array no subscript designates taken as a row, so `*(a + 1)` leaves the element's path",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if not isinstance(node, (cast.Index, cast.Member)):\n            return False\n        try:\n            t = self._sizeof_type(node)\n        except CLowerError:\n            return False\n        return (",
+   "new": "        try:\n            t = self._sizeof_type(node)\n        except CLowerError:\n            return False\n        return ("
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W8 twin: a row of a local, static, VLA or parameter array refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { uint32_t ra; if(row_value(c,v,&ra)) return ra; if(c->failed) return 0; }   /* `m[k]`: a row (CSUB-2d) */",
+   "new": "    { uint32_t ra; if(0 && row_value(c,v,&ra)) return ra; if(c->failed) return 0; }   /* `m[k]`: a row (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W9 twin: a row of a member array of a struct value refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { uint32_t ra; if(member_row_value(c,v,&mf,&ra)) return ra; if(c->failed) return 0; }   /* `s.m[k]`: a row (CSUB-2d) */",
+   "new": "    { uint32_t ra; if(0 && member_row_value(c,v,&mf,&ra)) return ra; if(c->failed) return 0; }   /* `s.m[k]`: a row (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W10 twin: a row of a member array through a loaded pointer refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      { uint32_t ra; if(member_row_value(c,&b,&mf,&ra)) return ra; if(c->failed) return 0; }   /* `p->q->m[k]` (CSUB-2d) */",
+   "new": "      { uint32_t ra; if(0 && member_row_value(c,&b,&mf,&ra)) return ra; if(c->failed) return 0; }   /* `p->q->m[k]` (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W11 twin: the row a pointer-to-array member points at refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(pfld.row_n>0 && sub_group_count(c,c->i)==1){  /* `p->calls[k]`: a row of the member's, `&p->calls[k][0]` (CSUB-2d) */",
+   "new": "      if(0 && pfld.row_n>0 && sub_group_count(c,c->i)==1){  /* `p->calls[k]`: a row of the member's, `&p->calls[k][0]` (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W12 twin: a row of a member array of an array-of-structs element refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,2);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */",
+   "new": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,0);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W13 twin: a row of a member array of an element through a loaded pointer refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,2);   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */",
+   "new": "        { field af; uint32_t tot; int r=0;   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W14 twin: an element's member row taken for an assignment's target",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,2);   /* `a[i].m[j]`, a row, or `a[i].m`: no object */\n      if(r<0) return 0;                              /* assigned",
+   "new": "    { field af; uint32_t tot; int r=0;   /* `a[i].m[j]`, a row, or `a[i].m`: no object */\n      if(r<0) return 0;                              /* assigned"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W15 twin: a row whose subscripts are all there taken as one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(pad && sub_group_count(c,j+2)!=nd-1) return 0;  /* no row: the element's paths take it */\n  if(pad==1 && nd<2) return 0;\n",
+   "new": "  if(pad && nd<2) return 0;   /* no row: the element's paths take it */\n"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W16 twin: a member row's supplied `0` lost",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(padded) ix=zero_index(c);",
+   "new": "    if(padded) ix=lin;"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W17 twin: a row's supplied `0` lost",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(pad && ni<3) idxs[ni++]=zero_index(c);",
+   "new": "  if(pad && ni<3) idxs[ni++]=idxs[0];"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W18 twin: a row of a two-dimensional global indexed as a local's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(k==2){ uint32_t ix=member_arr_index_x(c,&gf,1); if(c->failed) return 0;",
+   "new": "  if(k==3){ uint32_t ix=member_arr_index_x(c,&gf,1); if(c->failed) return 0;"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W19 twin: a row of structs taken as a row of scalars",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(v->type.kind==1 || v->type.kind==3 || ptr_array(c,v) || ptr_levels(&v->type)>1",
+   "new": "  if(v->type.kind==3 || ptr_array(c,v) || ptr_levels(&v->type)>1"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W20 twin: `*(m[k] + i)` refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(is(c,\"[\") && row_at(c,pv,&rg)){ spec_end(c,&m); c->i=save; return 0; }",
+   "new": "      if(0 && is(c,\"[\") && row_at(c,pv,&rg)){ spec_end(c,&m); c->i=save; return 0; }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W21 twin: `*(m[k] + i) = v` refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(is(c,\"[\") && row_at(c,pv,&rg)) pv=NULL;",
+   "new": "          if(0 && is(c,\"[\") && row_at(c,pv,&rg)) pv=NULL;"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W22 twin: `typeof` of a row typed as the pointer its value is",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(c->typeof_row){ fail(c,CC_ROW_VALUE); return 1; } } }",
+   "new": "          if(0){ fail(c,CC_ROW_VALUE); return 1; } } }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W23 twin: `&g[k]` of a two-dimensional global read as `&g[0][k]` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(gm && sub_group_count(c,c->i)<gm->nd){ fail(c,CC_ROW_ADDR); return 0; } }",
+   "new": "          if(0 && gm && sub_group_count(c,c->i)<gm->nd){ fail(c,CC_ROW_ADDR); return 0; } }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W24 twin: `&s.m[k]` of a member array read as an element's address again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(!mf.elem_ptr && sub_group_count(c,c->i)<mf.nadims){ fail(c,CC_ROW_ADDR); return 0; }",
+   "new": "    if(0 && !mf.elem_ptr && sub_group_count(c,c->i)<mf.nadims){ fail(c,CC_ROW_ADDR); return 0; }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W25 twin: `&a[i].m[j]` of an element's member row refused for another reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            if(aos_member_array_x(c,v,ix,&af,&tot,1)>0){ fail(c,CC_ROW_ADDR); return 0; }",
+   "new": "            if(0){ fail(c,CC_ROW_ADDR); return 0; }"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W26 twin: `&p->m[k]` of a row pointer's row refused for another reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(!c->failed) fail(c,c->plv_row ? CC_ROW_ADDR : \"address-of this lvalue through a loaded pointer is a follow-on\");",
+   "new": "    if(!c->failed) fail(c,\"address-of this lvalue through a loaded pointer is a follow-on\");"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W27 twin: `&a[i]` of a volatile array typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  last_ptr_to_volatile(c,v->type.is_volatile,v->sidx>=0 && sdef_vol(c,v->sidx));   /* `&a[i]` of volatile storage, as",
+   "new": "  last_ptr_to_volatile(c,0,0);   /* `&a[i]` of volatile storage, as"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W28 twin: a volatile member array's element address typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  last_ptr_to_volatile(c,mf->is_volatile||v->type.is_volatile,0);   /* of volatile storage: a `volatile T *`, as",
+   "new": "  last_ptr_to_volatile(c,0,0);   /* of volatile storage: a `volatile T *`, as"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W29 twin: `&s.arr[i]` of a volatile member typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    last_ptr_to_volatile(c,rvo,0);         /* a `volatile T *` of volatile storage, as `&x`'s (CSUB-2d) */",
+   "new": "    last_ptr_to_volatile(c,0,0);         /* a `volatile T *` of volatile storage, as `&x`'s (CSUB-2d) */"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W30 twin: `&s.arr[i].f` of a volatile field typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": " rpc=ef.is_plain_char; rvo|=ef.is_volatile;",
+   "new": " rpc=ef.is_plain_char;"
+  },
+  {
+   "expects": "test_rows_of_multi_dimensional_arrays_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2W31 twin: `&s.x` of a volatile member typed a `T *` again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  last_ptr_to_volatile(c,mf.is_volatile||v->type.is_volatile,mf.sidx>=0 && sdef_vol(c,mf.sidx));   /* (CSUB-2d) */",
+   "new": "  last_ptr_to_volatile(c,0,0);   /* (CSUB-2d) */"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X1 oracle: an array member of an element taken as no member array of an element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if not (isinstance(node, cast.Member) and not node.arrow and self._aos_rooted(node)):\n            return False\n        n = node",
+   "new": "        if True:\n            return False\n        n = node"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X2 oracle: an element of a named array's member array taken as no row, refused again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(base, cast.Name):\n            return True\n        if isinstance(base, cast.Member):",
+   "new": "        if isinstance(base, cast.Name):\n            return False\n        if isinstance(base, cast.Member):"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X3 oracle: an element of a member array of an aggregate, `h->arr[k].m`, taken as one a pointer member holds",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            return t is not None and t.kind == \"pointer\"\n        return False\n\n    def _scalar_row",
+   "new": "            return t is not None\n        return False\n\n    def _scalar_row"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X4 oracle: any member array taken as an element's, `h->arr[k].m` among them",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(node, cast.Member) and not self._elem_member_array(node):\n            return False\n",
+   "new": ""
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X5 oracle: an element's member array used as a value refused again (the value's site takes subscripts only)",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if isinstance(node, (cast.Index, cast.Member)) and self._scalar_row(node):",
+   "new": "        if isinstance(node, cast.Index) and self._scalar_row(node):"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X6 oracle: `*a[i].m` read through the general path, not the member array's first element",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if isinstance(operand, cast.Member) and self._scalar_row(operand):",
+   "new": "            if False and isinstance(operand, cast.Member) and self._scalar_row(operand):"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X8 twin: an element's member array, `a[i].m`, not taken as one when no `[` follows",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(pad==2 && farr(&m) && !tok_is(tat(c,j+2),\".\")) break;   /* `a[i].m`, the member array itself */",
+   "new": "    if(0 && farr(&m) && !tok_is(tat(c,j+2),\".\")) break;   /* `a[i].m`, the member array itself */"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X9 twin: a member array of structs or pointers as a value refused for the subscript's reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(pad && nd==1 && (m.elem_sidx>=0 || m.elem_ptr)) return 0;   /* a member array of structs or pointers as a",
+   "new": "  if(0 && nd==1 && (m.elem_sidx>=0 || m.elem_ptr)) return 0;   /* a member array of structs or pointers as a"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X10 twin: an element's member array read as a value refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,2);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */",
+   "new": "      { field af; uint32_t tot; int r=aos_member_array_x(c,v,lin,&af,&tot,1);   /* `a[i].m[j]`, a row (CSUB-2d), or `a[i].m` */"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X11 twin: an element's member array through a loaded pointer, `f->q[k].t`, refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,2);   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */",
+   "new": "        { field af; uint32_t tot; int r=aos_member_array_x(c,&e,ix,&af,&tot,1);   /* `...->p[i].m[j]`, a row (CSUB-2d), or `...->p[i].m` */"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X12 twin: an element's member array taken for an assignment's target",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,2);   /* `a[i].m[j]`, a row, or `a[i].m`: no object */\n      if(r<0) return 0;                              /* assigned",
+   "new": "    { field af; uint32_t tot; int r=aos_member_array_x(c,v,idx,&af,&tot,1);   /* `a[i].m[j]`, a row, or `a[i].m`: no object */\n      if(r<0) return 0;                              /* assigned"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2X13 twin: an element's member array's supplied subscript counted as two",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(sub_group_count(c,j+2)!=nd-(pad!=0)){",
+   "new": "  if(sub_group_count(c,j+2)!=nd-pad){"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V1 oracle: a step of a volatile object through a pointer, an element or a member refused again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if lv.kind != \"var\" and not _is_scalar_member_lv(node.operand, lv):\n",
+   "new": "        if lv.kind != \"var\" and not (_is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)):\n"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V2 oracle: a named volatile object's postfix step read twice, its snapshot a second read",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        named_vol = lv.kind == \"var\" and lv.ct.volatile and lv.ct.kind == \"scalar\"\n",
+   "new": "        named_vol = False\n"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V3 oracle: a narrowing prefix step of a volatile object re-reads it",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if named_vol or (lv.kind == \"mem\" and self._mmio(lv.rid)):",
+   "new": "            if False:"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V4 twin: a pointer sum of a pointer to volatile storage typed a `T *`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(!parr && (snap.is_volatile || snap.domain==BCIR_DOM_MMIO)){",
+   "new": "    if(0 && !parr && (snap.is_volatile || snap.domain==BCIR_DOM_MMIO)){"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V5 twin: an assignment through a pointer to volatile storage used as a value refused for no reason",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(br && br->kind==BCIR_RK_POINTER && (br->is_volatile || br->domain==BCIR_DOM_MMIO) && (is_eq || is_compound_op(op))){",
+   "new": "  if(0 && br && br->kind==BCIR_RK_POINTER && (br->is_volatile || br->domain==BCIR_DOM_MMIO) && (is_eq || is_compound_op(op))){"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V6 twin: `(*c)++` of a named pointer to volatile storage refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return v->type.kind==2 && !v->type.ptr_to_struct",
+   "new": "  return v->type.kind==2 && !v->type.is_volatile && !v->type.ptr_to_struct"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V7 twin: a step through any other pointer to volatile storage, `(**pp)++`, refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(br && br->kind==BCIR_RK_POINTER && (br->ptr_depth?br->ptr_depth:1)==1 && !br->agg[0] && !br->is_voidptr)\n      form=3;",
+   "new": "    if(br && br->kind==BCIR_RK_POINTER && (br->ptr_depth?br->ptr_depth:1)==1 && !br->agg[0] && !br->is_voidptr\n       && !br->is_volatile && br->domain!=BCIR_DOM_MMIO)\n      form=3;"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V8 twin: the store of a step through a pointer to volatile storage not a device access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  mark_access(c,cl,vol);                                         /* a volatile pointee: the write a device sees */",
+   "new": "  /* unmarked */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V9 twin: a narrowing prefix step through a pointer to volatile storage re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(vol){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }",
+   "new": "    if(0){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V10 twin: `c[k]++` of a pointer to volatile storage, or of a volatile array, refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(isk(c,T_ID) && ((v->type.kind==0 && v->sidx<0) || ptr_elem_lv_x(c,v,1))   /* volatile too (CSUB-2e) */",
+   "new": "  if(isk(c,T_ID) && ((v->type.kind==0 && !v->type.is_volatile && v->sidx<0) || ptr_elem_lv(c,v))   /* volatile too (CSUB-2e) */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V11 twin: a narrowing prefix step of a volatile element re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(index_elem_vol(c,v)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }   /* of a volatile element, a second access */",
+   "new": "      /* re-read */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V12 twin: a member of a volatile struct stepped refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(isk(c,T_ID) && v->sidx>=0 && tat(c,c->i+1)->k==T_PUN\n     && ((tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='.')",
+   "new": "  if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile && tat(c,c->i+1)->k==T_PUN\n     && ((tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='.')"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V13 twin: a narrowing prefix step of a device region's member re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(v->type.is_volatile || f.is_volatile || sdef_vol(c,v->sidx)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }",
+   "new": "      if(v->type.is_volatile || f.is_volatile){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V14 twin: a bitfield of a device region stepped as one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(f.bit_w && step_dev(c,v,&f)){ fail(c,\"inc/dec of a volatile/MMIO bitfield is a follow-on\"); return 0; }",
+   "new": "    if(0){ fail(c,\"inc/dec of a volatile/MMIO bitfield is a follow-on\"); return 0; }"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V15 twin: a narrowing prefix step of a volatile member array's element re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(step_dev(c,v,sf) || f.is_volatile){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return nw; }   /* re-read: a second access (CSUB-2e) */",
+   "new": "    /* re-read */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V16 twin: a narrowing prefix step of an element's field of a device region re-reads it",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(step_dev(c,v,&sub)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }   /* re-read: a second access (CSUB-2e) */",
+   "new": "      /* re-read */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V17 twin: a field of a volatile struct array's element stepped refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(isk(c,T_ID) && v->sidx>=0\n     && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){",
+   "new": "  if(isk(c,T_ID) && v->sidx>=0 && !v->type.is_volatile\n     && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V18 twin: `gv++;` of a named volatile object read inside the add, not as its device read",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  uint32_t cur = v->type.kind!=2 && !(v->type.is_atomic && v->type.kind==0) ? named_read(c,v) : v->rid;",
+   "new": "  uint32_t cur = v->rid;"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V19 twin: a named volatile object stepped as a value refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(obj_vol(c,v)){                                        /* a named volatile scalar: one read, one write -- the",
+   "new": "  if(0 && obj_vol(c,v)){                                        /* a named volatile scalar: one read, one write -- the"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V20 twin: a narrowing prefix step of a named volatile object as a value taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if((int)sz < (int)(nr?nr->elem_bytes:4)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }   /* re-read: a second access */",
+   "new": "    if(0){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return 0; }   /* re-read: a second access */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V21 twin: a pointer member of a volatile struct's element loaded into an integer temp",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "            decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),   /* a pointer member is `T *t` (CSUB-2e) */",
+   "new": "            tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),   /* a pointer member is `T *t` (CSUB-2e) */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V22 twin: a device region known by its struct's volatile member taken as plain storage at a narrowing step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return v->type.is_volatile || (f && f->is_volatile) || sdef_vol(c,v->sidx) || (r && r->domain==BCIR_DOM_MMIO);",
+   "new": "  return v->type.is_volatile || (f && f->is_volatile);"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V23 twin: a step through a loaded pointer into a device struct refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(!ok || !incdec_settle(c,prefix,save)){            /* a device's object too: one read, one write (CSUB-2e) */",
+   "new": "      if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)){            /* a device's object too: one read, one write (CSUB-2e) */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V24 twin: a step through an element's pointer member into a device struct refused again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!ok || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */",
+   "new": "  if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V25 twin: a narrowing prefix step through a loaded pointer into a device struct re-reads its member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(plv_volatile(c,lv)){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return nw; }   /* re-read: a second",
+   "new": "  if(0){ fail(c,\"inc/dec of this lvalue form is a follow-on\"); return nw; }   /* re-read: a second"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V26 twin: the store of `gv++;` not a device access (the claim's volatile bit, which the canon now holds)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  bcir_claim *cp=new_claim(c,\"c.copy\",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}\n  mark_obj_write(c,cp,v);\n",
+   "new": "  bcir_claim *cp=new_claim(c,\"c.copy\",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}\n"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V27 twin: the store of a step through a pointer sum to volatile storage not a device access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    mark_access(c,cl,index_elem_vol(c,&pv));                     /* a volatile element: the write a device sees */",
+   "new": "    /* unmarked */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V28 twin: the store of a volatile element's step not a device access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    mark_access(c,cl,index_elem_vol(c,v));                 /* a volatile element: the write a device sees */",
+   "new": "    /* unmarked */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V29 twin: a volatile array's initializer stores not device accesses",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      mark_access(c,cl,u->k==IK_SCAL && u->vol);     /* a volatile element: its store is a volatile",
+   "new": "      /* unmarked */ (void)0;     /* a volatile element: its store is a volatile"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V30 twin: a volatile member's initializer store not a device access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    mark_access(c,cl,u->k==IK_SCAL && u->vol);       /* a volatile slot (CSUB-2e) */",
+   "new": "    /* unmarked */"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V31 oracle canon: a claim's volatile bit left out of the record",
+   "path": "bcir/verify/__init__.py",
+   "old": "                int(c.domain),\n                int(bool(c.volatile)),\n",
+   "new": "                int(c.domain),\n                0,\n"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V32 twin canon: a claim's volatile bit left out of the record",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "int tl=snprintf(tail,sizeof tail,\"|%s|%d|%d\",imm,(int)cl->domain,cl->is_volatile?1:0);",
+   "new": "int tl=snprintf(tail,sizeof tail,\"|%s|%d|%d\",imm,(int)cl->domain,0);"
+  },
+  {
+   "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
+   "label": "CS2V33 oracle: a named volatile object's write not a volatile access",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        return {\"domain\": Domain.MMIO, \"lane\": Lane.H, \"hazard\": \"barriered\", \"volatile\": True}",
+   "new": "        return {\"domain\": Domain.MMIO, \"lane\": Lane.H, \"hazard\": \"barriered\"}"
+  }
+ ]
+}

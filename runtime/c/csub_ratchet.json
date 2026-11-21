@@ -1,0 +1,276 @@
+{
+  "schema": "bcir.csub-ratchet/1",
+  "about": "What bcir-cc (the C rail of the verified C compiler, default target x86_64-linux, -I runtime/c) makes of each production unit runtime/c/MEMORY_CLASSIFICATION.txt lists: clean (R1-R18 clean), or blocked, with its first refusal, the construct it is about and the CSUB rung that lifts it. Held exact by tools/c/csub_ratchet.py (docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md section 4).",
+  "units": {
+    "bcir_ab_listing.c": {
+      "verdict": "clean"
+    },
+    "bcir_ai_kernels.c": {
+      "verdict": "clean"
+    },
+    "bcir_ai_microbench.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "rung": "CSUB-5"
+    },
+    "bcir_artifact_bundle.c": {
+      "verdict": "clean"
+    },
+    "bcir_asn1.c": {
+      "verdict": "clean"
+    },
+    "bcir_asn1_bench.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "rung": "CSUB-5"
+    },
+    "bcir_asn1_streampack.c": {
+      "verdict": "clean"
+    },
+    "bcir_binrec.c": {
+      "verdict": "clean"
+    },
+    "bcir_bpe.c": {
+      "verdict": "clean"
+    },
+    "bcir_bundle_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'stderr'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_cc.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_cfront.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: input too large",
+      "construct": "the verified compiler's own C rail: a hosted tool past the frontend's input bound",
+      "rung": "outside"
+    },
+    "bcir_channel.c": {
+      "verdict": "blocked",
+      "blocker": "verify error: R18: recursive call cycle",
+      "construct": "the channel's recursive JSON skip (`jskip_depth` and `jskip_object`, `jskip_array`), which R18 refuses by design: the unit needs an explicit stack, as `bcir_per.c` did",
+      "rung": "outside"
+    },
+    "bcir_control_plane.c": {
+      "verdict": "clean"
+    },
+    "bcir_cpp.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_decode.c": {
+      "verdict": "clean"
+    },
+    "bcir_decoder_gem.c": {
+      "verdict": "clean"
+    },
+    "bcir_decoder_pack.c": {
+      "verdict": "clean"
+    },
+    "bcir_decoder_train.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: a call of more than 16 arguments is not supported",
+      "construct": "a call of 18 arguments (`bcir_tensor_attention_backward_contract_variant_ws_pool`), past the claim graph's 16 reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS); then threads, SIMD and bf16",
+      "rung": "CSUB-6"
+    },
+    "bcir_devman.c": {
+      "verdict": "clean"
+    },
+    "bcir_diag.c": {
+      "verdict": "clean"
+    },
+    "bcir_digest_hw.c": {
+      "verdict": "clean"
+    },
+    "bcir_dma.c": {
+      "verdict": "clean"
+    },
+    "bcir_ed25519.c": {
+      "verdict": "clean"
+    },
+    "bcir_emit.c": {
+      "verdict": "blocked",
+      "blocker": "verify error: R18: recursive call cycle",
+      "construct": "the emitter's recursive descent over the schema tree (`der_write_full` and `der_write_content`, `per_node`, `jer_node`), which R18 refuses by design: the unit needs an explicit stack, as `bcir_per.c` did",
+      "rung": "outside"
+    },
+    "bcir_encode.c": {
+      "verdict": "clean"
+    },
+    "bcir_etl.c": {
+      "verdict": "clean"
+    },
+    "bcir_etl_tool.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'FILE'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_exec.c": {
+      "verdict": "clean"
+    },
+    "bcir_handoff.c": {
+      "verdict": "clean"
+    },
+    "bcir_hydrate.c": {
+      "verdict": "clean"
+    },
+    "bcir_jer.c": {
+      "verdict": "clean"
+    },
+    "bcir_kplan.c": {
+      "verdict": "clean"
+    },
+    "bcir_llama.c": {
+      "verdict": "clean"
+    },
+    "bcir_llama_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_make.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'stderr'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_microbench.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "rung": "CSUB-5"
+    },
+    "bcir_oer.c": {
+      "verdict": "clean"
+    },
+    "bcir_pack_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'stderr'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_per.c": {
+      "verdict": "clean"
+    },
+    "bcir_per_plan.c": {
+      "verdict": "clean"
+    },
+    "bcir_plan.c": {
+      "verdict": "clean"
+    },
+    "bcir_plan_sign.c": {
+      "verdict": "clean"
+    },
+    "bcir_prom.c": {
+      "verdict": "clean"
+    },
+    "bcir_provenance.c": {
+      "verdict": "clean"
+    },
+    "bcir_q4_kernel.c": {
+      "verdict": "clean"
+    },
+    "bcir_q8_model.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_qualify_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "rung": "CSUB-5"
+    },
+    "bcir_quarantine.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_quarantine_recover.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_ring.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: not an integer constant expression",
+      "construct": "<stdatomic.h>: `ATOMIC_LLONG_LOCK_FREE` in a static assertion, then the explicit-order calls",
+      "rung": "CSUB-4"
+    },
+    "bcir_rng.c": {
+      "verdict": "clean"
+    },
+    "bcir_runtime.c": {
+      "verdict": "clean"
+    },
+    "bcir_runtime_channel.c": {
+      "verdict": "clean"
+    },
+    "bcir_serve.c": {
+      "verdict": "clean"
+    },
+    "bcir_sha256.c": {
+      "verdict": "clean"
+    },
+    "bcir_shard_manifest.c": {
+      "verdict": "clean"
+    },
+    "bcir_sp_listing.c": {
+      "verdict": "clean"
+    },
+    "bcir_spm.c": {
+      "verdict": "clean"
+    },
+    "bcir_telemetry_envelope.c": {
+      "verdict": "clean"
+    },
+    "bcir_telemetry_frame.c": {
+      "verdict": "clean"
+    },
+    "bcir_tensor.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: partial indexing of a struct member array is not yet supported",
+      "construct": "a subscript of a pointer element of a member array, through a loaded pointer (`j->pa[k][i] = v` of `uint16_t *pa[2]`); then threads and SIMD",
+      "rung": "CSUB-2"
+    },
+    "bcir_tokenize_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'stderr'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_tokload.c": {
+      "verdict": "clean"
+    },
+    "bcir_tokload_tool.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'FILE'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_train.c": {
+      "verdict": "clean"
+    },
+    "bcir_verify.c": {
+      "verdict": "clean"
+    },
+    "bcir_xer.c": {
+      "verdict": "clean"
+    }
+  }
+}

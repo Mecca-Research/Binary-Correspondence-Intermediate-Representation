@@ -61,8 +61,10 @@ typedef enum bcir_status {
                              * reused, or the handle was never issued (bcir_handoff.h) */
   BCIR_ERR_SHARD = 24,      /* a shard manifest violates a manifest law, or a shard set does not
                              * reassemble to the whole it declares (bcir_shard_manifest.h) */
-  BCIR_ERR_PLANNER = 25     /* a K_BCIR planner input or realization record violates a planner
+  BCIR_ERR_PLANNER = 25,    /* a K_BCIR planner input or realization record violates a planner
                              * law (bcir_kplan.h): a count, the scope, a claim, the op table */
+  BCIR_ERR_INFEASIBLE = 26  /* no legal realization satisfies the plan's budget (LangRef R9:
+                             * rcsp.Infeasible; bcir_kp_plan_budgeted) */
   /* Append-only: the codes are the rails' shared names for a refusal (the Python codecs'
    * `status`), so a code is never renumbered or reused -- a new status takes the next one. */
 } bcir_status;

@@ -52,6 +52,12 @@ void bcir_cpp_context_destroy(bcir_cpp_context *context);
  * or 4) and signedness, an `L` one's. A context starts with x86-64 Linux's (a signed `char`, a signed 4-byte
  * `wchar_t`) and keeps the last one set across runs and resets; `bcir_cfront_target_chars` gives a target's. */
 void bcir_cpp_context_set_chars(bcir_cpp_context *context, int char_signed, int wchar_size, int wchar_signed);
+/* The rest of the target the standard headers the preprocessor supplies read (CSUB-1; the oracle's
+ * `stdheaders._facts`): sizeof(long) and sizeof(void *) (4 or 8), the `long double` format (0 `double`, 1 the x87
+ * 80-bit one, 2 IEEE binary128), whether the environment is MSVC's, and FLT_EVAL_METHOD. A context starts with x86-64
+ * Linux's (8, 8, 1, 0, 0); `bcir_cfront_target_cpp` gives a target's. */
+void bcir_cpp_context_set_target(bcir_cpp_context *context, int long_size, int pointer_size, int long_double,
+                                 int msvc, int flt_eval);
 
 /* Context-based forms. All input/output pointers are borrowed. */
 int bcir_cpp_run_context(bcir_cpp_context *context, const char *src,
@@ -97,6 +103,8 @@ int bcir_cpp_run_alloc(const char *src, const char *basedir, char **out, size_t 
 const char *bcir_cpp_read_source(FILE *fp, const bcir_host_allocator *allocator, char **out);
 /* NON-THREAD-SAFE: `bcir_cpp_context_set_chars` for the compatibility wrappers' process-static context. */
 void bcir_cpp_set_chars(int char_signed, int wchar_size, int wchar_signed);
+/* NON-THREAD-SAFE: `bcir_cpp_context_set_target` for the process-static context. */
+void bcir_cpp_set_target(int long_size, int pointer_size, int long_double, int msvc, int flt_eval);
 
 #ifdef __cplusplus
 }

@@ -886,6 +886,53 @@ static int q15_test(void) {
   return 0;
 }
 
+/* The hard rail: a pattern is admitted only when every fact it requires is active -- one missing fact
+   refuses it, a pattern that requires nothing is always admitted -- and every malformed input is
+   refused before the mask is written. */
+static int facts_admit_test(void) {
+  /* pattern 0 needs facts {0, 2}; pattern 1 nothing; pattern 2 {1}; pattern 3 {2, 2} */
+  uint32_t offsets[5] = {0u, 2u, 2u, 3u, 5u};
+  const uint32_t ids[5] = {0u, 2u, 1u, 2u, 2u};
+  uint8_t active[3] = {1u, 0u, 1u};
+  uint8_t eligible[4] = {9u, 9u, 9u, 9u};
+  const uint8_t untouched[4] = {7u, 7u, 7u, 7u};
+  CHECK(bcir_ai_facts_admit(offsets, ids, 5u, 4u, active, 3u, eligible) == BCIR_AI_OK);
+  CHECK(eligible[0] == 1u && eligible[1] == 1u && eligible[2] == 0u && eligible[3] == 1u);
+  active[2] = 0u; /* fact 2 gone: patterns 0 and 3 lose admission, pattern 1 keeps it */
+  CHECK(bcir_ai_facts_admit(offsets, ids, 5u, 4u, active, 3u, eligible) == BCIR_AI_OK);
+  CHECK(eligible[0] == 0u && eligible[1] == 1u && eligible[2] == 0u && eligible[3] == 0u);
+  /* no facts while the patterns name some: refused; with no fact named, every pattern admitted */
+  CHECK(bcir_ai_facts_admit(offsets, ids, 5u, 4u, active, 0u, eligible) == BCIR_AI_INVALID_ARGUMENT);
+  {
+    const uint32_t none_offsets[3] = {0u, 0u, 0u};
+    uint8_t two[2] = {9u, 9u};
+    CHECK(bcir_ai_facts_admit(none_offsets, NULL, 0u, 2u, active, 0u, two) == BCIR_AI_OK);
+    CHECK(two[0] == 1u && two[1] == 1u);
+  }
+  /* each refusal, the mask as it was */
+#define REFUSED(call) do { memcpy(eligible, untouched, 4u); CHECK((call) == BCIR_AI_INVALID_ARGUMENT); \
+    CHECK(memcmp(eligible, untouched, 4u) == 0); } while (0)
+  active[2] = 1u;
+  REFUSED(bcir_ai_facts_admit(NULL, ids, 5u, 4u, active, 3u, eligible));
+  REFUSED(bcir_ai_facts_admit(offsets, NULL, 5u, 4u, active, 3u, eligible));
+  REFUSED(bcir_ai_facts_admit(offsets, ids, 5u, 4u, NULL, 3u, eligible));
+  REFUSED(bcir_ai_facts_admit(offsets, ids, 5u, 0u, active, 3u, eligible));
+  REFUSED(bcir_ai_facts_admit(offsets, ids, 4u, 4u, active, 3u, eligible));   /* the last offset is not the count */
+  offsets[2] = 1u;                                                             /* offsets fall: 2, 1, 3 */
+  REFUSED(bcir_ai_facts_admit(offsets, ids, 5u, 4u, active, 3u, eligible));
+  offsets[2] = 2u;
+  REFUSED(bcir_ai_facts_admit(offsets, ids, 5u, 4u, active, 2u, eligible));   /* id 2 at fact_count 2 */
+  active[1] = 2u;                                                              /* a byte not 0 or 1 */
+  REFUSED(bcir_ai_facts_admit(offsets, ids, 5u, 4u, active, 3u, eligible));
+  active[1] = 0u;
+  offsets[0] = 1u;                                                             /* not starting at 0 */
+  REFUSED(bcir_ai_facts_admit(offsets, ids, 5u, 4u, active, 3u, eligible));
+  offsets[0] = 0u;
+  REFUSED(bcir_ai_facts_admit(offsets, ids, 5u, (size_t)BCIR_AI_MAX_PATTERNS + 1u, active, 3u, eligible));
+#undef REFUSED
+  return 0;
+}
+
 static int q4_group_test(void) {
   uint8_t packed[17];
   int8_t q8[33];
@@ -915,6 +962,7 @@ int main(void) {
   CHECK(q8_matrix_test() == 0);
   CHECK(q8_lanes_test() == 0);
   CHECK(q15_test() == 0);
+  CHECK(facts_admit_test() == 0);
   CHECK(q4_group_test() == 0);
   puts("native AI kernels: all gates passed");
   return 0;

@@ -136,6 +136,51 @@ input under the same policy; the cross-rail exit-code parity is gated in `tools/
 uaf.c: lifetime error: R21 f: use-after-free of RID 102 (freed and not re-allocated)
 ```
 
+## Timing annotations (R19/R20, PORT-3)
+
+A statement's claims take a timing from the C23 attribute `[[bcir::timing(field = value, ...)]]` (also
+`__bcir__` and `__timing__`), which the timing laws R19 (synchronous timing) and R20 (clock-domain crossing) read:
+every claim the statement lowers carries it, the claims of a block's statements and of a control statement's
+condition, body and step among them. Both rails answer `__has_c_attribute(bcir::timing)` with 1, so a unit Clang
+also builds guards it:
+
+```c
+#if __has_c_attribute(bcir::timing)
+#define TIMED(...) [[bcir::timing(__VA_ARGS__)]]
+#else
+#define TIMED(...)
+#endif
+
+uint32_t g;
+uint32_t poll(uint32_t x) {
+  TIMED(clock_domain = "rtc", latency_cycles = 2) g = x;
+  uint32_t y;
+  TIMED(clock_domain = "cpu", sync_type = "mixed") y = g;   /* synchronized: no R20 */
+  return y;
+}
+```
+
+| field | value |
+|---|---|
+| `clock_domain`, `power_domain`, `sync_type` | one string literal of at most 63 letters, digits, `_`, `.` and `-` |
+| `latency_cycles`, `min_throughput_q16`, `clock_frequency_mhz`, `setup_hold_margin` | an integer constant expression of 64 bits |
+| `critical_path` | 0 or 1 |
+
+Each field is named at most once; one it does not name keeps the model's default. R19 refuses an unknown
+`sync_type`, a negative latency, margin or clock, a synchronous claim with no positive clock, and a margin past a
+positive latency. R20 refuses a claim that reads, from another named clock domain, a RID the last claim to write it
+wrote, unless it is synchronized (`sync_type = "mixed"`, or a barriered hazard). Both are in the verdict on both
+rails: `bcir-cc` refuses the unit, naming the law and the claim in the oracle's words.
+
+```
+poll.c: verify error: R20: claim 1001: reads RID 101 from clock domain 'rtc' into 'cpu' without a synchronizer (declare sync_type='mixed' or a barriered hazard) -- an unguarded clock-domain crossing
+```
+
+R20 follows the claim graph's resources, function by function, as the oracle defines it: a crossing through a
+global between two functions, or through memory a pointer reaches (a device register), is not one it sees. A timing
+leads a statement; before a declaration, a function, a member, a label, a `case`, a `default` or a null statement it
+is refused (`a timing annotation leads a statement`), and so is one inside a statement another annotates.
+
 ## Inline assembly (ASM1)
 
 GNU inline assembly — `asm` / `__asm__`, basic and extended — is modeled as an **ISA-neutral trusted
@@ -474,7 +519,50 @@ _mm_sfence();                      //                   store (release) fence ->
 - `_Thread_local` globals and `static _Thread_local` locals: each thread has its own object, and both emits
   keep the storage class.
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
-  predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
+  predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators. A `#include`, `#embed`,
+  `__has_include` or `__has_embed` operand written as a header name, `"..."` or `<...>`, is read as it stands, no macro
+  replaced inside it; any other operand is macro-expanded and must then be one (C11 6.10.2), so `#include HDR` and
+  `#include S(h.h)` read the header they compute (CF-INCLUDEX). `__has_embed` gives C23's three answers: 1 for a
+  resource that holds bytes, 2 for an empty one, 0 for one not found. Both rails run one engine,
+  C's rescanning rule by Prosser's hide sets (C11 6.10.3.4): a name is not re-expanded inside its own expansion
+  (`#define EPERM EPERM`), a macro's result is rescanned once with what follows it and a token once passed is never
+  looked at again, an argument is macro-replaced on its own before it is substituted (6.10.3.1) except as an operand
+  of `#` or `##`, and an empty `##` operand is a placemarker (6.10.3.3p2). `#` keeps an argument's spacing as Clang
+  and GCC keep it: one space where white space came between two tokens, none elsewhere (`S(a + b)` is `"a + b"`,
+  6.10.3.2p2). An argument's prescan nests at most 63 deep (`macro expansion nesting too deep`) and one expansion
+  does at most 2^22 units of work (`macro expansion is too large`), counted alike on both rails. A unit holds at
+  most 65 534 macros at once, the 5 predefined ones and each `-D` included (`too many macros`, alike on both rails:
+  the twin's hide sets name a macro by a 16-bit index; it had stopped at 1024, CF-MACROCAP). A
+  function-like invocation may run across lines, its `(` included (6.10.3p10): the lines it spans become one, and
+  blank lines keep the next line's number. An invocation left open at the end of the unit (`unterminated macro
+  argument list`), a directive inside its arguments (`preprocessing directive inside macro arguments`, 6.10.3p11)
+  and `__LINE__` on one of its continued lines (`__LINE__ on a continued line of a macro invocation`: neither rail
+  tracks a line per token) are refused on both rails (CSUB-1). A backslash-newline keeps the line count: each line
+  after a spliced one has its physical number, as Clang gives it (CF-SPLICELINE). A `__LINE__` expanded on a line a
+  backslash continues, where the continuation holds it, is refused alike (`__LINE__ on a line a backslash
+  continues`: Clang and GCC give one after the splice its own line); one before the splice, or reached through a
+  macro named there, is the line the logical line starts on.
+- The freestanding headers, built in per target when no `-I` directory supplies one: `<stdint.h>` (the least and
+  max-width types; the limits and C23 widths of these and the exact-width types; `SIZE_MAX`, `PTRDIFF_MIN`/`MAX`,
+  `INTPTR_*`, `UINTPTR_*`, `WCHAR_*`, `WINT_*` and `SIG_ATOMIC_*`; and the `INTn_C`/`UINTn_C`/`INTMAX_C`/`UINTMAX_C`
+  macros), `<stddef.h>` (`NULL`, `offsetof`, `ptrdiff_t` and `max_align_t`; `size_t` and `wchar_t` are the front
+  end's own, with or without it), `<stdbool.h>`, `<limits.h>`, `<float.h>`, `<iso646.h>`, `<stdalign.h>`
+  and `<math.h>`'s `NAN`, `INFINITY`, `HUGE_VAL`/`HUGE_VALF`/`HUGE_VALL` with `isfinite`, `isnan`, `isinf`,
+  `signbit` and `isnormal`. Each macro's value and type is the target's, as Clang's own header gives it (a
+  `UINT16_MAX` is an `int`, C's promotion of `uint16_t`; `LONG_MAX` follows the data model; `MB_LEN_MAX` is the
+  hosted C library's, 16 on glibc and 5 on MSVC; `FLT_EVAL_METHOD` is 2 on i386, whose target names the x87
+  `i686` baseline, so the witnesses ask Clang with `-march=i686`: Clang 23's default for the triple, `pentium4`,
+  computes in SSE2 and reports 0). `offsetof(T, m)` folds to the
+  member's offset in the target's layout of `T`, a nested member or a constant subscript included
+  (`offsetof(struct r, v[2])`); it refuses a type that is not a struct or union, a bit-field, a designator that is
+  not a member or a constant subscript, and an incomplete struct or union. `__has_include(<stdint.h>)` is true of
+  each. Left out on purpose: the `int_fastN_t` types and their limits (their widths are the C library's choice),
+  `FLT_ROUNDS` (the current rounding mode, not a constant), C23's `nullptr_t` and `unreachable()` (CSUB-6), and
+  the rest of `<math.h>`, whose functions are the libm edges below.
+- `static_assert` and `_Static_assert` at file scope, in a block and in a struct or union's member list (C11
+  6.7.10), with or without the message C23 makes optional: the condition is an integer constant expression folded as a dimension is, and a
+  false one is refused at its keyword on both rails (`static assertion failed`). `true` and `false` are C23's `bool`
+  constants, in code and in a constant expression (`sizeof(true)` is 1).
 - `#if` and `#elif` in C's arithmetic (C11 6.10.1p4): every operand an `intmax_t` or a `uintmax_t` (64 bits), an
   integer constant unsigned where its suffix has `u` or its value is past `INTMAX_MAX`, an unsigned operand making
   the operation unsigned, `true` 1 and any other identifier 0; `?:`, the comma operator in an operand C leaves
@@ -487,12 +575,81 @@ _mm_sfence();                      //                   store (release) fence ->
   code unit, a universal character name, an escape C does not define, a source character past ASCII, more than one
   character behind a prefix); an operand C leaves unevaluated refuses for none of the operators' reasons. A `#if`
   holds at most 512 tokens of at most 63 characters, nested at most 63 deep.
+- An array parameter of a function-pointer type -- in a typedef, a member or an inline declarator, `typedef int
+  (*fetch_fn)(const uint8_t digest[32], size_t n);` -- is a pointer to its element (C11 6.7.6.3p7), as a definition's
+  array parameter is (CSUB-2a).
+- `_Alignas(N)` / `alignas(N)` on an object (C11 6.7.5) -- a local, each declarator off one specifier, a block static,
+  a file-scope object of any storage class -- with the strictest of several specifiers. Each emit spells it on the
+  object's declaration: the function-level emit a block object's, the linkable emit a global's (CSUB-2a).
+- A string literal as an entry of a static's image -- `static const char *const names[] = {"ok", "size"};` in a
+  block, a pointer member of a static table's records, a scalar static: the address of its array, an address constant
+  (C11 6.6p9). Both rails spell each entry by one canonical spelling, every code unit past printable ASCII, and `"`,
+  `\` and `?`, an octal escape, so no trigraph reaches a C11 build (CSUB-2b).
+- An untagged struct or union a block declaration defines -- `static const struct { uint16_t bit; uint16_t w; } t[]
+  = {...};`, automatic or static, several declarators, a `for` declaration's. Each emit opens the function with a
+  typedef of it, `typedef struct { ... } __bcir_anonN;`, and names the type by it (CSUB-2b).
+- A pointer member of an array element -- `order[i].name`, `d->notes[i].message`, `set->slots[i].name.s` -- as a
+  value of its pointer type: compared, passed, subscripted, dereferenced, followed with `->`, stored, and stored and
+  stepped through. Its address is a `T **` (CSUB-2c).
+- An element of a pointer to structs reached through a loaded pointer -- `&set->slots[j]`, `s->slots[j].id++`,
+  `x = (s->slots[j].id += v)`, `&s->slots[j].id`, `s->rows[j].buf[1] = v` -- its address a pointer to the struct
+  (CSUB-2e).
+- A member through an object's own address, `(&v)->m` -- as a macro writes it over an object, `bcir_kplan.c`'s
+  `MS_OP(&v, i)` -- which is `v.m`, of a local, an element, a global's element, a member or a device member; and
+  `(&*p)->m`, which is `p->m`. A parenthesized operand of `&` or `*`, `&(x)`, `&(s.m[1])`, `*(p)`, is the operand
+  itself, at any depth of parentheses (CSUB-2e).
+- A pointer assigned as a value -- a member (`!(t->pieces = alloc(n))`), an element of an array of pointers, of
+  function pointers or through a `T **` (`r = (v[1] = x)`), a dereferenced `T **` (`*low = *high = &absent`), a
+  function-pointer member -- stored, then reloaded, as a scalar is. A pointer's compound assignment as a value, `(t->p
+  += 1)`, stays refused on both rails as a follow-on (CSUB-2e).
+- C23's checked arithmetic, `<stdckdint.h>`'s `ckd_add`, `ckd_sub` and `ckd_mul`, as the overflow builtins Clang and
+  GCC define them to be: a `bool`, true when the mathematical result does not fit `*r`, which takes it wrapped. A
+  result through a pointer to volatile storage is a follow-on (CSUB-3).
+- The `<string.h>` reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`
+  (freestanding since C23) -- as libc edges beside `memcpy`, `memmove` and `memset`: called verbatim, opaque to R18,
+  each typed by its declared result; the linkable artifact includes `<string.h>` for them (CSUB-5).
+- An object through a loaded pointer, as through a named one: the address of a member of the struct it reaches
+  (`&s->t->arena`, `&s->t->name`, `&s->t->arr[i]`, `&s->t->m[i][j]`, a volatile member's a pointer to volatile) and of
+  a pointer element (`&s->pp[j]`, a `T **`); a member array's element stored, compound-assigned, assigned as a value
+  and stepped (`s->t->arr[i]++`), an `_Atomic` one atomically (CSUB-2e).
+- A for-step is a statement, as a block's are: a store to a member, an element or through a pointer (`t->p += 1`,
+  `a[i] = 0, i++`, `*pp += 1`), stored once with no reload. `( E ) OP= v` with its redundant parentheses is `E OP= v`
+  as a step piece too, and as an unbraced statement after a condition, `else` or `do` (CF-STEP).
+- A struct or union member of an array element -- `set->slots[j].name = name`, `width(d->notes[i].span)`, `return
+  t[i].sp;`, `&t[i].sp` -- the aggregate value, read, stored, copied, passed, returned and addressed (CSUB-2c).
+- A pointer-to-array member `T (*m)[N]` -- `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]` -- a pointer to a row of N
+  scalars: `p->m[k][j]` read, stored, stepped and addressed, `sizeof *p->m` the row, and the pointer tested, copied,
+  taken from a two-dimensional array and passed to a row-pointer parameter (CSUB-2d).
+- A struct or union a prototyped callee returns -- `c = admit(buf, n)`, `mk(x).b`, `sum(mk(x))` -- the aggregate
+  value, as a defined callee's is; and `->` or `[]` after a pointer one returns, `mkp(x)->a` (CSUB-2).
+- A row of scalars used as a value -- `strcmp(keys[i], k)`, `f(p->calls[k])`, `fsub(a, p[1], p[0])` of a `gf p[4]`,
+  `s.m[k]`, `a[i].m[j]` -- the pointer to its first element, `&m[k][0]`: passed, assigned, chosen, stepped, compared,
+  sized and dereferenced (`*m[k]`, `*(m[k] + i)`); of locals, statics, globals, VLAs, parameters, members and the row a
+  pointer-to-array member points at (CSUB-2d).
+- An array member of scalars of an array element used as a value -- `strcmp(chs[i].name, chs[j].name)`,
+  `f(p[k].w)`, `fixed(f->qcasts[k].type, ...)` -- the pointer to its first element, `&a[i].m[0]`: passed, assigned,
+  chosen, stepped, compared, sized and dereferenced; of a named array's element, a pointer parameter's and through a
+  loaded pointer member (CSUB-2c). Its type by `typeof` is the member's array (CF-TYPEOFARR). Its address, a member
+  array of structs, pointers or two dimensions, and one of an element of a member array (`h->arr[k].m`) stay refused.
+- `typeof`, `__typeof__` and `typeof_unqual` of an array object: the array it is (C23 6.7.3.6p4). The operand can be
+  a local, a global, or a member array of a value, through a pointer or of an element. It can also be a string
+  literal or a compound literal, of one to three dimensions. It works as a declaration (`typeof(a) b`, with an
+  initializer too, and `typeof(a) t[2]`, two of them) and as a type name (`sizeof(typeof(a))`). A qualifier may be
+  written before `typeof` or after it, and `typeof_unqual` drops the element's qualifiers (CF-TYPEOFARR).
 
 ## Known limits
 
 These are reported as diagnostics, or — with `--fallback` — as a fallback-to-LLVM signal:
 
 - Non-constant `static`/global initializers; constructs beyond the L1–L6 statement subset.
+- A C23 vendor attribute neither rail knows to be a hint -- `[[gnu::packed]]`, `[[gnu::aligned(8)]]`,
+  `[[gnu::section(".x")]]`, `[[clang::likely]]` -- wherever an attribute run is read (`a vendor attribute neither
+  rail knows to be a hint is not supported`): neither rail can honor one, and both had dropped it, laying a struct
+  out at offsets Clang's are not (CF-VENDORATTR). Write the GNU form, `__attribute__((packed))`, which both rails lay
+  out. A standard attribute (`[[maybe_unused]]`, `[[nodiscard]]`, `[[fallthrough]]`) and a GNU or Clang hint
+  (`always_inline`, `artificial`, `cold`, `const`, `deprecated`, `flatten`, `format`, `hot`, `leaf`, `malloc`,
+  `noinline`, `nonnull`, `noreturn`, `nothrow`, `pure`, `returns_nonnull`, `unused`, `used`, `warn_unused_result`)
+  are read over and dropped before a function, an object, a member, a block declaration or a statement.
 - A function called, named as a value or used in a `sizeof` operand before any declaration of it -- C99 dropped
   the implicit declaration (C11 6.5.1p2): `call to undeclared function 'g'`, `use of undeclared identifier 'g'`.
   Declare it first with a prototype. A definition that leaves a parameter unnamed is refused as well.
@@ -516,7 +673,18 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - A character constant C does not define or the rails do not read: no character (`''`), an escape C does not define
   (`'\q'`) or past its code unit (`'\x100'`, and `L'\xffffffff'` where `wchar_t` holds 16 bits), a universal
   character name (`'\u0041'`), two characters behind a prefix (`u8'ab'`): `unsupported character constant`. A
-  floating constant with a C23 digit separator (`1e+5'0`) is read by neither rail -- a recorded follow-up.
+  literal whose quote never closes: `unterminated character constant` or `unterminated string literal`.
+- An `#include`, `#embed`, `__has_include` or `__has_embed` operand that, expanded, is no header name (`malformed
+  #include`), one whose `>` or `"` never comes (`unterminated #include name`), a name past 1023 bytes (`#include name
+  too long`), a file not found (`#include h.h not found`, `#embed d.bin not found`), and C23's `#embed` parameters
+  (`limit`, `prefix`, `suffix`, `if_empty`; `#embed parameters are not supported`): both rails refuse each alike
+  (CF-INCLUDEX).
+- A C23 digit separator a constant does not admit, one not between two digits of its part (6.4.4.1, 6.4.4.2): behind a
+  base prefix (`0x'1`), beside a `.`, an exponent's letter or a suffix (`1.'5`, `1'e5`, `1'u`, `1.5'f`), or beside
+  another `'`: `invalid integer literal` or `invalid floating constant`, the spelling quoted. A `'` is a number's only
+  before a digit or a nondigit (6.4.8), so `1'.5` is `1` and an open character constant, and `1'e+5` is `1'e`, `+` and
+  `5`, as Clang and GCC read them. Every constant Clang takes reads on both rails, in an exponent too (`1e1'0`,
+  `0x1'0p1'0`), its emit spelled without the separator (CF-DIGITSEP).
 - A file-scope initializer C refuses (an excess entry, a string too long for its array, a designator outside its
   object) or that overrides a subobject a brace list or a string initialized, and an initialized file-scope array
   of more than three dimensions. A block-scope `_Thread_local` object that is not `static` (C11 6.7.1p3).
@@ -549,9 +717,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   is a new-line (translation phase 1) and a lone `\r` white space, so a CRLF unit lowers to its LF twin's digest, and a
   `\x1c` or `\x1e` in code is `unexpected character` and a NEL or U+2028 `NONASCII` on both (CF-PPSPLITS). A call
   carries at most 16 arguments on both rails (CF-CALLARGS).
-- An increment, or an assignment used as a value, of a device object -- a `volatile` object, or any member of a
-  struct that holds volatile storage reached through a pointer: its value would be a second device access. Both
-  rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.
+- An assignment used as a value of a device object -- a `volatile` object, or any member of a struct that holds
+  volatile storage reached through a pointer -- and a prefix step of one that narrows (`++*c` of a
+  `volatile uint8_t *`): its value would be a second device access. A bitfield of a device region stepped. Both rails
+  refuse them. The statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower, and so do the other steps
+  (`(*c)++`, `++dev->count`, `ticks++`), each one read and one write (CSUB-2e).
 - A `static` table of function pointers in a block (`static op_t t[2] = {f, g};`): refused on both rails as no integer
   constant expression; a file-scope table holds the same designators. Arithmetic on a function pointer (`fp + 1`,
   `fp++`), which C does not define, lowers today and is a recorded follow-up; `i[p]` (the pointer as the index) is
@@ -604,17 +774,56 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   cannot compile `_Decimal`, so the form is un-validatable under the Clang-equivalence methodology and
   is gated out until a `_Decimal`-capable reference compiler is available.
 - Cross-target builds are layout-only here; running them needs a cross toolchain.
+- An alignment specifier the subset does not take, refused on both rails for one reason (CSUB-2a):
+  - an alignment that is no power of two (`requested alignment is not a power of 2`), or is past 4096;
+  - one weaker than its type (`requested alignment is less than the minimum alignment of its type`, C11 6.7.5p4);
+  - the type-name form `_Alignas(T)`;
+  - one on anything but the declaration of an object -- a typedef, a parameter, a function, a cast, `sizeof`;
+  - one on a variable-length array, or on a declaration that defines the struct or union it aligns.
+
+  A function-pointer parameter declared as an array of arrays, or as a variable-length array, is refused as well.
+- A string literal in a static's image anywhere but a pointer to plain `char` (`a string literal in a static's
+  initializer initializes only a pointer to plain char`), from a literal with a prefix, or an entry that only
+  evaluates to one -- `"ab" + 1`, a cast, `?:`, `("a", "b")`, which is no constant expression (CSUB-2b).
+- A struct or union defined with a tag in a block (`a struct or union with a tag defined in a block is not
+  supported`), and one defined anywhere but a declaration of objects -- a cast, `sizeof`, a parameter, a compound
+  literal, `typeof` (`a struct or union defined outside a declaration of objects is not supported`; CSUB-2b).
+- An array element's pointer member stepped itself (`t[i].p++`), as a plain struct's (`s->p++`) is; a
+  function-pointer or bit-field member of an element (`array-of-structs non-scalar element field`); and a struct
+  member of one assigned as a value, `x = (t[i].sp = v)` (`this lvalue form's assignment as a value is a follow-on`;
+  CSUB-2c).
+- `->` of a struct element, `a[i]->m` where `a[i]` is the struct itself (``member access `->` through a value that
+  is not a pointer to a struct or union``, C11 6.5.2.3p2; CSUB-2e).
+- Through a loaded pointer: `->` of a dereferenced `T **` (`(*q)->v`), a volatile object's address, a pointer or
+  struct member's address (`&p->q->name`, `&s->t->arena`), a member array's element (`&p->q->arr[1]`) and a pointer
+  element's address (`&p->pp[j]`). The oracle lowers them, and the twin refuses them (CSUB-2e).
+- The row `*` designates -- `*p->m` of a pointer-to-array member, `*rows` of a row-pointer parameter, `*t` of a
+  two-dimensional array -- `typeof` of a row, and a row of rows, structs or pointers (`partial indexing of a
+  multi-dimensional array (a row used as a value) is not yet supported`); a row's address, `&t[1]` (`the address of a
+  row of a multi-dimensional array is not supported`); and arithmetic on a pointer to an array. A pointer to an array of no scalar, of a qualified or
+  `_BitInt` scalar, of two dimensions, or longer than 65535 (`a pointer to an array is supported only as a pointer to
+  one row of at most 65535 scalars`); and one at file scope, in a typedef (`a pointer to an array is supported only as
+  a parameter or a member`) or as a block object (CSUB-2d).
+- A prototype whose return type is qualified at its top level (`const uint32_t g(void);`): both emits declare it
+  without the qualifier, which Clang refuses beside the source (CSUB-2).
+- `typeof` of an expression where no function's scope types it -- a member's type, a global's, a typedef's or a
+  function's return type: refused on both rails (`typeof of an expression in a member or a file-scope declaration is
+  not supported`). `typeof` of a type name works there. Also refused alike (CF-TYPEOFARR):
+  - `typeof` of an array of no constant size, a VLA or an `extern T a[]` (`typeof of an array of unknown or variable
+    length is not supported`), or of more than three dimensions;
+  - a pointer to a typeof'd array (`typeof(a) *p`, `a pointer to a typeof'd array is not supported`);
+  - `volatile` on a typeof'd pointer, before `typeof` or after it -- the volatile pointer object `T *volatile` is,
+    refused as that is (`a volatile-qualified pointer is not supported`).
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.
 
-**Measured against the runtime's own C (2026-11-10).** [`../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)
-runs this compiler over the 33 runtime library units. Three gaps above the documented limits
-block most of them:
-- a function-like macro call whose arguments span lines (`unterminated macro argument list`,
-  which C11 6.10.3p10 allows);
-- a file-scope `static_assert` or `_Static_assert`;
-- the standard headers' macros (`NULL`, `SIZE_MAX`, `UINT32_MAX`, `UINT64_C`, `INT_MAX`, `NAN`,
-  `true`).
-
-Each is refused on both rails. The audit's CSUB ladder closes them and the table idioms behind
-them.
+**Measured against the runtime's own C.** [`../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](../research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)
+ran this compiler over the runtime's units. Its first rung, CSUB-1 (2026-11-11), closed the three gaps that blocked
+most of them: multi-line macro invocations, static assertions and the standard headers above. `bcir-cc` now
+compiled 21 of the runtime's 58 production units with R1-R18 clean, where it had compiled 4; CSUB-2a (2026-11-14)
+brought it to 22, CSUB-2b's string tables (2026-11-15) to 25, and CSUB-2c's pointer members of array elements to 27.
+The ratchet gate `tools/c/csub_ratchet.py` (the `csub_ratchet` section of `tools/c/check_runtime.sh`) holds each unit
+`runtime/c/MEMORY_CLASSIFICATION.txt` lists to its record in `runtime/c/csub_ratchet.json`: clean, or blocked with
+its first refusal, the construct it is about and the rung that lifts it. A unit added to the runtime is added to the
+record, or the gate fails. The audit's later rungs close the table idioms (CSUB-2) and the hosted profile (CSUB-5)
+that block most of the rest.

@@ -1,0 +1,130 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX1 oracle: a header name written as one macro-expanded",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        text = rest.strip(_ASCII_SPACE)\n        if not text.startswith((\"<\", '\"')):\n            text = self._expand_text(text).strip(_ASCII_SPACE)\n",
+   "new": "        text = self._expand_text(rest).strip(_ASCII_SPACE)\n        if not text.startswith((\"<\", '\"')):\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX2 oracle: a bare name taken for a quoted one",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "                raise CPPError(f\"malformed {kind}\")\n",
+   "new": "                return text, False, \"\"\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX3 oracle: an unterminated header name taken whole",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        if end < 0:\n            raise CPPError(f\"unterminated {kind} name\")\n",
+   "new": "        if end < 0:\n            end = len(text)\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX4 oracle: no bound on a header name",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        if len(target.encode(\"utf-8\", \"surrogatepass\")) > 1023:\n",
+   "new": "        if False:\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX5 oracle: #embed's parameters ignored",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        # `limit(1)` and C23's other parameters: read by neither rail (CF-INCLUDEX)\n        if after.strip(_ASCII_SPACE):\n",
+   "new": "        # `limit(1)` and C23's other parameters: read by neither rail (CF-INCLUDEX)\n        if False:\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX6 oracle: __has_embed's parameters ignored",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        target, _system, after = self._header_operand(operand, \"__has_embed\")\n        if after.strip(_ASCII_SPACE):\n",
+   "new": "        target, _system, after = self._header_operand(operand, \"__has_embed\")\n        if False:\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX7 oracle: an empty resource found as one that holds bytes",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        return \"0\" if data is None else \"1\" if data else \"2\"\n",
+   "new": "        return \"0\" if data is None else \"1\"\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX8 oracle: a missing header named in other words",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "            raise CPPError(f\"#include {target} not found\")\n",
+   "new": "            raise CPPError(f\"#include {target!r} not found\")\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX9 twin: a header name written as one macro-expanded",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  const char *t=rest; while(pp_space(*t)) t++;\n  if(*t!='<' && *t!='\"'){\n",
+   "new": "  const char *t=rest; while(pp_space(*t)) t++;\n  if(1){\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX10 twin: a computed operand left unexpanded",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    t=expand_text(st,t,0);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX11 twin: an unterminated header name taken whole",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  if(!e) return open[kind];\n",
+   "new": "  if(!e) e=t+strlen(t);\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX12 twin: a header name past 1023 bytes cut there",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  if(nl>1023) return long_[kind];\n",
+   "new": "  if(nl>1023) nl=1023;\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX13 twin: #embed's parameters ignored",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "          if(*after){if(err&&errcap)snprintf(err,errcap,\"%s\",PP_EMBED_PARAMETERS);return 1;}\n",
+   "new": ""
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX14 twin: __has_embed's parameters ignored",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "        if(!why){ while(pp_space(*after)) after++; if(*after) why=PP_EMBED_PARAMETERS; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX15 twin: an empty resource found as one that holds bytes",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "          has = rr<0 ? 0 : bn ? 1 : 2;\n",
+   "new": "          has = rr<0 ? 0 : 1;\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX16 twin: __has_embed not evaluated",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    if(k=='i'&&!strcmp(t,\"__has_embed\")){\n",
+   "new": "    if(0&&k=='i'&&!strcmp(t,\"__has_embed\")){\n"
+  },
+  {
+   "expects": "test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails",
+   "label": "IX17 twin: a malformed __has_include operand read as 0",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "        const char *why=header_operand(state, op, 2, nm, &sys, &after);\n        if(why) cpp_limit(state, why);\n",
+   "new": "        const char *why=header_operand(state, op, 2, nm, &sys, &after);\n        if(why) has=0;\n"
+  }
+ ]
+}

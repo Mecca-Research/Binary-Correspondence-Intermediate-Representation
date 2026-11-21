@@ -23,6 +23,13 @@ rail uses: BCIR emits CANONICAL-PER and accepts BASIC-PER. Per §7.5, CANONICAL-
 restriction of BASIC-PER's implementation-dependent choices, so every canonical encoding is
 already a legal basic one; the one place the two differ for our schemas is §19.5 (a DEFAULT
 component whose value equals the default must be absent under CANONICAL-PER).
+
+The shortest-form rules are not among those choices. Each is a "shall" in its own clause:
+the minimum octets of a whole number (§11.5.7.4, §11.7.4, §11.8.2), the one-octet length
+below 128 (§11.9.3.6), and the short forms of a normally small number up to 63 (§11.6.1) and
+of a normally small length up to 64 (§11.9.3.4). A longer spelling is a second spelling of one
+value under BASIC-PER too, so both variants refuse it, on this rail and on the C twin
+(`runtime/c/bcir_per.c`), as the generated UPER codecs (`cgen.py`) already did.
 """
 
 from __future__ import annotations
@@ -213,6 +220,52 @@ class BitReader:
 # --------------------------------------------------------------------------------------
 
 
+def _minimal_unsigned(data: bytes, clause: str) -> int:
+    """A non-negative-binary-integer in "the minimum number of octets" (§11.3.6).
+
+    A leading zero octet before another octet is a longer spelling of the same value, and
+    BASIC-PER grants no choice here: `a0 00 00 00 00 00 05` for INTEGER (0..2^40) is five in
+    six octets, where the encoder writes `00 05`. One predicate for the three sites (§11.5.7.4,
+    §11.7.4 and §11.6.2's semi-constrained number), the C twin's `minimal_unsigned`.
+    """
+    if len(data) > 1 and data[0] == 0:
+        raise Asn1Error(
+            f"PER {clause}: {data.hex()} spells {int.from_bytes(data, 'big')} in more than "
+            f"the minimum number of octets (a leading zero octet)"
+        )
+    return int.from_bytes(data, "big")
+
+
+def _minimal_signed(data: bytes) -> int:
+    """§11.8.2: a 2's-complement-binary-integer in "the minimum number of octets".
+
+    A first octet of all zeros before a clear sign bit, or of all ones before a set one, only
+    repeats the sign: `02 00 05` is five, whose spelling is `01 05`.
+    """
+    if len(data) > 1 and (
+        (data[0] == 0x00 and data[1] < 0x80) or (data[0] == 0xFF and data[1] >= 0x80)
+    ):
+        raise Asn1Error(
+            f"PER 11.8.2: {data.hex()} spells {int.from_bytes(data, 'big', signed=True)} in "
+            f"more than the minimum number of octets (a first octet that only repeats the sign)"
+        )
+    return int.from_bytes(data, "big", signed=True)
+
+
+def _two_octet_length(first: int, reader: BitReader) -> int:
+    """§11.9.3.7: the two-octet length, which §11.9.3.6 leaves to counts of 128 and more.
+
+    `80 05` is five in the form a count below 128 never takes; its spelling is `05`.
+    """
+    count = ((first & 0x3F) << 8) | reader.get_bits(8)
+    if count <= _LEN_1_OCTET_MAX:
+        raise Asn1Error(
+            f"PER 11.9.3.6: a length of {count} takes the one-octet form, not the two-octet "
+            f"form of 11.9.3.7"
+        )
+    return count
+
+
 def _encode_constrained(writer: BitWriter, value: int, lower: int, upper: int) -> None:
     """§11.5: a constrained whole number, in whichever of the five cases applies."""
     if value < lower or value > upper:
@@ -260,7 +313,7 @@ def _decode_constrained(reader: BitReader, lower: int, upper: int) -> int:
         length_upper = max(1, ((range_ - 1).bit_length() + 7) // 8)
         octets = _decode_constrained(reader, 1, length_upper)
         reader.align()
-        offset = int.from_bytes(reader.get_octets(octets), "big")
+        offset = _minimal_unsigned(reader.get_octets(octets), "11.5.7.4")
     # §11.5.3: the offset names a value in [0, range). A range that is not a power of two
     # leaves the widest bit patterns UNUSED, and a conforming encoder never writes one -- so
     # reading one back is a malformed encoding, not a value. Rejecting here is what keeps the
@@ -289,7 +342,13 @@ def _encode_normally_small(writer: BitWriter, value: int) -> None:
 def _decode_normally_small(reader: BitReader) -> int:
     if reader.get_bit() == 0:
         return reader.get_bits(6)
-    return _decode_semi_constrained(reader, 0)
+    value = _decode_semi_constrained(reader, 0)
+    if value <= 63:
+        raise Asn1Error(
+            f"PER 11.6.1: the normally small number {value} takes the 6-bit form, not "
+            f"11.6.2's semi-constrained one"
+        )
+    return value
 
 
 def _encode_semi_constrained(writer: BitWriter, value: int, lower: int) -> None:
@@ -313,7 +372,7 @@ def _decode_semi_constrained(reader: BitReader, lower: int) -> int:
             "contents octet; a zero length determinant is malformed"
         )
     reader.align()
-    return lower + int.from_bytes(reader.get_octets(octets), "big")
+    return lower + _minimal_unsigned(reader.get_octets(octets), "11.7.4")
 
 
 def _encode_unconstrained(writer: BitWriter, value: int) -> None:
@@ -345,7 +404,7 @@ def _decode_unconstrained(reader: BitReader) -> int:
             "contents octet; a zero length determinant is malformed"
         )
     reader.align()
-    return int.from_bytes(reader.get_octets(octets), "big", signed=True)
+    return _minimal_signed(reader.get_octets(octets))
 
 
 # --------------------------------------------------------------------------------------
@@ -380,7 +439,7 @@ def _decode_unconstrained_length(reader: BitReader) -> int:
     if not first & 0x80:
         return first
     if not first & 0x40:
-        return ((first & 0x3F) << 8) | reader.get_bits(8)
+        return _two_octet_length(first, reader)
     raise Asn1Error("PER: fragmented length determinant in a context that cannot be fragmented")
 
 
@@ -480,9 +539,8 @@ def _decode_unconstrained_count(reader: BitReader, consume) -> int:
                 consume(first)
             return total + first
         if not first & 0x40:
-            count = ((first & 0x3F) << 8) | reader.get_bits(8)
-            if count:
-                consume(count)
+            count = _two_octet_length(first, reader)
+            consume(count)
             return total + count
         blocks = first & 0x3F
         if not 1 <= blocks <= 4:  # §11.9.3.8 restricts m to 1..4
@@ -1161,7 +1219,13 @@ def _encode_normally_small_length(writer: BitWriter, count: int) -> None:
 def _decode_normally_small_length(reader: BitReader) -> int:
     if reader.get_bit() == 0:
         return reader.get_bits(6) + 1
-    return _decode_unconstrained_length(reader)
+    count = _decode_unconstrained_length(reader)
+    if count <= 64:
+        raise Asn1Error(
+            f"PER 11.9.3.4: the normally small length {count} takes the 6-bit form, not the "
+            f"unconstrained one"
+        )
+    return count
 
 
 def _canonical_set_of_order(items: list, kind, variant: PerVariant, rules: PerRules) -> list:

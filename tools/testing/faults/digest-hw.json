@@ -1,0 +1,126 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_digest_hw:_CC",
+    "bcir.tests.test_c_digest_hw:test_each_path_answers_as_hashlib_and_zlib_do",
+    "bcir.tests.test_c_digest_hw:test_the_fold_constants_are_their_definition",
+    "bcir.tests.test_c_digest_hw:test_the_harness_holds_its_contracts",
+    "bcir.tests.test_c_digest_hw:test_the_probe_says_what_the_os_says"
+  ],
+  "faults": [
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D1 SHA-NI reads the message's words little-endian",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "_mm_set_epi64x(0x0c0d0e0f08090a0bLL, 0x0405060700010203LL)",
+      "new": "_mm_set_epi64x(0x0f0e0d0c0b0a0908LL, 0x0706050403020100LL)"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D2 SHA-NI's schedule skips msg2",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "        q[k & 3] = _mm_sha256msg2_epu32(w, q[(k + 3) & 3]);",
+      "new": "        q[k & 3] = w;"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D3 SHA-NI's second round pair takes the first pair's words",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "s0 = _mm_sha256rnds2_epu32(s0, s1, _mm_shuffle_epi32(m, 0x0E));",
+      "new": "s0 = _mm_sha256rnds2_epu32(s0, s1, m);"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D4 SHA-NI drops a block's feed-forward",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "    s0 = _mm_add_epi32(s0, abef);\n",
+      "new": ""
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D5 SHA-NI stores the state back in the wrong lanes",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "_mm_blend_epi16(t, s1, 0xF0));",
+      "new": "_mm_blend_epi16(s1, t, 0xF0));"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D6 the bulk blocks are not counted in the length",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "  state->bytes += (uint64_t)blocks * 64u;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_the_harness_holds_its_contracts",
+      "label": "D7 a buffered partial block is skipped, not finished",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "  if (state->used) { /* finish the buffered block the portable way */",
+      "new": "  if (0) { /* finish the buffered block the portable way */"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D8 the fold never takes the running state",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "__m128i x0 = _mm_xor_si128(crc_load(p), _mm_cvtsi32_si128((int)state));",
+      "new": "__m128i x0 = crc_load(p);"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D9 the 64-byte fold's constants swapped",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "_mm_set_epi64x(0x1c6e41596LL, 0x154442bd4LL)",
+      "new": "_mm_set_epi64x(0x154442bd4LL, 0x1c6e41596LL)"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D10 the high halves multiplied by the low constant",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "_mm_clmulepi64_si128(x, k, 0x11)",
+      "new": "_mm_clmulepi64_si128(x, k, 0x01)"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D11 the remainder reduced from the running state, not from 0",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "bcir_crc32_step(bcir_crc32_step(0u, rest, 16u), p, len)",
+      "new": "bcir_crc32_step(bcir_crc32_step(state, rest, 16u), p, len)"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D12 the lanes folded into one in the wrong order",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "__m128i x = _mm_xor_si128(crc_fold(x0, k128), x1);",
+      "new": "__m128i x = _mm_xor_si128(crc_fold(x1, k128), x0);"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D13 the fold taken from 16 bytes, reading past them",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "(features & BCIR_DIGEST_CRC32_CLMUL) && length >= 64u",
+      "new": "(features & BCIR_DIGEST_CRC32_CLMUL) && length >= 16u"
+    },
+    {
+      "expects": "test_the_probe_says_what_the_os_says",
+      "label": "D14 the probe reads PCLMULQDQ from the wrong bit",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "pclmul = c >> 1 & 1u",
+      "new": "pclmul = c >> 2 & 1u"
+    },
+    {
+      "expects": "test_each_path_answers_as_hashlib_and_zlib_do",
+      "label": "D15 a SHA bit the build does not carry is run",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "void bcir_sha256_update_hw(bcir_sha256 *state, const uint8_t *data, size_t length, unsigned features) {\n  features &= bcir_digest_compiled();\n",
+      "new": "void bcir_sha256_update_hw(bcir_sha256 *state, const uint8_t *data, size_t length, unsigned features) {\n"
+    },
+    {
+      "expects": "test_the_fold_constants_are_their_definition",
+      "label": "D16 the 16-byte fold's constants are not the derivation",
+      "path": "runtime/c/bcir_digest_hw.c",
+      "old": "_mm_set_epi64x(0x0ccaa009eLL, 0x1751997d0LL)",
+      "new": "_mm_set_epi64x(0x0ccaa009fLL, 0x1751997d0LL)"
+    }
+  ]
+}

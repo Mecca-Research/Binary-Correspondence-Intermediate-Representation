@@ -1,0 +1,123 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV1 the oracle refuses a pointer assigned as a value",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        pointer_lv = lv.kind == \"mem\" and lv.ct.kind in (\"pointer\", \"funcptr\") and not lv.bit_width",
+   "new": "        pointer_lv = False"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV2 the oracle refuses a function pointer assigned as a value",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "lv.ct.kind in (\"pointer\", \"funcptr\")",
+   "new": "lv.ct.kind == \"pointer\""
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV3 the twin refuses `*pp = q` as a value",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    int pdeep = ok && pv && pv->type.ptr_depth==2 && is_eq;",
+   "new": "    int pdeep = 0;"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV4 the twin stores a `*pp` pointer in its pointee's width",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      int sz = pdeep ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4);",
+   "new": "      int sz = pv->type.size?pv->type.size:4;"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV5 the twin refuses `*pp = q` of a struct pointee",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "       && (!pv->type.ptr_to_struct || pdeep)",
+   "new": "       && !pv->type.ptr_to_struct"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV6 the twin refuses a pointer element assigned as a value",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    int parr = !v->type.is_volatile ",
+   "new": "    int parr = 0 && !v->type.is_volatile "
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV7 the twin refuses an element through a `T **`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "(ptr_array(c,v) || (v->type.ptr_depth==2 && sub_group_count(c,c->i+1)==1))",
+   "new": "ptr_array(c,v)"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV8 the twin refuses a function-pointer element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "                   || (v->type.kind==3 && pr && pr->is_array && sub_group_count(c,c->i+1)==1));",
+   "new": "                   || 0);"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV9 a `T **` element's null pointer typed as the `T **`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(et.kind==2 && !ptr_array(c,v) && et.ptr_depth==2) et.ptr_depth=1;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV10 the twin refuses a pointer member assigned as a value",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "(f.is_ptr && (!is_eq || f.fp_sig))",
+   "new": "f.is_ptr"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV11 the twin lowers a pointer element's compound assignment as a value",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(parr && is_compound_op(op)){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }",
+   "new": "    if(0){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV12 the twin refuses a pointer member's compound assignment as a value in its own words",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "       && ((f.is_ptr && !is_eq) || member_value_device(c,v,&f))){",
+   "new": "       && member_value_device(c,v,&f)){"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV13 the twin refuses `(*pp += 2)` in its own words",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "       && is_compound_op(op)){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }   /* `(*pp += 2)`: the oracle's reason */",
+   "new": "       && 0){ fail(c,CC_COMPOUND_VALUE_FO); return 0; }   /* `(*pp += 2)`: the oracle's reason */"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV14 the twin lowers a device member assigned as a value, a second access",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(member_value_device(c,mbase,&mf)){",
+   "new": "    if(0 && member_value_device(c,mbase,&mf)){"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV15 a struct holding volatile storage is no device to the value path",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return base->type.is_volatile || f->is_volatile || (r && r->domain==BCIR_DOM_MMIO);",
+   "new": "  return base->type.is_volatile || f->is_volatile;"
+  },
+  {
+   "expects": "test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails",
+   "label": "PV16 a volatile struct is no device to the value path",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return base->type.is_volatile || f->is_volatile || (r && r->domain==BCIR_DOM_MMIO);",
+   "new": "  return f->is_volatile || (r && r->domain==BCIR_DOM_MMIO && 0);"
+  }
+ ]
+}

@@ -119,6 +119,8 @@ class Lexer:
 
 _LANES = {l.name.lower(): l for l in Lane}
 _STRIDES = {s.name.lower(): s for s in StrideClass}
+#: a count's ceiling, the signed 64-bit wire domain every extent and count crosses into (the law rail, the C twin)
+_COUNT_MAX = (1 << 63) - 1
 
 
 class _Parser:
@@ -173,20 +175,39 @@ class _Parser:
         count = 1
         lane = Lane.U
         stride = StrideClass.UNIT
+        said: set[str] = set()
         while self._peek().kind != "RBRACE":
-            kw = self._expect("IDENT").text
+            at = self._expect("IDENT")
+            kw = at.text
+            # Each refusal is a ParseError at the token it is about (PORT-4): an unknown lane or stride had raised a
+            # KeyError -- a traceback, not a verdict -- and an unknown statement was placed at the token after it.
+            if kw not in ("reads", "writes", "count", "lane", "stride"):
+                raise ParseError(f"unknown statement {kw!r} at offset {at.pos}")
+            # a second `reads` had replaced the first, its resources kept, read by no claim
+            if kw in said:
+                raise ParseError(f"repeated statement {kw!r} at offset {at.pos}")
+            said.add(kw)
             if kw == "reads":
                 reads = tuple(self._rid(m, rid_of, s) for s in self._idlist())
             elif kw == "writes":
                 writes = tuple(self._rid(m, rid_of, s) for s in self._idlist())
             elif kw == "count":
-                count = int(self._expect("INT").text)
+                tok = self._expect("INT")
+                count = int(tok.text)
+                if count > _COUNT_MAX:  # it had been taken whatever its size
+                    raise ParseError(
+                        f"count {tok.text} is past the signed 64-bit wire domain at offset {tok.pos}"
+                    )
             elif kw == "lane":
-                lane = _LANES[self._expect("IDENT").text.lower()]
-            elif kw == "stride":
-                stride = _STRIDES[self._expect("IDENT").text.lower()]
+                tok = self._expect("IDENT")
+                if tok.text.lower() not in _LANES:
+                    raise ParseError(f"unknown lane {tok.text!r} at offset {tok.pos}")
+                lane = _LANES[tok.text.lower()]
             else:
-                raise ParseError(f"unknown statement {kw!r} at offset {self._peek().pos}")
+                tok = self._expect("IDENT")
+                if tok.text.lower() not in _STRIDES:
+                    raise ParseError(f"unknown stride {tok.text!r} at offset {tok.pos}")
+                stride = _STRIDES[tok.text.lower()]
             # Statements are ';'-separated; the separator before '}' is optional.
             if self._peek().kind == "SEMI":
                 self._next()

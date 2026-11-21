@@ -17,6 +17,7 @@
 #   BCIR_<kind>_<name>_OPTIONS      GNU-style compile options the gates pass for that unit
 #   BCIR_<kind>_<name>_CLASS        libraries only: freestanding_core / hosted_tool / driver_adapter
 #   BCIR_<kind>_<name>_MAX_LEN      fuzzers only: libFuzzer's -max_len, or empty
+#   BCIR_<kind>_<name>_CXX_STANDARD seam units only: 23, or empty for the seam's 17
 #   BCIR_MANIFEST_FREESTANDING      the sources compiled -ffreestanding -nostdlib at C11 and C23
 #   BCIR_MANIFEST_sections          the gate sections that run as scripts over built harnesses
 #   BCIR_sections_<name>_SCRIPT     the script (a path under the source tree)
@@ -97,6 +98,7 @@ function(bcir_manifest_load path)
         _bcir_json_list("${_unit}" options _options)
         _bcir_json_string("${_unit}" class _class)
         _bcir_json_string("${_unit}" max_len _max_len)
+        _bcir_json_string("${_unit}" cxx_standard _cxx_standard)
         if(NOT _sources)
           message(FATAL_ERROR "BCIR: manifest unit ${_kind}/${_name} lists no sources")
         endif()
@@ -106,6 +108,7 @@ function(bcir_manifest_load path)
         set(BCIR_${_kind}_${_name}_OPTIONS "${_options}" PARENT_SCOPE)
         set(BCIR_${_kind}_${_name}_CLASS "${_class}" PARENT_SCOPE)
         set(BCIR_${_kind}_${_name}_MAX_LEN "${_max_len}" PARENT_SCOPE)
+        set(BCIR_${_kind}_${_name}_CXX_STANDARD "${_cxx_standard}" PARENT_SCOPE)
       endforeach()
     endif()
     set(BCIR_MANIFEST_${_kind} "${_names}" PARENT_SCOPE)

@@ -1,0 +1,74 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_for_step_store_is_a_statement_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST1 a for-step store is read through the expression grammar",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!c->step_end || c->i>=c->step_end) return 0;\n  const tok *t0=&c->t[c->i];",
+   "new": "  if(1) return 0;\n  const tok *t0=&c->t[c->i];"
+  },
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST2 a for-step piece starting at `*` is read as a value",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!(tok_is(t0,\"*\") || (t0->k==T_ID &&",
+   "new": "  if(!((t0->k==T_ID &&"
+  },
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST3 a for-step piece's end is no statement's end",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(c->step_stop && c->i==c->step_stop && s[0]==';' && !s[1]) return 1;   /* a for-step piece's end (CF-STEP) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST4 a for-step read in part is lowered, the rest dropped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(!c->failed && c->i!=step_end) fail(c,\")\");            /* the whole step read, or refused: never a part\n",
+   "new": "      if(0) fail(c,\")\");            /* the whole step read, or refused: never a part\n"
+  },
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST5 CF-PAREN: no step piece starts after the header's second `;`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(f->hdr && f->pd==f->hdr && ++f->semis==2) f->sstart=1;",
+   "new": "      if(f->hdr && f->pd==f->hdr && ++f->semis==2) f->sstart=0;"
+  },
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST6 CF-PAREN: no step piece starts after a `,` of the step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(f->hdr && f->pd==f->hdr && f->semis==2) f->sstart=1;",
+   "new": "      if(f->hdr && f->pd==f->hdr && f->semis==2) f->sstart=0;"
+  },
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST7 CF-PAREN: no statement starts after a condition's `)`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(f->ctl && f->pd==0){ f->ctl=0; if(f->blk){ f->start=1; f->decl=0; } }",
+   "new": "      if(f->ctl && f->pd==0){ f->ctl=0; }"
+  },
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST8 CF-PAREN: no statement starts after `else` or `do`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(t->k==T_ID && f->blk && f->pd==0 && (tok_is(t,\"else\")||tok_is(t,\"do\"))){ f->start=1; f->decl=0; return; }",
+   "new": "  if(0){ f->start=1; f->decl=0; return; }"
+  },
+  {
+   "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
+   "label": "ST9 CF-PAREN: no statement starts after a for header's `)`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(f->hdr && f->pd<f->hdr){ f->hdr=0; f->sstart=0; if(f->blk && f->pd==0){ f->start=1; f->decl=0; } }",
+   "new": "      if(f->hdr && f->pd<f->hdr){ f->hdr=0; f->sstart=0; }"
+  }
+ ]
+}

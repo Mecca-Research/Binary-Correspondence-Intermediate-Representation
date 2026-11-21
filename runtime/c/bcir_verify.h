@@ -9,6 +9,8 @@
  *   R14-R16 CIM/DVFS/alloc smart-lowering -- vacuous for the scalar C subset (no such claims)
  *   R17     accuracy (integer / Q-fixed exact, 0 ULP) -- vacuous for the integer subset
  *   R18     compositional call-graph integrity (in bcir_verify_unit)
+ *   R19-R20 synchronous timing and clock-domain crossing over the claims' optional timing (in bcir_verify_unit and
+ *           bcir_verify_timing) -- vacuous without one; a `[[bcir::timing(...)]]` statement gives its claims one (PORT-3)
  *
  * The verdict logic is pure (IR + plan + runtime status); the diagnostic strings use libc
  * snprintf, so a driver links it host-side or with a stdio shim. A Python<->C parity gate ties
@@ -26,7 +28,7 @@
 extern "C" {
 #endif
 
-/* R1-R8 + R12 + R14-R17 + R18 over the unit's claim graph + call graph. 1 == clean. */
+/* R1-R8 + R12 + R14-R17 + R18-R20 over the unit's claim graph + call graph. 1 == clean. */
 int bcir_verify_unit(const bcir_unit *u, char *diag, size_t dn);
 
 /* Hosted allocator-injected form used by the re-entrant C frontend. The
@@ -44,6 +46,13 @@ int bcir_verify_pack(const uint8_t *pack, size_t len, uint32_t expect_segs, char
 
 /* R13: a deterministic content digest of a function's claim graph (the provenance manifest). */
 uint64_t bcir_provenance_digest(const bcir_func *f);
+
+/* R19/R20 (PORT-3): every timing diagnostic of the unit, in the oracle's order and words (bcir/verify::verify_timing,
+ * per function): `report(funcname, law, message, ctx)` with law "R19" or "R20". Returns their count; 0 for a unit no
+ * claim of which carries a timing. bcir_verify_unit refuses the unit at the first. */
+size_t bcir_verify_timing(const bcir_unit *u,
+                          void (*report)(const char *funcname, const char *law, const char *message, void *ctx),
+                          void *ctx);
 
 /* R21 (pointer-lifetime legality, §5.12): an ADVISORY walk over the optional `claim.lifetime` malloc/free
  * annotation, reporting each use-after-free / double-free via `report(funcname, kind, ctx)` (kind is

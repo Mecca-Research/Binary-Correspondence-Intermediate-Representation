@@ -1,0 +1,188 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_cpp_exact:_CXX",
+    "bcir.tests.test_cpp_exact:test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+    "bcir.tests.test_cpp_exact:test_the_facades_contracts_hold",
+    "bcir.tests.test_cpp_exact:test_a_refusal_is_a_status_and_a_malformed_file_the_tools"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X1 the critical-path bound is one short",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "  out[0] = critical;",
+      "new": "  out[0] = critical - 1;"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X2 the work bound rounds down",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "  out[1] = ceil_div(wave, std::max<int64_t>(1, p.domains));",
+      "new": "  out[1] = wave / std::max<int64_t>(1, p.domains);"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X3 the bandwidth bound divides by every domain",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "  out[2] = any_band ? ceil_div(band, std::max<int64_t>(1, p.knee)) : 0;",
+      "new": "  out[2] = any_band ? ceil_div(band, std::max<int64_t>(1, p.domains)) : 0;"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X4 the tail-serial bound is dropped",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "  out[3] = tailw;",
+      "new": "  out[3] = 0;"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X5 a claim's twin need not go first",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "      if (twin >= 0 && node.finish[static_cast<size_t>(twin)] < 0) continue;   // its lower-id twin goes first",
+      "new": "      if (false && twin >= 0 && node.finish[static_cast<size_t>(twin)] < 0) continue;"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X6 two empty streams at one release are both tried",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "        if (empty_by_release && std::find(seen_free.begin(), seen_free.end(), release) != seen_free.end()) continue;",
+      "new": "        if (false && empty_by_release && std::find(seen_free.begin(), seen_free.end(), release) != seen_free.end()) continue;"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X7 the budget allows one expansion more",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    if (expansions >= budget) break;   // the frontier stays: the oracle's resumable stop",
+      "new": "    if (expansions > budget) break;"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X9 a closed phase hands on the whole budget",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "      left -= out.expansions;",
+      "new": "      (void)left;"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X12 the node bound drops the remaining paths",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "          path = std::max(path, est + p.tail_path[o]);",
+      "new": "          path = std::max(path, est);"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X13 the node's capacity bound counts the tail as a wave",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "        int64_t cap = ceil_div(wave_free + child.work_left, std::max<int64_t>(1, p.domains));",
+      "new": "        int64_t cap = ceil_div(wave_free + child.work_left, std::max<int64_t>(1, p.domains + 1));"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X15 the tail is reported as a stream index",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "        child.slots.push_back(bcir_exact_slot{p.ids[c], tail ? -1 : static_cast<int32_t>(s), start, finish});",
+      "new": "        child.slots.push_back(bcir_exact_slot{p.ids[c], static_cast<int32_t>(s), start, finish});"
+    },
+    {
+      "expects": "test_the_cpp_scheduler_answers_as_the_oracle_does_and_its_plans_check",
+      "label": "X16 children are expanded latest finish first",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "      return a.finish != b.finish ? a.finish > b.finish : a.bound > b.bound; });",
+      "new": "      return a.finish != b.finish ? a.finish < b.finish : a.bound > b.bound; });"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X18 every wave claim counts as bandwidth",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    bool is_band = p.knee < p.domains && p.eligible[i].size() == p.knee;",
+      "new": "    bool is_band = p.knee < p.domains;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X19 a heuristic slot before its predecessor ends is taken",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "      if (slots[at[q]].finish > slots[at[i]].start) return false;",
+      "new": "      if (false) return false;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X20 two heuristic slots at once on a stream are taken",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    if (slots[by[k]].stream == slots[by[k - 1]].stream && slots[by[k - 1]].finish > slots[by[k]].start) return false;",
+      "new": "    if (false) return false;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X21 a claim the tail and a wave could both take is taken",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    if (tail && wave) return unexpected(BCIR_EXACT_ERR_INVALID);",
+      "new": "    (void)tail; (void)wave;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X22 work past 64 bits is taken",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    if (c.duration > INT64_MAX - total) return unexpected(BCIR_EXACT_ERR_INVALID);",
+      "new": "    if (false) return unexpected(BCIR_EXACT_ERR_INVALID);"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X23 a heuristic span that is not the placement's is taken",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "  if (last != span) return false;",
+      "new": "  (void)last;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X24 a heuristic slot for no claim, or twice, is taken",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    if (i == p.n || at[i] >= 0) return false;",
+      "new": "    if (i == p.n) return false;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X25 a heuristic slot of the wrong length is taken",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    if (s.start < 0 || s.finish < s.start || s.finish - s.start != p.dur[i]) return false;",
+      "new": "    if (s.start < 0 || s.finish < s.start) return false;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X26 a phase's arena keeps its chunks",
+      "path": "runtime/cpp/bcir_solver.hpp",
+      "old": "      up_->deallocate(chunks_, chunks_->size, alignof(std::max_align_t));",
+      "new": "      (void)up_;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X27 a refused allocation is reported as a success",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    return BCIR_EXACT_ERR_NOMEM;",
+      "new": "    return BCIR_EXACT_OK;"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X28 a result buffer smaller than its phase is written",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "    if (res.cap_slots < in.n_claims || in.n_heuristic_slots != in.n_claims) return in.n_heuristic_slots != in.n_claims",
+      "new": "    if (in.n_heuristic_slots != in.n_claims) return in.n_heuristic_slots != in.n_claims"
+    },
+    {
+      "expects": "test_a_refusal_is_a_status_and_a_malformed_file_the_tools",
+      "label": "X29 a cycle is reported as invalid",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "  if (p.order.size() != p.n) return unexpected(BCIR_EXACT_ERR_CYCLIC);",
+      "new": "  if (p.order.size() != p.n) return unexpected(BCIR_EXACT_ERR_INVALID);"
+    },
+    {
+      "expects": "test_the_facades_contracts_hold",
+      "label": "X30 a claim its own predecessor is taken",
+      "path": "runtime/cpp/bcir_exact.cpp",
+      "old": "      if (j == p.n || j == i) return unexpected(BCIR_EXACT_ERR_INVALID);",
+      "new": "      if (j == p.n) return unexpected(BCIR_EXACT_ERR_INVALID);"
+    }
+  ]
+}

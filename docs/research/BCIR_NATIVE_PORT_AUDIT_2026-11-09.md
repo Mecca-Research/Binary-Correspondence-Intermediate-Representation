@@ -107,17 +107,25 @@ name it.
 | N1 | **MC1 disassembly and listing**: `abi.streampack_tool`, `abi.artifact_tool` | 616 | The master roadmap's backend rail lists "a freestanding C twin for MC1 disassembly" as its first open step (§4.2). The C readers it would sit on exist: `bcir_sp_*` and the BCAB view. | **C**, freestanding: the readers are, and a listing over a borrowed view needs no heap | PORT-1; rides between phase slices |
 | N2 | **Tokenizers**: `frontends.models.tokenizer` (byte-level BPE), `frontends.models.spm` (SentencePiece) | 511 | Native inference takes token ids only (`bcir_llama_cli --prompt-ids`). The Q8 model header records the tokenizer's SHA-256 but carries no tokenizer, so a standalone C deployment cannot read text. | **C**, hosted-allocator class; table-driven, bounded, fuzzed at the trust boundary | PORT-2; precedes SLM-1's `byte_bpe.v2` and the AI system's fused text pipeline (AL3) |
 | N3 | **ECN's executable codecs**: the nine `asn1.ecn*` modules | 12,157 | No C encoder or decoder exists for an ECN-defined encoding. R25 checks ECN's legality on the law rail, but nothing executes it natively. The interface phase's packet codecs (IF-24) are ECN modules. | **C, generated** by `cgen` rather than hand-ported. The generator stays Python; its output is C. | IF-5 gains the ECN backend (this audit adds it to the interface roadmap) |
-| N4 | **The event transducer**: `etl.fsm`, `etl.parse`, `etl.events` | 381 | Driver-packet ingestion (GEM-E, M5). C has `bcir_binrec.c` for binary records but no executable transducer or grammar-to-claims parser; MLIR has only the ops. | **C**, freestanding: fixed-state machines over bounded input | PORT-4; with the UART event-driven slices and driver row 1 |
+| N4 | **The event transducer**: `etl.fsm`, `etl.parse`, `etl.events` | 381 | Driver-packet ingestion (GEM-E, M5). C has `bcir_binrec.c` for binary records but no executable transducer or grammar-to-claims parser; MLIR has only the ops. | **C**, freestanding: fixed-state machines over bounded input | PORT-4, **landed 2026-11-20**: `bcir_etl.c`, freestanding, behind `bcir-etl` |
 
 **The C verifier's law surface** is a fifth Tier-1 item, scoped rather than a module.
 `bcir_verify.c` is declared over the C front end's subset and covers its laws:
 - R1–R18, where R14–R17 are vacuous for scalar integer code;
+- R19 and R20 (synchronous timing, clock-domain crossing), over the timing a
+  `[[bcir::timing(...)]]` statement gives its claims (**PORT-3, landed 2026-11-20**);
 - R21, advisory.
 
-R19 and R20 (synchronous timing, clock-domain crossing) and R22–R25 run on the oracle and the
-law rail only. R19/R20 matter as soon as driver code with timing claims is compiled by `bcir-cc`
-without the oracle, so they are **PORT-3, with driver row 1** (the event timers). R22–R25 join
-the C path when tensor programs or generated ASN.1 codecs do (IF-6).
+R19/R20 had run on the oracle and the law rail only, over a claim's optional timing, which no C
+front end could give one. They mattered as soon as driver code with timing claims is compiled
+by `bcir-cc` without the oracle (driver row 1, the event timers), so PORT-3 gave the C front
+end a source form for them. A C23 attribute `[[bcir::timing(field = value, ...)]]` leads a
+statement on both rails, and every claim the statement lowers carries the model's `Timing`;
+`__has_c_attribute(bcir::timing)` is 1 on both, so a unit Clang builds too guards it. The
+cross-rail canon holds each claim's timing, and `bcir_verify_unit` refuses a unit that breaks
+either law, in the oracle's words (`bcir_verify_timing` lists every diagnostic). The C subset
+audit's §4.5 records the slice. R22–R25 join the C path when tensor programs or generated
+ASN.1 codecs do (IF-6).
 
 ### Tier 2 — the C++ toolchain (the migration proposal's CXX ladder)
 
@@ -128,20 +136,20 @@ artifact; they remove Python from the offline toolchain.
 | # | Component (oracle) | Lines | CXX slice | Notes |
 |---|---|---|---|---|
 | N5 | **The GEM+ solver portfolio**:<br>• `gem.exact`, `gem.dispatch`, `gem.diff`;<br>• `kbcir.csp`, `kbcir.joint`;<br>• `kbcir.regions`, `kbcir.dataflow`, `kbcir.expectation`, `kbcir.io_bounds`, `kbcir.objectives`, `kbcir.scope`;<br>• `kbcir.static_memory`, `kbcir.movement` | 8,334 | CXX2, CXX3 | One C++23 library with a C ABI façade in the planner ABI's style: records in, a plan and a certificate out. G12's work-unit budgets carry over unchanged. |
-| N6 | **The incremental engine**: `kbcir.delta`, `gem.delta_chain`, `gem.delta_pack`, `verify.delta` | 1,797 | CXX4 | `PARITY.md` declares it oracle-only today: its outputs are the full chain's, which have native twins. A native engine is for re-planning cost at scale. |
+| N6 | **The incremental engine**: `kbcir.delta`, `gem.delta_chain`, `gem.delta_pack`, `verify.delta` | 1,797 | CXX4 | `PARITY.md` declares it oracle-only today: its outputs are the full chain's, which have native twins. A native engine is for re-planning cost at scale. **PORT-7, STOP (2026-11-21)**: [the GO/STOP](BCIR_N6_INCREMENTAL_ENGINE_GO_STOP_2026-11-21.md) -- the C planner re-plans from scratch at about 0.32 µs a claim (10.5 ms at 32,768), hosted re-planning already has the oracle's incremental chain (2.1 ms a delta there), no native consumer re-plans from declared deltas, and the DP already has three spellings; three conditions reopen it |
 | N7 | **The ASN.1 host compiler**: `frontends.asn1` (lexer, parser, AST, lowering, printer) | 4,438 | CXX5 | The A/B audit times `compile_module` (`asn1_compile`) and has no native row. Port only after IF-1 and IF-2 settle the front end; porting a front end that still refuses three constructs would port the refusals. |
 | N8 | **Native kernel lowering**: `lower.llvm`, `lower.alias_facts`, `lower.poison`, with `verify.alias` and `verify.poison` | 1,495 | — | `PARITY.md`: "the law rail emits no LLVM kernel". `-convert-bcir-to-llvm` covers only the machine edge (inline assembly, MMIO, atomics, interrupt frames). A BCIR-to-LLVM-dialect lowering in the MLIR rail is the native path, and the JIT microkernel's small runtime codegen slices (driver roadmap §7.5) need it. The Python emitters (`c_kernel`, `wasm`, `jvm_class`) stay as generators and oracles. Behind a written GO/STOP. |
-| N9 | **The memory fabric**: `kbcir.ham`, `kbcir.context_shard`, `kbcir.optimization_memory` | 2,289 | CXX6 | Physical HAM is gated on driver evidence (HMF-D0–D5); the planning half can move earlier. |
+| N9 | **The memory fabric**: `kbcir.ham`, `kbcir.context_shard`, `kbcir.optimization_memory` | 2,289 | CXX6 | Physical HAM is gated on driver evidence (HMF-D0–D5); the planning half can move earlier. **PORT-8's first slice landed 2026-11-21**: the optimization memory's hard-fact admission in C (`bcir_ai_facts_admit` beside `bcir_ai_q15_topk`), measured as 2.40 of the native query's 2.50 ms at 4,096 patterns before and the query 0.156 ms after. HAM's route planning (`kbcir.ham`) stays the oracle's until a native producer of its attested `HardwareEnvelope` exists (HMF-D0), as the master roadmap's item 6 keeps native HAM behind the driver evidence; context-shard activation (`kbcir.context_shard`) is hosted manifest work for the AI system's services |
 
 ### Tier 3 — gated on a consumer that does not exist yet
 
 | # | Component (oracle) | Lines | Language | Its consumer |
 |---|---|---|---|---|
-| N10 | `frontends.models.paged_kv`, `frontends.models.serve` | 1,123 | C | Native serving. Production serving is open in the master roadmap; `bcir_llama.c` already runs greedy generation. |
-| N11 | `kbcir.device_manifest` | 534 | C | A JIT-microkernel instance binding device manifests at instantiation (driver roadmap §7.5). Today drivers read generated headers (`uart16550_regs.h`). |
-| N12 | `kbcir.dma`, `kbcir.events` | 397 | C | Driver row 2, DMA and the ownership engine, and its blueprint |
-| N13 | `telemetry_export` (Prometheus, OTLP and Redfish-shaped adapters) | 910 | C or C++ | A native telemetry or ledger service (the AI system's ledger role) |
-| N14 | `kbcir.rcsp` (budgeted selection under live Θ) | 206 | C | On-target re-planning under a budget. Until then `-bcir-rcsp` holds the law, and the C planner covers the unconstrained core. |
+| N10 | `frontends.models.paged_kv`, `frontends.models.serve` | 1,123 | C | Native serving. Production serving is open in the master roadmap; `bcir_llama.c` already runs greedy generation. **The control plane landed 2026-11-21**: `bcir_serve.c`, freestanding -- `PagedKV`'s page table (each page admitted by `bcir_dma_admit`, the capacity law, `data_gen` and `map_gen`, eviction) and the token schema (`check_token_dfa`, the constrained step and its deadlock); the session modules, certificates and manifests stay the oracle's |
+| N11 | `kbcir.device_manifest` | 534 | C | A JIT-microkernel instance binding device manifests at instantiation (driver roadmap §7.5). Today drivers read generated headers (`uart16550_regs.h`). **Landed 2026-11-21**: `bcir_devman.c`, freestanding -- `load_device_manifest` over the one bounded JSON reader both rails now share, the digest re-derived over the oracle's canonical JSON, `check_device_manifest`, the bank table `bcir_dma_admit` takes and `probe_agree`'s veto; the move pricing and `check_bank_moves` stay the planner's |
+| N12 | `kbcir.dma`, `kbcir.events` | 397 | C | Driver row 2, DMA and the ownership engine, and its blueprint. **Run-time half landed 2026-11-21**: `bcir_dma.c`, freestanding -- `check_strided_view`'s admission and `dma_descriptors`' ring; the pricing, the transfer module and `kbcir.events`' laws stay the oracle's and the law rail's |
+| N13 | `telemetry_export` (Prometheus, OTLP and Redfish-shaped adapters) | 910 | C or C++ | A native telemetry or ledger service (the AI system's ledger role). **The Prometheus exposition landed 2026-11-21**: `bcir_prom.c`, freestanding -- `to_prometheus`'s text octet for octet for integer-valued snapshots, the witness and the sensitivity ranking; float series (Python's shortest `repr`), the T3 derived metrics, the OTLP push and the Redfish report stay the oracle's hosted adapters |
+| N14 | `kbcir.rcsp` (budgeted selection under live Θ) | 206 | C | On-target re-planning under a budget. `-bcir-rcsp` holds the law. **The budgeted planner landed 2026-11-21**: `bcir_kp_plan_budgeted` in `bcir_kplan.c`, `optimize_constrained`'s label DP over the C planner's own offer, the caps the caller's argument (BKPI is unchanged), `BCIR_ERR_INFEASIBLE` appended; 2,500 plans == the oracle's BKPR octet for octet or infeasible at its claim, the labels kept the oracle's. `pareto_plans` stays the oracle's |
 
 ### What stays in Python
 
@@ -231,7 +239,9 @@ containers by hand for code that never runs on a target.
    (BKPI/BKPR), so a C or Python caller never sees a C++ type. It is standalone like the seam,
    not part of the MLIR cmake, and built by BCIR Make and CMake from `runtime/manifest.json`.
 3. **Arena memory and value errors**: `pmr` only, `std::expected` at every fallible call, no
-   exception across the façade, no global state.
+   exception across the façade, no global state. A standard pool resource is not a given: PORT-5's
+   allocation campaign found libstdc++'s `unsynchronized_pool_resource` (13 through 16) broken by a
+   refused upstream allocation, so the library's arena (`phase_arena`) is its own.
 4. **Parity before trust.** Each solver reproduces the oracle over a generated corpus before
    any certificate names it. It runs under ASan/UBSan, gets a fuzzer at the façade and joins
    the allocation-failure campaign, exactly as a C twin does.
@@ -245,14 +255,14 @@ containers by hand for code that never runs on a target.
 |---|---|---|
 | **PORT-0** (**landed 2026-11-10**: 45 twinned modules became 66; C 47, C++ 1, MLIR 21) | The inventory reads `runtime/cpp/` and `mlir/lib/` and counts their twins. C units that mirror a module without naming it name it (`bcir_artifact_bundle.c`, `bcir_q4_kernel.c`). The A/B audit's Python-only rows show their MLIR pass where one exists. | First; small, tooling only |
 | **PORT-1** (**landed 2026-11-10**: `bcir-pack` and `bcir-bundle` in C, the oracle's octets over 78 packs, 3 bundles, 34 envelopes and their resealed mutants; 66 twinned modules became 68) | N1, MC1 disassembly in C. The views the oracle delegates to a resident disassembler, and the ASN.1 projections, stay the Python tool's | Between interface-phase slices |
-| **PORT-2** | N2, the tokenizers in C | Between slices; before SLM-1 |
-| **PORT-3** | The C verifier's R19/R20 | With driver row 1 |
-| **PORT-4** | N4, the event transducer in C | With the UART event-driven slices |
+| **PORT-2** (**landed 2026-11-10**: `bcir_bpe.c` and `bcir_spm.c` behind `bcir-tokenize`. The byte-level BPE reads `tokenizer.json` through the bounded JSON reader both rails now share; SentencePiece reads `tokenizer.model`'s wire format. Both give the oracle's verdicts, ids and octets. 68 twinned modules became 70) | N2, the tokenizers in C | Between slices; before SLM-1 |
+| **PORT-3** (**landed 2026-11-20**: R19/R20 in `bcir_verify.c`, the oracle's words for every diagnostic; `[[bcir::timing(...)]]` gives a statement's claims their timing on both C front ends, the canon holding it; a vendor's `[[...]]` attribute, which both rails had dropped, refused alike unless it is a known hint) | The C verifier's R19/R20 | With driver row 1 |
+| **PORT-4** (**landed 2026-11-20**: `bcir_etl.c` -- the transducer, the event descriptors and the mini-ROP grammar, freestanding, every output in a buffer the caller sized -- behind `bcir-etl`, every verdict the oracle's over 601 programs, 312 machines and 300 descriptors; the oracle's parser now refuses with a verdict where it had raised `KeyError`, taken a count past 64 bits or let a second statement replace the first; 70 twinned modules became 73) | N4, the event transducer in C | With the UART event-driven slices |
 | ECN in `cgen` | N3 | Inside the interface phase, IF-5 |
-| **PORT-5** | The C++ solver library's foundation: the façade, the arena and error conventions, and the first solver (`gem.exact`) at parity | After the interface phase's stage A |
-| **PORT-6 to PORT-9** | N5's remaining solvers (CXX3), the incremental engine (N6, CXX4), the memory fabric's planning (N9, CXX6) and N7, the ASN.1 host compiler (CXX5) | Alternating with the foundation and driver work |
-| **PORT-10** | N8, a native kernel lowering in MLIR | Behind a GO/STOP written after PORT-5 |
-| Tier 3 | N10–N14 | Each with its consumer |
+| **PORT-5** (**landed 2026-11-20**: `runtime/cpp/bcir_exact.cpp` behind `bcir_exact.h`, C++23 -- the façade, one arena per phase over the caller's allocator, failures as values -- with `exact_schedule`'s search expansion for expansion over 7,430 runs; libstdc++'s pool resource failed the allocation campaign, so the arena is the library's own) | The C++ solver library's foundation: the façade, the arena and error conventions, and the first solver (`gem.exact`) at parity | After the interface phase's stage A |
+| **PORT-6 to PORT-9** (PORT-6's first slice **landed 2026-11-21**: `kbcir.csp`, the exact finite-domain solver, as `runtime/cpp/bcir_csp.cpp` behind `bcir_csp.h`, node for node over 1,308 runs; the rest of N5 -- `gem.dispatch`, `gem.diff`, `kbcir.joint`, regions, dataflow, expectation, io_bounds, objectives, scope, static memory, movement -- is open. PORT-7, N6's incremental engine, is **STOP** ([the GO/STOP](BCIR_N6_INCREMENTAL_ENGINE_GO_STOP_2026-11-21.md), measured: the C planner's whole re-plan is 10.5 ms at 32,768 claims and no native consumer re-plans from deltas). PORT-8, N9's planning half, **landed its first slice 2026-11-21**: the optimization memory's hard-fact admission in C beside its Q15 top-k, the native query 16 times faster at 4,096 patterns; HAM's route planning waits on a native `HardwareEnvelope` producer (HMF-D0). PORT-9, N7, waits on IF-1 and IF-2, as N7's row says) | N5's remaining solvers (CXX3), the incremental engine (N6, CXX4), the memory fabric's planning (N9, CXX6) and N7, the ASN.1 host compiler (CXX5) | Alternating with the foundation and driver work |
+| **PORT-10** (**STOP, 2026-11-21**: [the GO/STOP](BCIR_N8_NATIVE_LOWERING_GO_STOP_2026-11-21.md) -- the lowering is one claim wide, the C backend is already a second path to LLVM held to one alias-fact set, and no scheduled slice generates code at run time; three conditions reopen it) | N8, a native kernel lowering in MLIR | Behind a GO/STOP written after PORT-5 |
+| Tier 3 (**landed 2026-11-21, what needs no hardware**: N10's control plane, `bcir_serve.c`; N11, `bcir_devman.c`; N12's run-time half, `bcir_dma.c`; N13's Prometheus exposition, `bcir_prom.c`; N14's budgeted planner in `bcir_kplan.c`. Each row's remainder stays the oracle's and the law rail's) | N10–N14 | Each with its consumer |
 
 The C half of this placement, the verified subset the runtime's C could be compiled by, is
 audited in [`BCIR_C_SUBSET_AUDIT_2026-11-10.md`](BCIR_C_SUBSET_AUDIT_2026-11-10.md). That audit

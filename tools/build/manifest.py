@@ -15,7 +15,8 @@ The rules, each with the code its findings carry:
 
   M1  schema       the schema tag, the six unit kinds and a non-empty freestanding_checks list
   M2  shape        sources/libraries/link/options are lists of strings; class only on libraries,
-                   max_len only on fuzzers and a positive integer; no unknown keys
+                   max_len only on fuzzers and a positive integer; cxx_standard only on seam units, 17
+                   or 23, and a seam unit linking a C++23 seam library is C++23; no unknown keys
   M3  files        every source exists under runtime/c (seam kinds: runtime/cpp) with its extension
   M4  roles        every bcir_*.c is in exactly one library or is one tool's main; every test_*.c
                    one harness; every fuzz_*.c one fuzzer; every runtime/cpp/*.cpp one seam unit;
@@ -122,7 +123,10 @@ C_KINDS = ("libraries", "tools", "harnesses", "fuzzers")
 CPP_KINDS = ("seam_libraries", "seam_tests")
 KINDS = C_KINDS + CPP_KINDS
 LIBRARY_KINDS = ("libraries", "seam_libraries")
-UNIT_KEYS = ("sources", "libraries", "link", "options", "class", "max_len")
+UNIT_KEYS = ("sources", "libraries", "link", "options", "class", "max_len", "cxx_standard")
+# The C++ standards a seam unit may name (`cxx_standard`; absent is the seam's 17): the hosted solver
+# library is C++23 (the native port audit's rule 6), and a unit linking a C++23 library is C++23 too.
+CXX_STANDARDS = (17, 23)
 TOP_KEYS = (
     "schema",
     "comment",
@@ -188,6 +192,7 @@ GATES = (
     "tools/cpp/check_jer_index.sh",
     "tools/cpp/check_jer_simd.sh",
     "tools/cpp/check_sycl.sh",
+    "tools/cpp/check_solver.sh",
 )
 FUZZ_GATE = "tools/c/fuzz_streampack.sh"
 SEAM_PAIRS = (
@@ -694,6 +699,21 @@ def check_schema(manifest: dict, errors: list[str]) -> None:
                     errors.append(f"M2: {where} needs a class from {CLASSES}")
             elif "class" in unit:
                 errors.append(f"M2: {where} carries a class; only libraries have one")
+            if "cxx_standard" in unit:
+                value = unit["cxx_standard"]
+                if kind not in CPP_KINDS:
+                    errors.append(f"M2: {where} carries cxx_standard; only seam units have one")
+                elif isinstance(value, bool) or value not in CXX_STANDARDS:
+                    errors.append(
+                        f"M2: {where}.cxx_standard {value!r} is not one of {CXX_STANDARDS}"
+                    )
+            if kind in CPP_KINDS:
+                own = unit.get("cxx_standard", 17)
+                libs = unit.get("libraries")
+                for lib in libs if isinstance(libs, list) else []:
+                    dep = _units(manifest, "seam_libraries").get(lib)
+                    if isinstance(dep, dict) and dep.get("cxx_standard", 17) == 23 and own != 23:
+                        errors.append(f"M2: {where} is C++{own} but links {lib}, a C++23 library")
             if "max_len" in unit:
                 value = unit["max_len"]
                 if kind != "fuzzers":

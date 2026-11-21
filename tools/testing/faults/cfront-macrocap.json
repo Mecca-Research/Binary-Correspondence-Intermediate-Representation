@@ -1,0 +1,74 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC1 twin: the table refused one macro short of its bound",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  if((unsigned)state->macro_count>=BCIR_CPP_MAX_MACROS){cpp_limit(state, PP_TOO_MANY_MACROS);return;}",
+   "new": "  if((unsigned)state->macro_count>=BCIR_CPP_MAX_MACROS-1u){cpp_limit(state, PP_TOO_MANY_MACROS);return;}"
+  },
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC2 twin: a full table refused in other words",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "#define PP_TOO_MANY_MACROS \"too many macros\"",
+   "new": "#define PP_TOO_MANY_MACROS \"macro table full\""
+  },
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC3 twin: a lookup stops at its name's home slot",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    if ((int)strlen(state->macros[i].name) == len && !strncmp(state->macros[i].name, n, (size_t)len)) return (int)i;\n",
+   "new": "    if ((int)strlen(state->macros[i].name) == len && !strncmp(state->macros[i].name, n, (size_t)len)) return (int)i;\n    else return -1;\n"
+  },
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC4 twin: a removal leaves a hole in its probe chain",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "      if (j <= k ? (j < h && h <= k) : (j < h || h <= k)) continue;   /* its home lies after the hole: it stays */",
+   "new": "      if (1) continue;   /* its home lies after the hole: it stays */"
+  },
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC5 twin: the macro moved by a removal keeps its old index",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    state->macro_index[s] = i;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC6 twin: a function-like macro's parameters not kept",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    memcpy(blk,m.params,pl); memcpy(blk+pl,m.body,bl);",
+   "new": "    memset(blk,0,pl); memcpy(blk+pl,m.body,bl);"
+  },
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC7 oracle: no bound on the table",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        if nm not in self.macros and len(self.macros) >= _MAX_MACROS:\n",
+   "new": "        if False:\n"
+  },
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC8 oracle: a redefinition at the bound refused",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        if nm not in self.macros and len(self.macros) >= _MAX_MACROS:\n",
+   "new": "        if len(self.macros) >= _MAX_MACROS:\n"
+  },
+  {
+   "expects": "test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more",
+   "label": "MC9 oracle: a bound one short of the twin's",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "_MAX_MACROS = 65534\n",
+   "new": "_MAX_MACROS = 65533\n"
+  }
+ ]
+}

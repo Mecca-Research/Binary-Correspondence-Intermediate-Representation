@@ -734,6 +734,73 @@ def test_native_q15_index_matches_hard_fact_filtered_python_oracle():
     ) == query_optimization_memory(memory, query, top_k=13, active_facts=(memory.facts[0],))
 
 
+def _random_memory(rng, patterns: int, facts: int, dimension: int) -> OptimizationMemory:
+    pool = tuple(sorted(OptimizationFact(f"s{k}", "p", str(k % 7)) for k in range(facts)))
+    rows = []
+    for index in range(patterns):
+        required = tuple(sorted(rng.sample(pool, rng.randrange(0, min(5, len(pool)) + 1))))
+        embedding = tuple(rng.randrange(-32768, 32768) for _ in range(dimension))
+        rows.append(
+            OptimizationPattern(
+                _hash(f"r-{index}"), embedding, _hash(f"rs-{index}"), _hash(f"re-{index}"), required
+            )
+        )
+    return OptimizationMemory(
+        _hash("model"),
+        _hash("embedder"),
+        tuple(sorted(rows, key=lambda row: row.pattern_sha256)),
+        pool,
+    )
+
+
+def test_native_fact_admission_is_the_oracles_hard_rail():
+    """`bcir_ai_facts_admit` gives each pattern the oracle's verdict -- admitted exactly when every fact
+    it requires is active -- over generated memories (no facts, patterns needing none, needing up to
+    five, active sets from empty to whole), and the native index answers every query as the oracle."""
+    native = _native()
+    if native is None:
+        return
+    from bcir.kbcir.optimization_memory import _prepare_optimization_query
+
+    rng = random.Random(29)
+    checked = admitted_seen = refused_seen = 0
+    for patterns, facts, dimension in (
+        (1, 0, 3),
+        (7, 3, 5),
+        (300, 40, 9),
+        (64, 12, 1),
+        (512, 6, 4),
+    ):
+        memory = _random_memory(rng, patterns, facts, dimension)
+        index = NativeOptimizationIndex(native, memory)
+        for _ in range(12):
+            active = tuple(
+                f for f in memory.facts if rng.random() < rng.choice((0.0, 0.5, 0.9, 1.0))
+            )
+            query = tuple(rng.randrange(-32768, 32768) for _ in range(dimension))
+            top_k = rng.randrange(1, patterns + 1)
+            _values, oracle = _prepare_optimization_query(
+                memory, query, top_k=top_k, active_facts=active
+            )
+            mask = bytearray(len(memory.facts))
+            for fact in active:
+                mask[memory.facts.index(fact)] = 1
+            native_mask = native._facts_admit(
+                index._offsets, index._ids, patterns, bytes(mask), len(memory.facts)
+            )
+            assert native_mask == bytes(int(flag) for flag in oracle)
+            want = query_optimization_memory(memory, query, top_k=top_k, active_facts=active)
+            assert index.query(query, top_k=top_k, active_facts=active) == want
+            checked += 1
+            admitted_seen += sum(oracle)
+            refused_seen += len(oracle) - sum(oracle)
+    # not vacuous: both verdicts reached, in volume
+    assert checked == 60 and admitted_seen > 500 and refused_seen > 500, (
+        admitted_seen,
+        refused_seen,
+    )
+
+
 def _narrow_memory(admitted: int) -> OptimizationMemory:
     """A memory in which exactly `admitted` patterns can satisfy the query's facts."""
     facts = tuple(

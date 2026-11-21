@@ -1370,3 +1370,32 @@ int bcir_ai_q15_topk(const int16_t *query, const int16_t *patterns,
   *match_count = count;
   return BCIR_AI_OK;
 }
+
+int bcir_ai_facts_admit(const uint32_t *required_offsets, const uint32_t *required_ids,
+                        size_t required_count, size_t pattern_count, const uint8_t *active,
+                        size_t fact_count, uint8_t *eligible) {
+  size_t pattern, fact, at;
+  if (required_offsets == NULL || active == NULL || eligible == NULL ||
+      (required_ids == NULL && required_count != 0u) || pattern_count == 0u ||
+      pattern_count > (size_t)BCIR_AI_MAX_PATTERNS || fact_count > (size_t)BCIR_AI_MAX_FACTS ||
+      required_offsets[0] != 0u || required_offsets[pattern_count] != required_count)
+    return BCIR_AI_INVALID_ARGUMENT;
+  /* every check before the first write: a refusal leaves eligible as it was */
+  for (pattern = 0u; pattern < pattern_count; ++pattern)
+    if (required_offsets[pattern + 1u] < required_offsets[pattern]) return BCIR_AI_INVALID_ARGUMENT;
+  for (at = 0u; at < required_count; ++at)
+    if (required_ids[at] >= fact_count) return BCIR_AI_INVALID_ARGUMENT;
+  for (fact = 0u; fact < fact_count; ++fact)
+    if (active[fact] > 1u) return BCIR_AI_INVALID_ARGUMENT;
+  if (required_count == 0u) { /* no pattern requires a fact (required_ids may be NULL): all admitted */
+    for (pattern = 0u; pattern < pattern_count; ++pattern) eligible[pattern] = 1u;
+    return BCIR_AI_OK;
+  }
+  for (pattern = 0u; pattern < pattern_count; ++pattern) {
+    uint8_t admitted = 1u;
+    for (at = required_offsets[pattern]; at < required_offsets[pattern + 1u]; ++at)
+      admitted &= active[required_ids[at]];
+    eligible[pattern] = admitted;
+  }
+  return BCIR_AI_OK;
+}

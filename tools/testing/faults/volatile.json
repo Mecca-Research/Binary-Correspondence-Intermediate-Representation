@@ -177,8 +177,8 @@
       "label": "Oracle index: a dereference of a subscripted element `*q[j]` is refused",
       "expects": "volatile.refused",
       "path": "bcir/frontends/cfront/lower.py",
-      "old": "            if isinstance(operand, cast.Index):\n                el = self._lvalue(operand)",
-      "new": "            if isinstance(operand, cast.Index):\n                raise CLowerError(\"dereference of a subscripted element\")\n                el = self._lvalue(operand)"
+      "old": "            if isinstance(operand, cast.Index):\n                # `*m[k]` of a row of scalars",
+      "new": "            if isinstance(operand, cast.Index):\n                raise CLowerError(\"dereference of a subscripted element\")\n                # `*m[k]` of a row of scalars"
     },
     {
       "label": "Twin index: a subscript chain is flattened into its base as a multi-dimensional index",
@@ -205,8 +205,8 @@
       "label": "Twin index: a `T *rows[]` parameter decays one level short, to `T *`",
       "expects": "volatile.refused",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "      else if(ty.kind==2) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);",
-      "new": "      else if(0) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);"
+      "old": "  else if(ty->kind==2) ty->ptr_depth=(uint8_t)((ty->ptr_depth?ty->ptr_depth:1)+1);\n",
+      "new": "  else if(0) ty->ptr_depth=(uint8_t)((ty->ptr_depth?ty->ptr_depth:1)+1);\n"
     },
     {
       "label": "Twin index: a one-element array is declared as a scalar",

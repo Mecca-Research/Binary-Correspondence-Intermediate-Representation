@@ -1,0 +1,236 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_typeof_of_an_array_object_is_the_array_on_both_rails",
+  "bcir.tests.test_c_cfront:test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA1 the twin never asks for the array",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        arr=typeof_array(c,ty,sidx);                                    /* an array object: the array it is */",
+   "new": "        arr=0;"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA2 the twin's dimensions not handed on",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  c->td_nd=t.nd; for(int d=0; d<3; d++) c->td_dims[d]= d<t.nd ? (int)t.dims[d] : 0;",
+   "new": "  c->td_nd=0;"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA3 the twin takes a row as an array",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(t.row){ fail(c,CC_ROW_VALUE); return -1; }\n  for(int d=0; d<t.nd; d++)",
+   "new": "  for(int d=0; d<t.nd; d++)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA4 a subscript's array is no row",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "t->nd--; t->row=t->nd>0; return 1; }",
+   "new": "t->nd--; return 1; }"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA5 the twin takes an array of no constant size",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(t.dims[d]<=0 || t.dims[d]>INT_MAX){ fail(c,CC_TYPEOF_UNSIZED); return -1; }",
+   "new": "    if(t.dims[d]>INT_MAX){ fail(c,CC_TYPEOF_UNSIZED); return -1; }"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA6 the twin takes four dimensions",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(t.nd>3){ fail(c,CC_TYPEOF_DIMS); return -1; }",
+   "new": "  if(t.nd>4){ fail(c,CC_TYPEOF_DIMS); return -1; }"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA7 the twin types an expression at file scope",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(c->fscope || c->sbody){ fail(c,CC_TYPEOF_SCOPE); return 1; }",
+   "new": "        if(c->sbody){ fail(c,CC_TYPEOF_SCOPE); return 1; }"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA8 the twin types an expression in a member",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(c->fscope || c->sbody){ fail(c,CC_TYPEOF_SCOPE); return 1; }",
+   "new": "        if(c->fscope){ fail(c,CC_TYPEOF_SCOPE); return 1; }"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA9 a function's parameters stay at file scope",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  c->fscope=0;                                     /* the parameters and the body are the function's own scope */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA10 the twin's struct bodies are not counted",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  c->sbody++; int r=p_struct_body_in(c); c->sbody--; return r;",
+   "new": "  return p_struct_body_in(c);"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA11 the twin takes a pointer to a typeof'd array",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(c->td_nd && ptr_follows(c)){                                   /* `typeof(a) *p`: a pointer to an array */",
+   "new": "      if(0 && c->td_nd && ptr_follows(c)){"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA12 typeof_unqual keeps the qualifiers on the twin",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(unq && ty->kind!=2){ ty->is_const=0; ty->is_volatile=0; ty->is_atomic=0; }",
+   "new": "      if(0 && unq){ ty->is_const=0; }"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA13 the twin drops a volatile written before typeof",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      else { if(ov) ty->is_volatile=1; if(oc) ty->is_const=1; }   /* the oracle's `tref.quals` */",
+   "new": "      else { if(oc) ty->is_const=1; }"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA14 the twin's typeof'd pointer takes the qualifier as its pointee's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      td_ptr=ty->kind==2 || ty->kind==3;              /* a pointer's qualifiers, before `typeof` or after it, are",
+   "new": "      td_ptr=ty->kind==3;              /* a pointer's qualifiers, before `typeof` or after it, are"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TA15 the walk's refusal is the twin's",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    c->i=at; if(!f0 && c->failed){ c->failed=0; c->err[0]=0; }",
+   "new": "    c->i=at;"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO1 the oracle's typeof'd array is the nested one",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if base.kind == \"array\":  # the array the operand is, as a declared one is laid out\n                return self._typeof_array(base, tref)\n",
+   "new": "            if False:\n                return self._typeof_array(base, tref)\n"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO2 the oracle takes an array of no constant size",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if any(d in (0, None) for d in dims):\n            raise CLowerError(TYPEOF_UNSIZED)",
+   "new": "        if False:\n            raise CLowerError(TYPEOF_UNSIZED)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO3 the oracle takes four dimensions",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if len(dims) > 3:\n            raise CLowerError(TYPEOF_DIMS)",
+   "new": "        if len(dims) > 4:\n            raise CLowerError(TYPEOF_DIMS)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO4 the oracle takes a pointer to a typeof'd array",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if tref.ptr:\n            raise CLowerError(TYPEOF_ARR_PTR)",
+   "new": "        if False:\n            raise CLowerError(TYPEOF_ARR_PTR)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO5 the oracle's typeof'd array of several dims is nested",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if len(dims) == 1:\n            return array(leaf, total)\n        return replace(array(leaf, total), shape=dims)",
+   "new": "        if len(dims) == 1:\n            return array(leaf, total)\n        return ct if not tref.array else replace(array(leaf, total), shape=dims)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO6 the oracle's declarator dims come after the typeof'd ones",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        dims = tuple(tref.array) + dims\n        total = 1",
+   "new": "        dims = dims + tuple(tref.array)\n        total = 1"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO7 the oracle takes a local of four dims through typeof",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                if len(ct.shape) > 3:\n                    raise CLowerError(\n                        \"a multi-dimensional local array of more than 3 dims",
+   "new": "                if len(ct.shape) > 4:\n                    raise CLowerError(\n                        \"a multi-dimensional local array of more than 3 dims"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO8 typeof_unqual keeps an array's qualifiers on the oracle",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if tref.typeof_unqual and leaf.kind != \"pointer\":\n            leaf = unqualified(leaf)",
+   "new": "        if False:\n            leaf = unqualified(leaf)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO9 typeof_unqual keeps a scalar's qualifiers on the oracle",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if tref.typeof_unqual and base.kind != \"pointer\":\n                base = unqualified(base)",
+   "new": "            if False:\n                base = unqualified(base)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO10 the oracle drops a volatile on a typeof'd array",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if \"volatile\" in tref.quals:\n            leaf = with_volatile(leaf)",
+   "new": "        if False:\n            leaf = with_volatile(leaf)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO11 the oracle reads a volatile typeof'd pointer as a pointer to volatile",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if \"volatile\" in tref.quals and base.kind == \"pointer\":\n                raise CLowerError(VOLATILE_PTR)",
+   "new": "            if False:\n                raise CLowerError(VOLATILE_PTR)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO12 the oracle types a member's typeof with no scope",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "    if tref.typeof_var or tref.typeof_expr is not None:  # no function's names to type it with\n        raise CLowerError(TYPEOF_SCOPE)",
+   "new": "    if False:  # no function's names to type it with\n        raise CLowerError(TYPEOF_SCOPE)"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO13 the oracle takes a typedef of typeof",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "            if base.typeof_var or base.typeof_expr is not None:  # no scope to type it in: refused",
+   "new": "            if False:  # no scope to type it in: refused"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO14 the oracle drops a nested typeof's operand",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "                        typeof_var=inner.typeof_var,\n",
+   "new": "                        typeof_var=\"\",\n"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO15 the oracle reads no specifier after an expression's typeof",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "                self.eat(\"PUNCT\", \")\")\n                self._trailing_specs(quals)\n                if isinstance(expr, cast.Name):",
+   "new": "                self.eat(\"PUNCT\", \")\")\n                if isinstance(expr, cast.Name):"
+  },
+  {
+   "expects": "test_typeof_of_an_array_object_is_the_array_on_both_rails",
+   "label": "TO16 the oracle takes a volatile typeof'd pointer type name",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "                    if \"volatile\" in quals and (ip or inner.ptr):\n",
+   "new": "                    if False:\n"
+  },
+  {
+   "expects": "test_array_members_of_array_elements_used_as_values_lower_and_refuse_alike_on_both_rails",
+   "label": "TO17 the oracle reads an element's member array as a row",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if self._row_of(te):\n                raise CLowerError(ROW_VALUE)",
+   "new": "            if self._row_of(te) or (isinstance(te, cast.Member) and self._scalar_row(te)):\n                raise CLowerError(ROW_VALUE)"
+  }
+ ]
+}

@@ -150,11 +150,23 @@ def _elem_float_name(t) -> str:
     return t.name[: -len(" _Complex")] if t.is_complex else t.name
 
 
+#: The bases of the floating builtins <math.h>'s constants spell (`stdheaders`, `cparse._float_builtin`): `f` after one
+#: names the `float` form, `l` the `long double` one.
+_FLOAT_BUILTIN_BASES = ("nan", "inf", "huge_val")
+
+
 def _float_lit_type(spelling: str, abi=None) -> CType:
     """The type of a floating literal from its suffix: `f`/`F` -> float, `l`/`L` -> long double,
     else double (the C default) -- laid out by the target's ABI, whose `long double` is 16 bytes on
-    x86-64 Linux, 12 on i386 and 8 on Windows x64 (the twin reads the same ABI table)."""
+    x86-64 Linux, 12 on i386 and 8 on Windows x64 (the twin reads the same ABI table). A floating
+    builtin (`__builtin_inff()`, CSUB-1) is typed by its name's: `nan`, `inf` and `huge_val` are
+    `double`, an `f` after one `float`, an `l` `long double` (the twin's `float_builtin`)."""
     s = spelling.strip()
+    if s.startswith("__builtin_"):
+        name = s[len("__builtin_") : s.find("(")]
+        if name in _FLOAT_BUILTIN_BASES:
+            return scalar("double", abi)
+        return scalar("float" if name.endswith("f") else "long double", abi)
     if s and s[-1] in "fF":
         return scalar("float", abi)
     if s and s[-1] in "lL":
@@ -233,6 +245,14 @@ _LIBM_INT = {
     "lrint": "long",
     "llround": "long long",
     "llrint": "long long",
+    # <math.h>'s classification macros as the C library spells them (`stdheaders`, CSUB-1): compiler builtins of
+    # any floating argument, each an `int`, emitted verbatim -- `isinf` glibc's sign-returning one -- and no libm
+    # edge (`linkflags._is_libm`)
+    "__builtin_isfinite": "int",
+    "__builtin_isnan": "int",
+    "__builtin_isinf_sign": "int",
+    "__builtin_signbit": "int",
+    "__builtin_isnormal": "int",
 }
 
 # <complex.h> functions, lowered like a libm call (opaque external edge, emitted verbatim against
@@ -316,6 +336,22 @@ _STDLIB_ALLOC = frozenset({"malloc", "calloc", "realloc", "aligned_alloc"})
 # copying between its operands.
 _STRING_MEM = frozenset({"memcpy", "memmove", "memset"})
 
+# <string.h> reads -- the comparisons `memcmp`, `strcmp` and `strncmp`, the searches `memchr`, `strchr`, `strrchr` and
+# `strstr`, and `strlen`, freestanding since C23 (4p7): external libc edges like the memory routines (verbatim, opaque
+# to R18, NOT bcir_-renamed), each typed by its declared result (CSUB-5). The twin's `string_read`. Every <string.h>
+# routine either rail calls is one of `_STRING_CALLS`.
+_STRING_READ = {
+    "memcmp": "int",
+    "strcmp": "int",
+    "strncmp": "int",
+    "memchr": "void *",
+    "strchr": "char *",
+    "strrchr": "char *",
+    "strstr": "char *",
+    "strlen": "size_t",
+}
+_STRING_CALLS = _STRING_MEM | frozenset(_STRING_READ)
+
 # GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
 _BUILTIN_INT = frozenset(
     {  # the bit-count family + abs -> int
@@ -347,6 +383,61 @@ _BUILTIN_OTHER = {
     "__builtin_bswap32": "uint32_t",
     "__builtin_bswap64": "uint64_t",
 }
+
+# The overflow builtins -- <stdckdint.h>'s `ckd_add`, `ckd_sub` and `ckd_mul` (C23 7.20), as Clang and GCC define them
+# -- emitted verbatim (no bcir_ twin, opaque to R18): a `bool`, true when the mathematical result of the two integer
+# operands does not fit `*r`, which takes it wrapped (CSUB-3). The twin's `ckd_builtin`.
+_BUILTIN_CKD = frozenset(
+    {"__builtin_add_overflow", "__builtin_sub_overflow", "__builtin_mul_overflow"}
+)
+#: their constraint, the builtins' own: two integer operands, and the result a pointer to an integer, none a `bool`
+CKD_OPERANDS = (
+    "an overflow builtin takes two integers and a pointer to an integer, none of them a bool"
+)
+#: ... and a result through a pointer to volatile or `_Atomic` storage, a device access or an atomic one
+CKD_RESULT_FO = (
+    "an overflow builtin's result through a pointer to volatile or atomic storage is a follow-on"
+)
+
+# PORT-3 -- a statement's timing, the metadata the timing laws R19 and R20 read (`bcir.model.Timing`). A C23
+# attribute `[[bcir::timing(field = value, ...)]]` (`__bcir__` and `__timing__` too) leads a statement, and every
+# claim the statement lowers carries it; `__has_c_attribute(bcir::timing)` is 1, so a unit Clang also builds guards
+# it. The twin spells each refusal alike (`bcir_cfront.c`, `CC_TIMING_*`).
+#: the fields, the model's own: three names, four counts and a flag
+TIMING_TEXTS = ("clock_domain", "power_domain", "sync_type")
+TIMING_COUNTS = ("latency_cycles", "min_throughput_q16", "clock_frequency_mhz", "setup_hold_margin")
+TIMING_FIELDS = TIMING_TEXTS + TIMING_COUNTS + ("critical_path",)
+#: an attribute of the `bcir` prefix other than `timing`: a misspelt one would otherwise drop the laws it was for
+TIMING_UNKNOWN = "an unknown bcir attribute"
+#: ... and a vendor's that neither rail knows to be a hint: `[[gnu::aligned(8)]]` and `[[gnu::packed]]` had been dropped,
+#: a member laid out at Clang's offset of neither (CF-VENDORATTR). A GNU or Clang attribute that only promises or steers
+#: the optimizer (`VENDOR_HINTS`) is dropped as a standard one is; any other vendor's attribute is refused
+ATTR_VENDOR = "a vendor attribute neither rail knows to be a hint is not supported"
+#: the GNU and Clang attributes both rails drop, under the prefix `gnu` or `clang` (each name also `__x__`): each a
+#: promise about a function or an object, or a code-placement hint -- none changes a layout, a type or what runs
+VENDOR_PREFIXES = frozenset({"gnu", "clang"})
+VENDOR_HINTS = frozenset(
+    {
+        "always_inline", "artificial", "cold", "const", "deprecated", "flatten", "format", "hot", "leaf",
+        "malloc", "noinline", "nonnull", "noreturn", "nothrow", "pure", "returns_nonnull", "unused", "used",
+        "warn_unused_result",
+    }
+)  # fmt: skip
+#: one statement, one timing: a second in its attributes, or one inside a statement another annotates
+TIMING_TWICE = "a statement carries one timing annotation"
+TIMING_NESTED = "a timing annotation inside a statement another one annotates"
+#: ... and it leads a statement that lowers claims: before a declaration, a function, a member, a label (to which C23
+#: 6.8.1 appertains it) or a null statement it would time none
+TIMING_PLACE = "a timing annotation leads a statement"
+#: its arguments: `field = value`, comma-separated, each field once
+TIMING_SYNTAX = "a timing annotation is a list of `field = value`"
+TIMING_FIELD = "a timing annotation names each of its fields at most once"
+#: a name is one string literal of letters, digits, `_`, `.` and `-`, at most 63 of them (both rails print it in a
+#: diagnostic as the oracle's `repr` does, `'name'`)
+TIMING_TEXT = "a timing name is a string of letters, digits, '_', '.' and '-', at most 63"
+#: a count is an integer constant expression of 64 bits, as the law rail's `#bcir.timing` holds one
+TIMING_COUNT = "a timing count is an integer constant expression in 64 bits"
+TIMING_FLAG = "critical_path is 0 or 1"
 
 # ASM2 -- port-mapped I/O intrinsics. Each is a CALL expression (no new syntax), recognized at lowering
 # like `_LIBM`, and lowered to a typed, isolated, BARRIERED I/O-port edge (`c.portio.in.<w>:` /
@@ -695,16 +786,37 @@ _NOT_CONSTANT = "a static initializer is not an integer constant expression"
 # a union given an anonymous member other than its first: C names that member only through its own
 # leaves, which the rendered brace list does not spell
 _ANON_UNION = "a static union initialized through an anonymous member other than its first"
+#: A string literal is an entry of a static's image only as the address of its array, an address constant (C11
+#: 6.6p9), and only where C converts that address without a diagnostic: into a pointer to plain `char`, at any
+#: qualification, from a literal of no prefix (CSUB-2; the twin's `KV_STRSLOT`). A wide or UTF literal, and any other
+#: slot -- an integer, a `_Bool`, a pointer to `unsigned char` or to a pointer -- are refused for this one reason.
+STATIC_STR = "a string literal in a static's initializer initializes only a pointer to plain char"
 
 
 class _KVal(NamedTuple):
     """A folded constant: its value and its C type -- an integer (`kind` "i") of `bits` bits, signed or
-    not; a `_Bool` ("b"); or a null pointer ("p")."""
+    not; a `_Bool` ("b"); a null pointer ("p"); or the address of a string literal's array ("s", only ever a
+    static's entry whole: `sp` its canonical spelling, `_kstr`)."""
 
     v: int
     bits: int = 32
     signed: bool = True
     kind: str = "i"
+    sp: str = ""
+
+
+def _kstr(units: list) -> str:
+    """A plain string literal's code units as both rails spell the literal in a static's image: printable ASCII
+    as itself but for `"`, `\\` and `?` (a trigraph's first character, which `-std=c11` reads), every other unit
+    a three-digit octal escape -- one spelling for every source spelling of the same array, whatever its escapes
+    and its pieces (the twin's `kstr`)."""
+    return (
+        '"'
+        + "".join(
+            chr(u) if 0x20 <= u < 0x7F and chr(u) not in '"\\?' else f"\\{u:03o}" for u in units
+        )
+        + '"'
+    )
 
 
 def _kwrap(v: int, bits: int, signed: bool) -> int:
@@ -837,8 +949,14 @@ def _kconvert(a: _KVal, t: _KVal) -> _KVal:
 
 def _kleaf(a: _KVal, ct: CType, bw: int) -> int:
     """The value the static's scalar subobject `ct` (a bit-field of `bw` bits) holds from the constant
-    `a`: C's conversion as if by assignment. A pointer holds only the null pointer; a floating one holds
+    `a`: C's conversion as if by assignment. A pointer holds only the null pointer -- or, a pointer to plain
+    `char`, the address of a string literal's array, held as its spelling (`STATIC_STR`); a floating one holds
     the integer itself, which the rendered initializer converts exactly as the source's does."""
+    if a.kind == "s":
+        pt = ct.of if ct.kind == "pointer" else None
+        if pt is None or pt.kind != "scalar" or pt.name != "char" or bw:
+            raise CLowerError(STATIC_STR)
+        return a.sp
     if ct.kind in ("pointer", "funcptr"):
         return _kconvert(a, _KVal(0, 0, False, "p")).v
     if ct.kind != "scalar" or ct.name == "void":
@@ -850,9 +968,12 @@ def _kleaf(a: _KVal, ct: CType, bw: int) -> int:
     return _kwrap(a.v, bw or (ct.bit_width if ct.is_bitint else ct.size * 8), ct.signed)
 
 
-def _kspell(v: int) -> str:
+def _kspell(v: "int | str") -> str:
     """A static's scalar as its rendered initializer spells it: `Nu` -- exact in whatever type it
-    initializes -- `-N`, and the one negative with no positive counterpart as an expression."""
+    initializes -- `-N`, and the one negative with no positive counterpart as an expression; a string
+    literal's address by the literal's canonical spelling (`_kstr`)."""
+    if isinstance(v, str):
+        return v
     if v >= 0:
         return f"{v}u"
     return "(-9223372036854775807 - 1)" if v == -(1 << 63) else str(v)
@@ -876,6 +997,29 @@ NOT_CALLABLE = "called object is not a function or function pointer"
 #: where a default typed it -- `*s` of an integer read memory at `s` as a `uint32_t`, `p.x` read through the
 #: pointer's own type, `s[1]` of an integer and `*fp = v` lowered on both rails.
 DEREF_NOT = "dereference of a non-pointer"
+# a row of a multi-dimensional array, or the row a pointer to an array points at (`*p` of a `T (*p)[N]`), used as a
+# value: it would decay to a pointer to its first element, which the value model does not spell yet -- reading the
+# flat storage instead read an element (CF-DECAY; CSUB-2d: `char *r = *rows` had read `rows[0][0]` on both rails, an
+# emit no compiler takes). The twin's `CC_ROW_VALUE`
+ROW_VALUE = (
+    "partial indexing of a multi-dimensional array (a row used as a value) is not yet supported"
+)
+# ... and its address, `&m[k]`, a pointer to an array, which the value model does not spell (CSUB-2d; the twin's
+# `CC_ROW_ADDR`). A row of scalars used as a value is `&m[k][0]` on both rails (`_scalar_row`)
+ROW_ADDR = "the address of a row of a multi-dimensional array is not supported"
+# `typeof` of an expression where no function's scope types it -- a member's type, a global's, a typedef's, a
+# function's return type -- which `_resolve_member_type` and the parser's `_typedef` resolve without the function's
+# names: they had raised "unknown scalar type ''" and "unknown type ''", and the twin had crashed (CF-TYPEOFARR;
+# the twin's CC_TYPEOF_SCOPE)
+TYPEOF_SCOPE = "typeof of an expression in a member or a file-scope declaration is not supported"
+# `typeof` of an array of no constant size -- a VLA, an `extern T a[];` -- whose type no object takes and no
+# declaration the emit writes can spell (the twin's CC_TYPEOF_UNSIZED)
+TYPEOF_UNSIZED = "typeof of an array of unknown or variable length is not supported"
+# a pointer to the array a `typeof` names (`typeof(a) *p`): no declaration the value model writes spells one, as a
+# typedef'd array's (the twin's CC_TYPEOF_ARR_PTR)
+TYPEOF_ARR_PTR = "a pointer to a typeof'd array is not supported"
+# ... and of one of more than three dimensions, which the twin's declarators hold no more than (CC_TYPEOF_DIMS)
+TYPEOF_DIMS = "typeof of an array of more than 3 dimensions is not supported"
 SUBSCRIPT_NOT = "subscripted value is not an array or a pointer to an object"
 DOT_NOT = "member access on an object that is not a struct or union"
 ARROW_NOT = "member access `->` through a value that is not a pointer to a struct or union"
@@ -894,9 +1038,62 @@ DIM_RANGE = "an array dimension outside 0..INT_MAX"
 # one, zero (C11 6.7.2.1p4): both rails had laid each one out, which Clang refuses (CF-CONSTEXPR2; the twin's
 # `CC_BF_WIDTH`)
 BF_WIDTH = "invalid bit-field width"
+# a static assertion whose constant expression is zero (C11 6.7.10p2): refused at its keyword, the message not part of
+# the reason -- the source holds it where the diagnostic points (CSUB-1; the twin's `CC_STATIC_ASSERT`)
+STATIC_ASSERT_FAILED = "static assertion failed"
+# `__builtin_offsetof(type, member-designator)` (C11 7.19p3, `offsetof`): of a type no struct or union, of a member the
+# aggregate lacks, through a member no aggregate or array, of a bit-field, or at a negative subscript (CSUB-1; the
+# twin's `CC_OFFSETOF_*`)
+OFFSETOF_NOT_AGG = "offsetof of a type that is not a struct or union"
+OFFSETOF_BITFIELD = "offsetof of a bit-field member"
+OFFSETOF_DESIGNATOR = "invalid offsetof member designator"
+OFFSETOF_INCOMPLETE = "offsetof of an incomplete struct or union"
 # `T (*f(P))(Q)`: a function declared to return a function pointer by a nested declarator, which neither rail parses --
 # the same function with a typedef for its return type lowers (CF-FPRET; the twin's `CC_FN_RET_FP`)
 FN_RET_FP = "a function returning a function pointer is not supported without a typedef"
+# A function-pointer type's parameter declared as an array of arrays, `void (*f)(T m[2][3])`, or as an array of a
+# typedef'd array: a pointer to an array (C11 6.7.6.3p7), which no function type spells here; `T a[N]` and `T a[]`
+# are a pointer to `T` and lower (CSUB-2; the twin's `CC_FP_PARAM_ROWS`)
+FP_PARAM_ROWS = "a function-pointer parameter that is an array of arrays is not supported"
+# ... and one whose dimension is no integer constant expression, `void (*f)(size_t n, T a[n])` (the twin's `CC_FP_PARAM_VLA`)
+FP_PARAM_VLA = "a variable-length array parameter in a function-pointer type is not supported"
+# `_Alignas(N)` / `alignas(N)` (C11 6.7.5) on an object a declaration declares, in a block or at file scope (CSUB-2; the
+# twin's `CC_ALIGN_*`): only there -- a typedef, a parameter, a function, a type name refuse it (`ALIGN_PLACE`); N is 0 (no effect,
+# 6.7.5p6) or a power of two (`ALIGN_POW2`, Clang's words) no weaker than its type's own (`ALIGN_WEAK`, 6.7.5p4) and
+# at most 4096 (`ALIGN_LARGE`); the type-name form `_Alignas(T)` is refused (`ALIGN_TYPE`)
+ALIGN_PLACE = "an alignment specifier is supported only on the declaration of an object"
+ALIGN_POW2 = "requested alignment is not a power of 2"
+ALIGN_WEAK = "requested alignment is less than the minimum alignment of its type"
+ALIGN_LARGE = "an alignment past 4096 bytes is not supported"
+ALIGN_TYPE = "an alignment specifier of a type name is not supported"
+# ... and on a variable-length array, which the emit declares where its size is known (the twin's `CC_ALIGN_VLA`)
+ALIGN_VLA = "an alignment specifier on a variable-length array is not supported"
+# ... and on a declaration that defines the struct or union it aligns, `_Alignas(16) struct s { ... } v;` (the twin's
+# `CC_ALIGN_AGG`): checked first, wherever it stands
+ALIGN_AGG = (
+    "an alignment specifier on a declaration that defines a struct or union is not supported"
+)
+# `struct { ... } v;` / `union { ... } v;` in a block declaration: an untagged aggregate the declaration defines and
+# declares its objects of (C11 6.7.2.1, 6.7.2.3p6), as the runtime's tables are written (`static const struct { ... }
+# t[] = {...}`). Its type is the declaration's alone; each emit spells it once, as a typedef the function's first
+# line defines, by its members' source tokens (CSUB-2; the twin's `CC_AGG_*`). A tag defined in a block -- whose scope
+# would end with the block, where the unit's one tag table has none -- is refused (`AGG_BLOCK_TAGGED`), and so is a
+# struct or union defined anywhere else a type is named: a cast, `sizeof`, a parameter, a return type, a member's
+# qualified type (`AGG_TYPE_NAME`)
+AGG_BLOCK_TAGGED = "a struct or union with a tag defined in a block is not supported"
+# `T (*m)[N]`, a pointer to an array as a member or a block object (C11 6.7.6.1; CSUB-2d), as `bcir_cir.h` writes
+# `char (*calls)[BCIR_CIR_NAME]`: a pointer, whose pointee is a row of N scalars -- the type a `T m[][N]` parameter has
+# (its `shape`), indexed and sized by the row. A row of another element -- a struct, a pointer, a function pointer, a
+# typedef'd array, a volatile, `_Atomic` or `_BitInt` one, or a second dimension -- is refused, and so is one past the
+# twin's bound on a loaded row pointer's row, 65535 (the twin's `CC_ROW_PTR_ELEM`)
+ROW_PTR_ELEM = (
+    "a pointer to an array is supported only as a pointer to one row of at most 65535 scalars"
+)
+# ... and declared where it is: a parameter or a member. A file-scope one, and a typedef of one, are refused (the twin's
+# `CC_ROW_PTR_PLACE`); a block object keeps its own reason, below. The oracle had read `T (*g)[N]` at file scope as an
+# array of rows, an emit no compiler takes
+ROW_PTR_PLACE = "a pointer to an array is supported only as a parameter or a member"
+AGG_TYPE_NAME = "a struct or union defined outside a declaration of objects is not supported"
 # `T *volatile p`, `volatile ptr_t p`: a pointer object that is itself volatile, every access of which C performs as
 # written (C11 6.7.3p7) -- which neither rail's accesses do, so it is refused rather than dropped (CF-QUALS; the
 # twin's `CC_VOLATILE_PTR`)
@@ -1101,7 +1298,8 @@ def _kfloat_cast(spelling: str, t: _KVal, live: bool) -> _KVal:
     rails."""
     text = spelling.replace("'", "")
     suffix = text[-1:].lower() if text[-1:] in ("f", "F", "l", "L") else ""
-    if suffix == "l" or len(text) > _FLOAT_SPELLING:
+    # ... and so is a float builtin (`__builtin_inff()`, CSUB-1): a NaN or an infinity, which no integer holds
+    if suffix == "l" or len(text) > _FLOAT_SPELLING or text.startswith("__builtin_"):
         raise CLowerError(ICE_NOT)
     v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix])
     if t.kind == "b":
@@ -1468,6 +1666,12 @@ class LoweredFunc:
     #   (`_object_quals`), which the emit's own objects carry none of: the emit names such a global through an
     #   lvalue of its unqualified type (`emit._unqualified_global`; CF-LINKEMIT)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {}`
+    local_align: dict = field(
+        default_factory=dict
+    )  # a local's or a static's rid -> its `_Alignas(N)` (CSUB-2)
+    # the untagged aggregates its block declarations define -- (synthesized tag, source spelling) -- which the emit
+    # defines as typedefs on its first line, C's names for them (`Func.block_types`; CSUB-2)
+    block_types: tuple = ()
     tu_protos: dict = field(
         default_factory=dict
     )  # cross-TU callee -> (ret CType, (param CType, ...), its qualifiers `_fn_quals`, variadic)
@@ -1515,6 +1719,9 @@ class LoweredUnit:
     #   extern -> a declaration; static -> kept file-local.
     #   None == not renderable in this slice.
     thread_globals: frozenset = frozenset()  # the globals of thread storage duration: the
+    global_align: dict = field(
+        default_factory=dict
+    )  # a global's name -> its `_Alignas(N)` (CSUB-2)
     #   linkable emit declares them `_Thread_local` (CF-TLS)
     init_refs: frozenset = frozenset()  # every identifier a file-scope initializer names: a
     #   function among them has its address taken (an ops table
@@ -1611,6 +1818,7 @@ class _FuncLowerer:
         self.aggregates = aggregates
         self.rid = base_rid
         self.cid = cid  # shared mutable [next_claim_id]
+        self.timing = None  # the `bcir.model.Timing` of the statement being lowered, which each claim takes (PORT-3)
         self.genv = genv or {}  # file-scope globals: name -> (rid, CType)
         self.gres = gres or {}  # global rid -> Resource
         self.strctr = (
@@ -1634,6 +1842,7 @@ class _FuncLowerer:
         self.vla_strides: dict = {}  # multi-dim VLA array rid -> per-dim snapshot rids (the
         #   runtime Horner multipliers: m[i][j] -> i*dim1 + j)
         self.zero_init: set = set()  # aggregate-local rids that emit the `= {}` zero baseline
+        self.local_align: dict = {}  # a local's or a static's rid -> the alignment `_Alignas` asks (CSUB-2)
         self.statics: list = []  # (rid, name, CType, init) static-storage locals
         self.thread_statics: set = set()  # the statics of thread storage duration (CF-TLS)
         self.calls: list = []
@@ -1755,7 +1964,25 @@ class _FuncLowerer:
                 raise CLowerError(f"typeof of unknown variable {tref.typeof_var!r}")
             base = self.env[tref.typeof_var][1]
         elif tref.typeof_expr is not None:  # `typeof(expr)` -> the operand's static type
+            # of a row, the array it is, which the value model does not declare (CSUB-2d; `_type_of`
+            # gives a row its element, which `_Generic` decays to); the twin's `typeof_row`
+            # (an array member of an element, `a[i].m`, which `_scalar_row` reads as a row where it is a value, is
+            # the member's own array here, as the twin's walk types it: CF-TYPEOFARR)
+            te = tref.typeof_expr
+            if self._row_of(te):
+                raise CLowerError(ROW_VALUE)
             base = self._type_of(tref.typeof_expr)
+        if tref.typeof_var or tref.typeof_expr is not None:
+            if base.kind == "array":  # the array the operand is, as a declared one is laid out
+                return self._typeof_array(base, tref)
+            # C23 6.7.3.6p5: `typeof_unqual` drops the qualifiers -- a pointer's own the model does not
+            # hold, and its pointee's stay
+            if tref.typeof_unqual and base.kind != "pointer":
+                base = unqualified(base)
+            # `volatile typeof(p)` is `T *volatile`, refused as it is spelled -- not the pointer to volatile
+            # it had read as (the twin's `td_ptr_qual`)
+            if "volatile" in tref.quals and base.kind == "pointer":
+                raise CLowerError(VOLATILE_PTR)
         elif tref.aggregate:  # a pointer may name a struct never defined (an opaque `struct fwd *`)
             base = _aggregate(self.aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
         elif tref.base == "va_list":  # the <stdarg.h> variadic cursor (opaque)
@@ -1776,6 +2003,38 @@ class _FuncLowerer:
         for dim in reversed(tref.array):
             t = array(t, dim)
         return t
+
+    def _typeof_array(self, ct: CType, tref: cast.TypeRef) -> CType:
+        """`typeof` of an array object (C23 6.7.3.6p4): the array it is, under the declarator's own dimensions
+        (`typeof(a) t[2]` is two of them, the outer ones), as a declared array is laid out -- one dimension
+        plain, more as the flat `array(leaf, total)` with its `shape` that `_inferred_array` declares a local
+        as. A global's or a member's nested arrays had stood for the same type with another resource shape,
+        where the twin, reading the dimensions as an array typedef's, matches the declared form
+        (CF-TYPEOFARR). An array of no constant size, and a pointer to the array, are refused, as the twin
+        refuses them; `typeof_unqual` takes the element's unqualified type (an array's qualifiers are its
+        element's, 6.7.3p10)."""
+        leaf, dims = _array_dims(ct)
+        if any(d in (0, None) for d in dims):
+            raise CLowerError(TYPEOF_UNSIZED)
+        if len(dims) > 3:
+            raise CLowerError(TYPEOF_DIMS)
+        if tref.ptr:
+            raise CLowerError(TYPEOF_ARR_PTR)
+        if tref.typeof_unqual and leaf.kind != "pointer":
+            leaf = unqualified(leaf)
+        # `volatile typeof(a) b`: its elements are device storage, as the non-array path qualifies its base
+        # (the twin keeps them)
+        if "volatile" in tref.quals:
+            leaf = with_volatile(leaf)
+        if "_Atomic" in tref.quals:
+            leaf = _atomic_type(leaf, self.abi)
+        dims = tuple(tref.array) + dims
+        total = 1
+        for d in dims:
+            total *= d
+        if len(dims) == 1:
+            return array(leaf, total)
+        return replace(array(leaf, total), shape=dims)
 
     def _resource(self, rid: int, ct: CType, name: str) -> None:
         mmio = ct.touches_mmio  # a volatile object / pointer-to-volatile
@@ -1835,6 +2094,7 @@ class _FuncLowerer:
                 volatile=volatile,
                 bounds_provenance=bounds_provenance,
                 callee_sig=callee_sig,
+                timing=self.timing,
             )
         )
         if op == "c.const" and tuple(imm) == (0,):
@@ -1850,6 +2110,33 @@ class _FuncLowerer:
             self.rtypes[v] = unqualified(ct)
         return v
 
+    def _ckd_call(self, callee: str, actuals: tuple) -> int:
+        """`__builtin_add_overflow(a, b, r)` and its `sub` and `mul` peers, <stdckdint.h>'s `ckd_add`, `ckd_sub` and
+        `ckd_mul` (C23 7.20): a `bool`, true when the mathematical result does not fit `*r`, which takes it wrapped.
+        Verbatim and opaque to R18, as the integer builtins are; the escape analysis reads it, a library routine, as
+        writing what `r` points at (CSUB-3). Its operands and result are the builtins' (`CKD_OPERANDS`)."""
+        if len(actuals) != 3:
+            raise CLowerError(CKD_OPERANDS)
+        a, b, r = (self.rtypes.get(v) for v in actuals)
+
+        def plain_int(ct) -> bool:
+            return ct is not None and ct.is_integer and ct.name not in ("_Bool", "bool")
+
+        if not (
+            plain_int(a)
+            and plain_int(b)
+            and r is not None
+            and r.kind == "pointer"
+            and plain_int(r.of)
+        ):
+            raise CLowerError(CKD_OPERANDS)
+        if r.of.volatile or r.of.atomic:
+            raise CLowerError(CKD_RESULT_FO)
+        t = self._temp(scalar("_Bool"), "ckd")
+        return self._emit(
+            f"c.call.builtin:{callee[len('__builtin_') :]}", Opcode.GEM_DISPATCH, actuals, (t,)
+        )
+
     def _null_pointer_args(self, actuals: tuple, params: tuple) -> None:
         """The actuals of a call to a callee whose parameter types are known -- a same-unit definition,
         before or after the caller, or a prototype: an argument converts to its parameter's type as if by
@@ -1860,6 +2147,11 @@ class _FuncLowerer:
             if ct is not None:
                 self._null_pointer(v, ct)
                 self._scalar_value(ct, v)  # a struct for a scalar parameter (CF-STRUCTARITH)
+
+    def _align_object(self, rid: int, align: int, ct: CType) -> None:
+        """Record a declared object's `_Alignas(N)` (`_object_align`), for the emit to spell (CSUB-2)."""
+        if a := _object_align(align, ct):
+            self.local_align[rid] = a
 
     def _storage(self, ct: CType, name: str) -> int:
         """A mutable named local — assignments write it, reads read it (so control-flow merges and
@@ -1967,14 +2259,38 @@ class _FuncLowerer:
         el = self._lvalue(n.base)
         if el.kind != "mem" or el.idx is None or el.ct.kind not in ("struct", "union"):
             return None
+        if n.arrow:  # `a[i]->m` of a struct element: `->` takes a pointer (C11 6.5.2.3p2; CSUB-2e)
+            raise CLowerError(ARROW_NOT)
         elem = self._complete(el.ct)
         agg, ftype, off, fbo, fbw = elem, elem, 0, 0, 0
         for name in reversed(hops):  # the element's struct, then each nested struct/union reached
+            # `a[i].p.k`: `.` of a pointer member (CSUB-2)
+            if ftype.kind not in ("struct", "union"):
+                raise CLowerError(DOT_NOT)
             agg = self._complete(ftype)
             ftype, foff, fbo, fbw = self._field(agg, name)
             ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
             off += foff
         return el, elem, ftype, off, fbo, fbw, agg
+
+    @staticmethod
+    def _aos_leaf_lv(aos: tuple) -> "_LV":
+        """The member `_aos_member` found as an lvalue: the element's storage at its runtime index, striding by the
+        element, at the member's offset in it -- what `a[i].m.k` reads and writes, and, a pointer member, the slot a
+        subscript of it loads first (`a[i].p[j]`; CSUB-2)."""
+        el, elem, ftype, foff, fbo, fbw, agg = aos
+        return _LV(
+            "mem",
+            el.rid,
+            ftype,
+            idx=el.idx,
+            byte_off=el.byte_off + foff,
+            bit_off=fbo,
+            bit_width=fbw,
+            member=True,
+            stride=elem.size,
+            packed=agg.packed,
+        )
 
     # --- lvalue resolution ---
     def _lvalue(self, node) -> "_LV":
@@ -2015,29 +2331,41 @@ class _FuncLowerer:
                 # element at `&a + offsetof(s.m) + (i*K + lin)*es`, K = the element struct's size in elements
                 # (a struct whose size is no multiple of the element size is refused)
                 aos = self._aos_member(n)
-                if aos is None or aos[0].member:
+                if aos is not None and aos[2].kind not in ("array", "pointer"):
+                    # `a[i].v[j]`, `s.a[i].v[j]` of a scalar, bit-field or struct member: C's reason first, the
+                    # element's own form after (CSUB-2; CF-FPTAB)
+                    raise CLowerError(SUBSCRIPT_NOT)
+                ptr_leaf = aos is not None and aos[2].kind == "pointer" and not aos[5]
+                if not ptr_leaf and (aos is None or aos[0].member):
                     raise CLowerError(
                         "a member array of a subscripted element that is not a plain array-of-structs element"
                     )
-                el, agg, ftype, moff = aos[:4]
-                dims, t = [], ftype
-                while t.kind == "array":
-                    dims.append(t.count)
-                    t = t.of if t.of is not None else scalar("uint32_t")
-                if not dims or t.kind != "scalar" or len(dims) > 3:
-                    raise CLowerError(
-                        f"a subscript of the array-of-structs member '{n.field}' is not supported"
-                    )
-                if len(idx_nodes) != len(dims):
-                    raise CLowerError(
-                        f"partial indexing of a struct member array ('{n.field}') is not yet supported"
-                    )
-                if agg.size % t.size:
-                    raise CLowerError(
-                        "an array-of-structs member array whose element does not divide the struct"
-                    )
-                base_rid, base_ct, byte_off = el.rid, ftype, el.byte_off + moff
-                mem_shape, mem_elem, aos_idx, aos_k = tuple(dims), t, el.idx, agg.size // t.size
+                if ptr_leaf:
+                    # `a[i].p[j]` -- a POINTER member of an array-of-structs element subscripted (CSUB-2): load the
+                    # pointer, strided by the element as `a[i].p` reads it, then index what it holds, as `s->p[j]`
+                    # does -- no member offset left in the access (the twin's `index_field_value`)
+                    base_rid = self._read(self._aos_leaf_lv(aos))
+                    base_ct, byte_off, ptr_member = aos[2], 0, True
+                else:
+                    el, agg, ftype, moff = aos[:4]
+                    dims, t = [], ftype
+                    while t.kind == "array":
+                        dims.append(t.count)
+                        t = t.of if t.of is not None else scalar("uint32_t")
+                    if t.kind != "scalar" or len(dims) > 3:
+                        raise CLowerError(
+                            f"a subscript of the array-of-structs member '{n.field}' is not supported"
+                        )
+                    if len(idx_nodes) != len(dims):
+                        raise CLowerError(
+                            f"partial indexing of a struct member array ('{n.field}') is not yet supported"
+                        )
+                    if agg.size % t.size:
+                        raise CLowerError(
+                            "an array-of-structs member array whose element does not divide the struct"
+                        )
+                    base_rid, base_ct, byte_off = el.rid, ftype, el.byte_off + moff
+                    mem_shape, mem_elem, aos_idx, aos_k = tuple(dims), t, el.idx, agg.size // t.size
             elif isinstance(n, cast.Member):
                 # `s.arr[i]` / `s.m[i][j]` -- indexing a struct *member* array. The base is the enclosing
                 # struct; the member's byte offset rides in the access imm beside the element size, and
@@ -2135,9 +2463,7 @@ class _FuncLowerer:
                     # fewer subscripts than the array has dimensions: a ROW, whose value would decay to a
                     # row pointer `T (*)[N]` the value model has no spelling for -- indexing its flat
                     # storage instead read an element (CF-DECAY). The twin's `index_chain` refuses alike.
-                    raise CLowerError(
-                        "partial indexing of a multi-dimensional array (a row used as a value) is not yet supported"
-                    )
+                    raise CLowerError(ROW_VALUE)
                 lin = here[0]
                 for d in range(1, len(here)):
                     if vla_str is not None:  # dim d's snapshot rid (NO c.const -- the runtime
@@ -2183,23 +2509,18 @@ class _FuncLowerer:
             # member's flattened offset in the element
             aos = self._aos_member(node)
             if aos is not None:
-                el, elem, ftype, foff, fbo, fbw, agg = aos
-                if fbw or ftype.kind != "scalar":  # a bitfield / struct / array / pointer element
-                    raise CLowerError(  # field is a follow-on -- both rails fall back
+                _el, _elem, ftype, _foff, _fbo, fbw, _agg = aos
+                # a scalar, a pointer (CSUB-2c) or a struct or union, the aggregate value (CSUB-2c): a bitfield or an
+                # array element field is a follow-on
+                if fbw or ftype.kind not in ("scalar", "pointer", "struct", "union"):
+                    raise CLowerError(  # both rails refuse it
                         f"array-of-structs non-scalar element field ('.{node.field}') is not yet supported"
                     )
-                return _LV(
-                    "mem",
-                    el.rid,
-                    ftype,
-                    idx=el.idx,
-                    byte_off=el.byte_off + foff,
-                    bit_off=fbo,
-                    bit_width=fbw,
-                    member=True,
-                    stride=elem.size,
-                    packed=agg.packed,
-                )
+                return self._aos_leaf_lv(aos)
+            if self._aos_rooted(node.base):
+                # `a[i].m->k`: the operand of `->` an element's member, typed before it is lowered, so a member
+                # that is no pointer to a struct is refused for C's reason (CSUB-2; CF-FPTAB)
+                self._member_agg(self._static_type(node.base), node.arrow)
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = self._complete(self._member_agg(base_ct, node.arrow))
             ftype, byte_off, bit_off, bit_w = self._field(agg, node.field)
@@ -2221,7 +2542,21 @@ class _FuncLowerer:
             # `*fp = v`, `(*fp)++`: a function is no object (6.3.2.1p1)
             if self._fn_valued(operand):
                 raise CLowerError(FN_NOT_LVALUE)
-            if isinstance(operand, cast.Binary) and operand.op == "+":  # *(p + i) == p[i]
+            # `*p` of a `T (*p)[N]`, `*m` of a `T m[A][B]`: the row it designates, which is no scalar -- `(*p)[i]`
+            # the parser reads as `p[0][i]`. Both rails had read the row's first element (CSUB-2d)
+            if self._row_valued(self._static_type(operand)):
+                raise CLowerError(ROW_VALUE)
+            # `*(m[k] + i)` of a row of scalars: the pointer value the sum is, dereferenced below, as the twin's
+            # general deref of a pointer rvalue takes it (CSUB-2d)
+            row_sum = False
+            term = operand
+            while isinstance(term, cast.Binary) and term.op in ("+", "-") and not row_sum:
+                row_sum = self._scalar_row(term.rhs) if term.op == "+" else False
+                term = term.lhs
+            row_sum = row_sum or (term is not operand and self._scalar_row(term))
+            if (
+                isinstance(operand, cast.Binary) and operand.op == "+" and not row_sum
+            ):  # *(p + i) == p[i]
                 lt = self._static_type(operand.lhs)
                 # `*(p + i + j)`, `*(p - 1u + i)`: the left operand is itself a sum, which no subscript
                 # bases -- the pointer value it is, dereferenced below (CF-DEREFSUM)
@@ -2232,7 +2567,16 @@ class _FuncLowerer:
                 # `*(1 + p)`: the pointer on the right -- dereferenced as the value it is, below
             # `*q[j]`: the element is a pointer, loaded, and dereferenced (the twin's general deref of
             # a pointer rvalue); `_addr` knows no subscripted base
+            if isinstance(operand, cast.Member) and self._scalar_row(operand):
+                # `*a[i].m` of an element's member array: its first element, through the pointer its value is
+                rid = self._rvalue(operand)
+                return _LV("mem", rid, self.rtypes[rid].of, byte_off=0)
             if isinstance(operand, cast.Index):
+                # `*m[k]` of a row of scalars: its first element, through the pointer the row's value is
+                # (`&m[k][0]`), as the twin's general deref of a pointer rvalue takes it (CSUB-2d)
+                if self._scalar_row(operand):
+                    rid = self._rvalue(operand)
+                    return _LV("mem", rid, self.rtypes[rid].of, byte_off=0)
                 el = self._lvalue(operand)
                 if el.ct.kind != "pointer":
                     raise CLowerError(DEREF_NOT)
@@ -2268,6 +2612,68 @@ class _FuncLowerer:
                 raise CLowerError(DEREF_NOT)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
+
+    def _row_of(self, node) -> bool:
+        """`node`, a subscript, designates a row: an array, as `sizeof` measures it (CSUB-2d)."""
+        if not isinstance(node, cast.Index):
+            return False
+        try:
+            t = self._sizeof_type(node)
+        except CLowerError:
+            return False
+        return t is not None and t.kind == "array"
+
+    def _elem_member_array(self, node) -> bool:
+        """`node` is a member of an array element reached by `.` hops, `a[i].m`, `p[k].s.m`, `f->q[k].m`, whose
+        subscripted base is a name or a pointer member (the element's own storage, or what a loaded pointer holds) --
+        not a member array of an aggregate, `h->arr[k].m`, which neither rail takes. Typed only, nothing lowered."""
+        if not (isinstance(node, cast.Member) and not node.arrow and self._aos_rooted(node)):
+            return False
+        n = node
+        while isinstance(n, cast.Member):
+            n = n.base
+        base = n.base if isinstance(n, cast.Index) else None
+        if isinstance(base, cast.Name):
+            return True
+        if isinstance(base, cast.Member):
+            try:
+                t = self._static_type(base)
+            except CLowerError:
+                return False
+            return t is not None and t.kind == "pointer"
+        return False
+
+    def _scalar_row(self, node) -> bool:
+        """`node`, a subscript, designates a row of scalars -- an array one subscript short of a multi-dimensional
+        array's or a pointer to an array's element, whose element is a scalar (CSUB-2d): its type as `sizeof` measures
+        it (`_sizeof_type`) is an array of one dimension of scalars. A row of rows, of structs or of pointers stays
+        refused (`ROW_VALUE`, or `_array_value`'s reason). An array that no subscript designates is no row -- except
+        an array member of an array element, `a[i].m`, `p[k].w`, `f->q[k].t`, whose value is `&a[i].m[0]` too (CSUB-2c;
+        the twin's `aos_member_array_x` with `pad` 2)."""
+        if isinstance(node, cast.Member) and not self._elem_member_array(node):
+            return False
+        if not isinstance(node, (cast.Index, cast.Member)):
+            return False
+        try:
+            t = self._sizeof_type(node)
+        except CLowerError:
+            return False
+        return (
+            t is not None
+            and t.kind == "array"
+            and len(t.shape) <= 1
+            and t.of is not None
+            and t.of.kind == "scalar"
+        )
+
+    @staticmethod
+    def _row_valued(t: "CType | None") -> bool:
+        """`*` of a value of type `t` designates a row (CSUB-2d): `t` is a pointer to an array -- a `T (*p)[N]`
+        parameter or member, shaped as `T p[][N]` -- or a multi-dimensional array, flat with its `shape` or nested
+        (a file-scope one). The twin's `rid_multidim`."""
+        if t is None or t.kind not in ("pointer", "array"):
+            return False
+        return len(t.shape) > 1 or (t.kind == "array" and t.of is not None and t.of.kind == "array")
 
     def _byte_offset_access(self, node: cast.Cast) -> "_LV | None":
         """`*(volatile T *)((char *)p + K)`: one volatile access of `T` at byte offset `K` from the device
@@ -2540,6 +2946,14 @@ class _FuncLowerer:
         if isinstance(node, cast.StringLit):  # "abc"[i] -> index the anonymous global
             rid = self._string_ptr(node.value)
             return rid, self.rtypes[rid], 0
+        if isinstance(node, cast.Member) and self._aos_rooted(node):
+            # `a[i].p` used as a base (`a[i].p->m`, `*a[i].p`): a POINTER member of an array-of-structs element,
+            # loaded, strided by the element, as `a[i].p` reads it -- the loaded pointer is the base (CSUB-2; the
+            # twin's `index_field_value`). Any other member of an element is no base here, as before.
+            aos = self._aos_member(node)
+            if aos is None or aos[2].kind != "pointer" or aos[5]:
+                raise CLowerError("unsupported base expression Index")
+            return self._read(self._aos_leaf_lv(aos)), aos[2], 0
         if isinstance(node, cast.Member):
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = self._complete(self._member_agg(base_ct, node.arrow))
@@ -3189,6 +3603,14 @@ class _FuncLowerer:
                 # pointer VARIABLE). The emit uses `_base_ptr` (decays a pointer/array base, addresses a value
                 # base), so every form lands the right byte address.
                 operand = node.operand
+                # `&m[k]` of a row: a pointer to an array, refused (CSUB-2d) -- after the limits of the
+                # row's first element, `&m[k][0]`, as the twin meets them on its way to the row
+                if self._row_of(operand):
+                    elem = operand
+                    while self._row_of(elem):
+                        elem = cast.Index(elem, cast.IntLit(0))
+                    self._lvalue(elem)
+                    raise CLowerError(ROW_ADDR)
                 # `&f`: the function's address, the value its designator converts to (C11 6.5.3.2p3,
                 # 6.3.2.1p4) -- 0 claims, as the designator's (CF-EXTDESIG)
                 name = self._designator(operand)
@@ -3260,6 +3682,11 @@ class _FuncLowerer:
             # `(T *)0`, `(op_t)0`: a null pointer constant converts to the pointer (C11 6.3.2.3p3), so its temp is
             # typed as one -- an `int` temp cast to a pointer of another width is a cast GCC rejects (CF-RTFP)
             return self._cast_value(self._null_pointer(v, ct), ct)
+        if isinstance(node, (cast.Index, cast.Member)) and self._scalar_row(node):
+            # a row of scalars used as a value -- `m[k]` of a `T m[A][B]`, `rows[k]` of a `T (*rows)[N]`, `p->calls[k]`,
+            # `s.m[k]`: it decays to a pointer to its first element (C11 6.3.2.1p3), which is `&m[k][0]`, the
+            # address both rails lower alike (CSUB-2d; the twin's `row_value`)
+            return self._rvalue(cast.Unary("&", cast.Index(node, cast.IntLit(0))))
         if isinstance(node, (cast.Index, cast.Member)):
             lv = self._lvalue(node)
             if lv.ct.kind == "array" and not lv.bit_width:
@@ -4234,6 +4661,15 @@ class _FuncLowerer:
                 "a multi-dimensional local array of more than 3 dims is not yet supported"
             )
         elem = self._resolve_type(replace(tref, array=()))
+        if elem.kind == "array" and (tref.typeof_var or tref.typeof_expr is not None):
+            # `typeof(a) t[2]`: the typeof'd array's dimensions follow the declarator's, as a typedef'd
+            # array's do (`_typeof_array`; the twin's `td_nd`)
+            elem, edims = _array_dims(elem)
+            dims = tuple(dims) + edims
+            if len(dims) > 3:
+                raise CLowerError(
+                    "a multi-dimensional local array of more than 3 dims is not yet supported"
+                )
         inferred = dims[0] in (0, None)
         dims = ((1,) if inferred else (dims[0],)) + tuple(dims[1:])
         total = 1
@@ -4271,7 +4707,7 @@ class _FuncLowerer:
         image (`w.const`), folded (`_const_value`); a file-scope initializer's shape (`w.shape`) takes none."""
         if w.shape:
             return None
-        return self._const_value(expr) if w.const else self._rvalue(expr)
+        return self._const_value(expr, strings=True) if w.const else self._rvalue(expr)
 
     # --- a static's constant image (CF-STATICTAB) ---
 
@@ -4374,16 +4810,29 @@ class _FuncLowerer:
             else:
                 setattr(self, k, v)
 
-    def _const_value(self, expr) -> _KVal:
+    def _const_value(self, expr, strings: bool = False) -> _KVal:
         """One entry of a static's initializer, as C evaluates an integer constant expression: lowered as
         any expression is, into the evaluation's scratch block, and the claims it made folded in order -- a
         constant (a literal, a `sizeof`, an enumerator) in its declared type, arithmetic, a cast, a select,
         each over values the entry itself produced. Any other claim, or a value produced elsewhere (a
         variable, a parameter, a string, a function), is not an integer constant expression. The twin's
-        `kfold`."""
+        `kfold`.
+        `strings`: the entry is a static's whole entry, which may also be a string literal -- in any redundant
+        parentheses, which the parse drops -- the address of its array (C11 6.6p9), its canonical spelling
+        (`_kstr`; the twin's `kstr_entry`). Only the literal itself is one: an entry that merely evaluates to it,
+        `("a", "b")` or a `_Generic` selecting it, is no constant here. Only a literal of no prefix is one
+        (`STATIC_STR`)."""
         block = self.block_stack[-1]
         start = len(block)
         v = self._rvalue(expr)
+        if strings and isinstance(expr, cast.StringLit) and v in self.str_globals:
+            try:
+                prefix, units = str_units(self.str_globals[v], lambda p: str_elem_size(p, self.abi))
+            except ValueError as e:
+                raise CLowerError(str(e)) from None
+            if prefix:
+                raise CLowerError(STATIC_STR)
+            return _KVal(0, 0, False, "s", _kstr(units))
         vals: dict = {}
         for c in block[start:]:
             if not isinstance(c, Claim) or len(c.wr) != 1 or any(r not in vals for r in c.rd):
@@ -4473,8 +4922,9 @@ class _FuncLowerer:
         (postfix) or the NEW value (prefix). The lvalue is resolved ONCE (C evaluates it once, so a
         side-effecting index `arr[f()]++` runs f() once). A pointer steps by element (c.ptradd/sub). A
         NAMED-LOCAL postfix must SNAPSHOT the old value first -- `_read` returns the mutable storage rid, which
-        the store would then clobber. A volatile/MMIO target (an extra access) and a non-scalar memory lvalue
-        stay a both-rails fallback."""
+        the store would then clobber. A volatile object steps as one read and one write -- a named one read once,
+        into the temp that is its old value -- and a prefix step of one that narrows stays a both-rails fallback (its
+        value would re-read it, a second access), as a non-scalar memory lvalue does (CSUB-2e)."""
         lv = self._lvalue(node.operand)
         # `(*p)++`, `p->in++`, `g_a[1]++` of a struct: the operand of `++` and `--` is a real or a pointer (C11
         # 6.5.2.4p1, 6.5.3.1p1), refused as an operator's operand is (CF-STRUCTCOND; was the follow-on below, and
@@ -4482,18 +4932,19 @@ class _FuncLowerer:
         self._scalar_operands(lv.ct)
         if lv.bit_width and lv.kind == "mem" and self._mmio(lv.rid):
             raise CLowerError("inc/dec of a volatile/MMIO bitfield is a follow-on")
-        if lv.kind != "var" and not (
-            _is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)
-        ):
-            raise CLowerError(
-                "inc/dec of this lvalue form is a follow-on"
-            )  # MMIO / non-scalar member
+        # a volatile object -- through a pointer to volatile storage, `(*c)++` of `bcir_quarantine.h`'s counter, or an
+        # element or a member of a device region -- steps as any memory scalar does: one read, one write (CSUB-2e)
+        if lv.kind != "var" and not _is_scalar_member_lv(node.operand, lv):
+            raise CLowerError("inc/dec of this lvalue form is a follow-on")  # a non-scalar member
         if lv.ct.atomic:  # an `_Atomic` object: one read-modify-write, no snapshot or re-read
             kind = ("pre" if node.prefix else "post") + ("inc" if node.op == "+" else "dec")
             return self._atomic_rmw(lv, kind)
-        cur = self._read(lv)
+        named_vol = lv.kind == "var" and lv.ct.volatile and lv.ct.kind == "scalar"
+        # a named volatile object is read once, into a fresh temp (`_rvalue`'s device read), and that temp is the old
+        # value: the snapshot read the storage a second time (CSUB-2e)
+        cur = self._rvalue(node.operand) if named_vol else self._read(lv)
         if (
-            not node.prefix and lv.kind == "var"
+            not node.prefix and lv.kind == "var" and not named_vol
         ):  # snapshot: _read hands back the mutable storage rid,
             old = self._temp(lv.ct, "id_old")  # which the store below would clobber -- a same-type
             self._emit(
@@ -4523,6 +4974,9 @@ class _FuncLowerer:
             return old  # postfix: the pre-step value
         nt = self.rtypes.get(new)  # prefix: the STORED new value -- re-read if the target
         if lv.bit_width or (nt is not None and lv.ct.size < nt.size):
+            # the re-read: a second access of the object
+            if named_vol or (lv.kind == "mem" and self._mmio(lv.rid)):
+                raise CLowerError("inc/dec of this lvalue form is a follow-on")
             return self._read(lv)  # narrows (a bitfield / sub-int local), else `new`
         return new
 
@@ -4633,7 +5087,12 @@ class _FuncLowerer:
                 return self._cast_value(v, unqualified(_ct))  # a second atomic access
             return rid
         lv = self._lvalue(node.target)
-        if not stmt and not (_is_scalar_member_lv(node.target, lv) and not self._mmio(lv.rid)):
+        # a pointer member, element or `*pp` assigned as a value -- `!(t->pieces = alloc(...))`, `*low = *high = &a`
+        # -- is stored, then reloaded, as a scalar one is (CSUB-2e); a function pointer's too, as the twin's is
+        pointer_lv = lv.kind == "mem" and lv.ct.kind in ("pointer", "funcptr") and not lv.bit_width
+        if not stmt and not (
+            (_is_scalar_member_lv(node.target, lv) or pointer_lv) and not self._mmio(lv.rid)
+        ):
             raise CLowerError(
                 "this lvalue form's assignment as a value is a follow-on"
             )  # MMIO re-read unsound
@@ -5006,6 +5465,13 @@ class _FuncLowerer:
             # a <string.h> routine: its result is its destination, a `void *`
             t = self._temp(pointer(scalar("void")), f"mem_{node.callee}")
             return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
+        if node.callee in _STRING_READ and node.callee not in self.func_rets:
+            # a <string.h> read: a comparison's `int`, `memchr`'s `void *`, a string search's `char *`, `strlen`'s
+            # `size_t` (CSUB-5)
+            rt = _STRING_READ[node.callee]
+            ty = pointer(scalar(rt[:-2], self.abi)) if rt.endswith(" *") else scalar(rt, self.abi)
+            t = self._temp(ty, f"str_{node.callee}")
+            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
         if node.callee == "free" and node.callee not in self.func_rets:
             # void external (verbatim, opaque) + a R21 lifetime FREE event: the freed pointer (the actual it
             # reads) dies after this claim, so a later dereference of it is a use-after-free (§5.12). Vacuous
@@ -5016,6 +5482,8 @@ class _FuncLowerer:
                 "c.call.libm.void:free", Opcode.GEM_DISPATCH, actuals, (), lifetime=Lifetime("free")
             )
             return _VOID_RID
+        if node.callee in _BUILTIN_CKD and node.callee not in self.func_rets:
+            return self._ckd_call(node.callee, actuals)
         bt = _builtin_type(node.callee, self.abi)
         if bt is not None:  # a GCC/Clang integer builtin -> verbatim, typed, opaque
             t = self._temp(bt, "blt")  # the op carries the suffix (the `__builtin_` is re-added
@@ -5213,6 +5681,13 @@ class _FuncLowerer:
         return block
 
     def _stmt(self, st):
+        # `[[bcir::timing(...)]] stmt`: its claims carry the timing (PORT-3)
+        if isinstance(st, cast.Timed):
+            outer, self.timing = self.timing, st.timing
+            try:
+                return self._stmt(st.stmt)
+            finally:
+                self.timing = outer
         if isinstance(st, cast.Seq):  # several declarators of one declaration
             for s in st.stmts:
                 self._stmt(s)
@@ -5247,6 +5722,8 @@ class _FuncLowerer:
                 )  # declared in-body; masked `a[i]` vs the snapshot
                 self.env[st.name] = (rid, ct)
                 self.ptr_extent[rid] = ext
+                if st.align:  # the emit declares it in the body, where its size is known (CSUB-2)
+                    raise CLowerError(ALIGN_VLA)
                 return None
             if st.type.vla_dims:
                 # a MULTI-dim stack VLA `T a[d0][d1]...`: snapshot each dim ONCE (canonical order: dims 0..k-1,
@@ -5287,6 +5764,8 @@ class _FuncLowerer:
                 self.env[st.name] = (rid, ct)
                 self.ptr_extent[rid] = ext_total
                 self.vla_strides[rid] = tuple(dim_exts)  # the per-dim Horner multipliers
+                if st.align:
+                    raise CLowerError(ALIGN_VLA)
                 return None
             inferred = False  # `T a[] = {...}` / `T m[][B] = {...}`: the initializer sizes it
             if len(st.type.array) == 1 and st.type.array[0] in (0, None) and st.init is None:
@@ -5302,6 +5781,11 @@ class _FuncLowerer:
                     raise CLowerError("an array of unknown size needs an initializer")
             else:
                 ct = self._resolve_type(st.type)
+                # `typeof(m) h[2]` of a 3-D `m`: past the dims a declarator holds, as the twin's
+                if len(ct.shape) > 3:
+                    raise CLowerError(
+                        "a multi-dimensional local array of more than 3 dims is not yet supported"
+                    )
             if st.static_storage:  # static storage: its constant image, in the decl (CF-STATICTAB)
                 rid = self._static_storage(ct, st.name, None)
                 if st.thread_storage:  # each thread's own object (CF-TLS)
@@ -5311,6 +5795,7 @@ class _FuncLowerer:
                 self._resource(rid, ct, st.name)  # an inferred `[]` takes the walk's count
                 self.statics[-1] = (rid, st.name, ct, init)
                 self.env[st.name] = (rid, ct)
+                self._align_object(rid, st.align, ct)
                 return None
             rid = self._storage(ct, st.name)  # a mutable named local
             self.env[st.name] = (rid, ct)
@@ -5344,6 +5829,9 @@ class _FuncLowerer:
                 self._bind_extent(
                     rid, ct, st.name, init
                 )  # §5.12: `T *p = malloc(N*sizeof(T))` -> extent N
+            self._align_object(
+                rid, st.align, ct
+            )  # checked where the declarator ends, as the twin checks it
         elif isinstance(st, cast.ExprStmt):
             if isinstance(st.expr, cast.Assign):  # a statement assignment: any lvalue form is fine
                 self._assign(
@@ -5541,6 +6029,8 @@ class _FuncLowerer:
             thread_statics=frozenset(self.thread_statics),
             globals_used=gnames,
             zero_init_locals=set(self.zero_init),
+            local_align=dict(self.local_align),
+            block_types=getattr(self.func, "block_types", ()),
             variadic=self.func.variadic,
             tu_protos=dict(self.tu_used),
             reproducible=getattr(self.func, "reproducible", False),
@@ -5699,6 +6189,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     genv: dict[str, tuple] = {}  # file-scope globals: name -> (rid, CType)
     gres: dict[int, Resource] = {}
     gdecls: list = []  # the linkable emit's global surface
+    galign: dict = {}  # ... and each global's `_Alignas(N)` (CSUB-2)
     # The file-scope initializers' lowerer: a function with no body, in whose scope a global's initializer
     # is lowered only to be folded -- by the fold a static local's initializer takes (`_const_value`), each
     # operation in C's own types -- and never kept. The globals declared so far are in its scope, a global
@@ -5741,6 +6232,8 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         genv[g.name] = (rid, ct)
         ginit.env[g.name] = (rid, ct)
         ginit.rtypes[rid] = ct
+        if a := _object_align(getattr(g, "align", 0), ct):  # its `_Alignas(N)` (CSUB-2)
+            galign[g.name] = a
         gdecls.append(
             (
                 g.name,
@@ -5790,6 +6283,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         resources=resources,
         globals_decl=tuple(gdecls),
         thread_globals=frozenset(g.name for g in unit.globals if g.thread_storage),
+        global_align=galign,
         init_refs=frozenset(n for g in unit.globals for n in _names_in(g.init)),
         anon_spelling=dict(unit.anon_spelling),
         type_defs=tuple(unit.type_defs),
@@ -5889,8 +6383,22 @@ def _fp_shaped(fct: CType, tref: cast.TypeRef, abi) -> CType:
     return t
 
 
+def _array_dims(ct: CType) -> "tuple[CType, tuple]":
+    """An array type's element that is no array and its dimensions, outermost first, whether it is nested
+    (`array(array(T, B), A)`, a global's or a member's) or flat with a `shape` (a declared local's)."""
+    dims: tuple = ()
+    while ct.kind == "array":
+        if len(ct.shape) > 1:
+            return ct.of, dims + tuple(ct.shape)
+        dims += (ct.count,)
+        ct = ct.of
+    return ct, dims
+
+
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
     abi = abi or HOST
+    if tref.typeof_var or tref.typeof_expr is not None:  # no function's names to type it with
+        raise CLowerError(TYPEOF_SCOPE)  # (it had read "unknown scalar type ''")
     if (
         tref.funcptr
     ):  # a function-pointer member (dispatch table), a pointer to one, an array of them
@@ -5902,6 +6410,10 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
             tref,
             abi,
         )
+    # `T (*m)[N]`: a pointer to the row, shaped as a `T m[][N]` parameter (CSUB-2d)
+    if tref.row_ptr:
+        elem = _resolve_member_type(replace(tref, array=(), row_ptr=False), aggregates, abi)
+        return replace(pointer(elem, abi), shape=tuple(tref.array))
     if tref.aggregate:  # a pointer member may name a struct not laid out yet (or ever)
         base = _aggregate(aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
     elif tref.bit_width:  # C23 `_BitInt(N)` (e.g. a function return type)
@@ -5918,6 +6430,21 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
     for dim in reversed(tref.array):
         t = array(t, dim)
     return t
+
+
+def _object_align(align: int, ct: CType) -> int:
+    """The alignment an object's `_Alignas(N)` gives it (C11 6.7.5; CSUB-2), as the twin's `align_declarator` checks it:
+    0 for none -- an `_Alignas(0)` too, which has no effect (6.7.5p6) -- else N, which the parser has held to a power of
+    two at most 4096 (`cparse._alignas`), and which may be no weaker than the alignment its type requires (`ALIGN_WEAK`,
+    6.7.5p4): an array's is its element's. One that only restates the type's own is kept, as the source spelled it."""
+    if not align:
+        return 0
+    elem = ct
+    while elem.kind == "array":
+        elem = elem.of
+    if align < (elem.align or 1):
+        raise CLowerError(ALIGN_WEAK)
+    return align
 
 
 def _param_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:

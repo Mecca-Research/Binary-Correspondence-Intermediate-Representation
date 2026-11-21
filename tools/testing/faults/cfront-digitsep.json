@@ -1,0 +1,298 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS1 oracle pp-number: any ' taken",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "    r\"|\\.?\\d(?:[eEpP][-+]|'[A-Za-z0-9_]|[\\w.])*\"",
+   "new": "    r\"|\\.?\\d(?:[eEpP][-+]|[\\w.'])*\""
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS2 oracle pp-number: a separator and its character not one step (a sign after 'e taken)",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "    r\"|\\.?\\d(?:[eEpP][-+]|'[A-Za-z0-9_]|[\\w.])*\"",
+   "new": "    r\"|\\.?\\d(?:[eEpP][-+]|'(?=[A-Za-z0-9_])|[\\w.])*\""
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS3 oracle tokenizer: an open character constant cut off as a lone quote",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "    r\"|'(?:\\\\.|[^'\\\\])*(?:'|\\\\)?\"  # char, likewise",
+   "new": "    r\"|'(?:\\\\.|[^'\\\\])*'\"  # char, likewise"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS4 oracle tokenizer: an open string cut off as a lone quote",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "    r'\"(?:\\\\.|[^\"\\\\])*(?:\"|\\\\)?'  # string",
+   "new": "    r'\"(?:\\\\.|[^\"\\\\])*\"'  # string"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS5 oracle tokenizer: an open prefixed character constant's prefix split off",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "    r\"|(?:u8|[LuU])'(?:\\\\.|[^'\\\\])*(?:'|\\\\)?\"",
+   "new": "    r\"|(?:u8|[LuU])'(?:\\\\.|[^'\\\\])*'\""
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS6 oracle lexer: any ' goes on through a number",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "    return src[j] == \"'\" and j + 1 < n and (_alnum(src[j + 1]) or src[j + 1] == \"_\")",
+   "new": "    return src[j] == \"'\""
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS7 oracle separators_ok: a separator anywhere",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "            if not (0 < k < len(text) - 1 and text[k - 1] in digits and text[k + 1] in digits):",
+   "new": "            if False:"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS8 oracle separators_ok: an exponent's digits its significand's",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "            digits = _BASE_DIGITS[10]\n",
+   "new": "            pass\n"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS9 oracle lexer: a decimal float's separators unchecked",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "            end = _scan_decimal_float(src, i, n)\n            if end is not None:\n                _too_long(\"a floating constant\", src[i:end], i)\n                _float_separators(src[i:end], i)\n",
+   "new": "            end = _scan_decimal_float(src, i, n)\n            if end is not None:\n                _too_long(\"a floating constant\", src[i:end], i)\n"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS10 oracle lexer: a hex float's separators unchecked",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "            end = _scan_hex_float(src, i, n)  # only matches when a `p` exponent is present\n            if end is not None:\n                _too_long(\"a floating constant\", src[i:end], i)\n                _float_separators(src[i:end], i)\n",
+   "new": "            end = _scan_hex_float(src, i, n)  # only matches when a `p` exponent is present\n            if end is not None:\n                _too_long(\"a floating constant\", src[i:end], i)\n"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS11 oracle lexer: an integer's `_` ends it",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "            while j < n and (_alnum(src[j]) or src[j] == \"_\" or _sep(src, j, n)):",
+   "new": "            while j < n and (_alnum(src[j]) or _sep(src, j, n)):"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS12 oracle lexer: a hex float's exponent begins with a separator",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "    if j >= n or not _digit(src[j]):\n        return None\n    while j < n and (_digit(src[j]) or _sep(src, j, n)):",
+   "new": "    if j >= n or not (_digit(src[j]) or _sep(src, j, n)):\n        return None\n    while j < n and (_digit(src[j]) or _sep(src, j, n)):"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS13 oracle lexer: an open prefixed character constant in other words",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "raise CLexError(_OPEN_STRING if quote == '\"' else _OPEN_CHAR, pos=i)",
+   "new": "raise CLexError(_OPEN_STRING if quote == '\"' else \"unterminated character literal\", pos=i)"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS14 oracle int_literal_parts: a separator's refusal names the whole spelling",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "    if not separators_ok(text):\n        raise CLexError(f\"invalid integer literal {text[:48]!r}\")",
+   "new": "    if not separators_ok(text):\n        raise CLexError(f\"invalid integer literal {text!r}\")"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS15 oracle lexer: a decimal exponent takes no separator",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "            j = k\n            while j < n and (_digit(src[j]) or _sep(src, j, n)):",
+   "new": "            j = k\n            while j < n and _digit(src[j]):"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS16 oracle lexer: a hex exponent takes no separator",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "        return None\n    while j < n and (_digit(src[j]) or _sep(src, j, n)):\n        j += 1\n    if j < n and src[j] in \"fFlL\":",
+   "new": "        return None\n    while j < n and _digit(src[j]):\n        j += 1\n    if j < n and src[j] in \"fFlL\":"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS17 oracle lexer: a decimal fraction takes no separator",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "        has_dot = True\n        j += 1\n        while j < n and (_digit(src[j]) or _sep(src, j, n)):",
+   "new": "        has_dot = True\n        j += 1\n        while j < n and _digit(src[j]):"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS18 oracle lexer: a hex fraction takes no separator",
+   "path": "bcir/frontends/cfront/clex.py",
+   "old": "        fstart = j\n        while j < n and (src[j] in _HEXD or _sep(src, j, n)):",
+   "new": "        fstart = j\n        while j < n and src[j] in _HEXD:"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS19 oracle parser: a floating constant keeps its separators",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "            return cast.FloatLit(self.nxt().text.replace(\"'\", \"\"))",
+   "new": "            return cast.FloatLit(self.nxt().text)"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS20 twin pp-number: any ' taken",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "(s[*i] == '\\'' && idc((unsigned char)s[*i+1]))) {",
+   "new": "s[*i] == '\\'') {"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS21 twin pp-number: a separator and its character not one step (a sign after 'e taken)",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "      if (d == '\\'') {\n        if (j < cap - 1) out[j++] = s[*i];",
+   "new": "      if (0) {\n        if (j < cap - 1) out[j++] = s[*i];"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS22 twin #if: a malformed constant quoted with ' whatever it holds",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "      if(why==int_bad) lit_why(state->constant_error,sizeof state->constant_error,why,s,(int)strlen(s));",
+   "new": "      if(why==int_bad) snprintf(state->constant_error,sizeof state->constant_error,\"%s '%.48s'\",why,s);"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS23 twin lexer: any ' goes on through a number",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "static int lex_sep(const char *q){return q[0]=='\\'' && is_idc((unsigned char)q[1]);}",
+   "new": "static int lex_sep(const char *q){return q[0]=='\\'';}"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS24 twin lexer: a decimal float's separators unchecked",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_FLT); break; }\n        if(!digit_seps_ok(t->s,t->n)){ char m[96]; lit_why(m,sizeof m,BCIR_BAD_FLT,t->s,t->n); fail(c,m); break; }\n",
+   "new": "        if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_FLT); break; }\n"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS25 twin lexer: a hex float's separators unchecked",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_FLT); break; }\n          if(!digit_seps_ok(t->s,t->n)){ char m[96]; lit_why(m,sizeof m,BCIR_BAD_FLT,t->s,t->n); fail(c,m); break; }\n",
+   "new": "          if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_FLT); break; }\n"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS26 twin lexer: an integer takes no separator",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "while(is_idc(*p)||lex_sep(p))p++;t->n=(int)(p-t->s);",
+   "new": "while(is_idc(*p))p++;t->n=(int)(p-t->s);"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS27 twin lexer: an open character constant read as an unsupported one",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "                  if(*p!='\\''){ fail(c,BCIR_OPEN_CHR); break; }\n                  p++; t->n=(int)(p-t->s);",
+   "new": "                  if(*p=='\\'')p++; t->n=(int)(p-t->s);"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS28 twin lexer: an open string read to the end of the unit",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "                 if(*p!='\"'){ fail(c,BCIR_OPEN_STR); break; }\n                 p++; t->n=(int)(p-t->s); c->nt++; continue;}",
+   "new": "                 if(*p=='\"')p++; t->n=(int)(p-t->s); c->nt++; continue;}"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS29 twin lexer: an open prefixed literal read on",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(*r!=q){ fail(c,q=='\"'?BCIR_OPEN_STR:BCIR_OPEN_CHR); break; }\n        r++; t->n=(int)(r-p); p=r;",
+   "new": "        if(*r==q) r++; t->n=(int)(r-p); p=r;"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS30 twin lexer: a decimal exponent takes no separator",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "if(*r>='0'&&*r<='9'){hasexp=1;q=r; while((*q>='0'&&*q<='9')||lex_sep(q))q++;}}",
+   "new": "if(*r>='0'&&*r<='9'){hasexp=1;q=r; while(*q>='0'&&*q<='9')q++;}}"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS31 twin lexer: a hex exponent takes no separator",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(*r>='0'&&*r<='9'){ q=r+1; while((*q>='0'&&*q<='9')||lex_sep(q))q++;",
+   "new": "        if(*r>='0'&&*r<='9'){ q=r+1; while(*q>='0'&&*q<='9')q++;"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS32 twin lexer: a decimal fraction takes no separator",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(*q=='.'){hasdot=1;q++; while((*q>='0'&&*q<='9')||lex_sep(q)){q++;hasdig=1;}}",
+   "new": "      if(*q=='.'){hasdot=1;q++; while(*q>='0'&&*q<='9'){q++;hasdig=1;}}"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS33 twin lexer: a hex fraction takes no separator",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(*q=='.'){q++; while(_ISHEX(*q)||lex_sep(q)){q++;hd=1;}}",
+   "new": "      if(*q=='.'){q++; while(_ISHEX(*q)){q++;hd=1;}}"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS34 twin flt_spelling: a floating constant keeps its separators",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  int k=0; for(int j=0;j<n;j++) if(s[j]!='\\'' && k<cap-1) b[k++]=s[j];",
+   "new": "  int k=0; for(int j=0;j<n;j++) if(k<cap-1) b[k++]=s[j];"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS35 twin linkable: a global's floating initializer keeps its separators",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(b-a==1 && t0->k==T_FLT){ ctext_putn(c,t,sp,(size_t)flt_spelling(t0->s,t0->n,sp,(int)sizeof sp)); return 1; }",
+   "new": "  if(b-a==1 && t0->k==T_FLT){ ctext_putn(c,t,t0->s,(size_t)t0->n); return 1; }"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS36 twin linkable: a signed floating initializer keeps its separators",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      ctext_putn(c,t,sp,(size_t)flt_spelling(c->t[x].s,c->t[x].n,sp,(int)sizeof sp)); return 1; } }",
+   "new": "      ctext_putn(c,t,c->t[x].s,(size_t)c->t[x].n); return 1; } }"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS37 twin digit_seps_ok: a separator anywhere",
+   "path": "runtime/c/bcir_intlit.h",
+   "old": "    else if(ch=='\\'' && !(k>0 && k+1<n && lit_digit(s[k-1],base) && lit_digit(s[k+1],base))) return 0;",
+   "new": "    else if(0) return 0;"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS38 twin digit_seps_ok: an exponent's digits its significand's",
+   "path": "runtime/c/bcir_intlit.h",
+   "old": "    if(hex ? (ch=='p'||ch=='P') : (ch=='e'||ch=='E')) base=10;",
+   "new": "    if(hex ? (ch=='p'||ch=='P') : (ch=='e'||ch=='E')) {}"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS39 twin lit_why: quoted with ' whatever the spelling holds",
+   "path": "runtime/c/bcir_intlit.h",
+   "old": "  char q = memchr(s,'\\'',(size_t)k) ? '\"' : '\\'';",
+   "new": "  char q = '\\'';"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS40 twin lit_why: the whole spelling named",
+   "path": "runtime/c/bcir_intlit.h",
+   "old": "  int k = n<48 ? n : 48;",
+   "new": "  int k = n;"
+  },
+  {
+   "expects": "test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail",
+   "label": "DS41 twin lit_digit: a hex digit of every base",
+   "path": "runtime/c/bcir_intlit.h",
+   "old": "  return base==16 && (c|0x20)>='a' && (c|0x20)<='f';",
+   "new": "  return (c|0x20)>='a' && (c|0x20)<='f';"
+  }
+ ]
+}

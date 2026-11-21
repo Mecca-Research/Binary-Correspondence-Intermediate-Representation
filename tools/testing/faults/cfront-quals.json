@@ -250,15 +250,15 @@
     {
       "expects": "test_elements_that_are_pointers_run_as_the_original",
       "label": "IT7 the twin strides `&arr[i]` of an array of pointers by the pointee",
-      "new": "          int stride=es;\n",
-      "old": "          int stride=pel ? cc_abi(c)->pointer_size : es;\n",
+      "new": "  int stride=es;\n",
+      "old": "  int stride=pel ? cc_abi(c)->pointer_size : es;\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_elements_that_are_pointers_run_as_the_original",
       "label": "IT8 the twin types `&arr[i]` of an array of pointers as a `T *`",
-      "new": "            tr->ptr_depth=1;\n",
-      "old": "            tr->ptr_depth=(uint8_t)(pel ? ptr_levels(&v->type)+(parr?1:0) : 1);\n",
+      "new": "    tr->ptr_depth=1;\n",
+      "old": "    tr->ptr_depth=(uint8_t)(pel ? ptr_levels(&v->type)+(parr?1:0) : 1);\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

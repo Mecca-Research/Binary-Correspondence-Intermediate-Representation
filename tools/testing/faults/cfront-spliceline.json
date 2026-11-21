@@ -1,0 +1,95 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_line_after_a_spliced_line_is_clangs_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL1 oracle: a logical line's deleted new-lines not put back",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "        out.extend([\"\"] * (len(parts) - 1))\n",
+   "new": ""
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL2 oracle: no line's continuation marked as holding __LINE__",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "            holds = holds or \"__LINE__\" in phys[k]\n",
+   "new": "            holds = False\n"
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL3 oracle: __LINE__ on a marked line expanded",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "            if self._cur_spliced:\n                raise CPPError(LINE_ON_SPLICED)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL4 oracle: the current line never marked",
+   "path": "bcir/frontends/cfront/cpp.py",
+   "old": "                self._cur_spliced = i in flagged\n",
+   "new": "                self._cur_spliced = False\n"
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL5 twin: a logical line's deleted new-lines not put back",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "      for(size_t k=0; k<=pending; k++) s[w++]='\\n';",
+   "new": "      s[w++]='\\n';"
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL6 twin: no line's continuation marked as holding __LINE__",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "      for(size_t q=r; s[q] && s[q]!='\\n' && !holds; q++) holds = !strncmp(s+q,\"__LINE__\",8);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL7 twin: a splice that ends the text marks no line",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  if(holds){                                     /* a splice ends the text: no line after it to number */",
+   "new": "  if(0){                                         /* a splice ends the text: no line after it to number */"
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL8 twin: __LINE__ on a marked line expanded",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "        if (st->line_spliced) { cpp_limit(st, PP_LINE_ON_SPLICED); return 0; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL9 twin: the current line never marked",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    state->line_spliced = spliced && ((spliced[pl>>3]>>(pl&7u))&1u); pl++;",
+   "new": "    state->line_spliced = 0; pl++;"
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL10 twin: the lines an invocation took not counted",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "      pl+=(size_t)extra;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL11 twin: a header's marks not passed on",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "            int rc=cpp_process(state,(char *)hd,hflags,nm,dirs,ndirs,out,outcap,w,err,errcap);",
+   "new": "            int rc=cpp_process(state,(char *)hd,NULL,nm,dirs,ndirs,out,outcap,w,err,errcap);"
+  },
+  {
+   "expects": "test_line_after_a_spliced_line_is_clangs_on_both_rails",
+   "label": "SL12 twin: the unit's marks not passed on",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    rc=cpp_process(state,stripped, flags, (srcname",
+   "new": "    rc=cpp_process(state,stripped, NULL, (srcname"
+  }
+ ]
+}
