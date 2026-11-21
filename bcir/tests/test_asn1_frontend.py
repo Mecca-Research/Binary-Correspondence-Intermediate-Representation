@@ -465,7 +465,7 @@ def test_rfc5280_subject_public_key_info_round_trips_the_whole_host_trust_store(
     from bcir.asn1.codec import Strictness
     from bcir.asn1.tlv import decode_one, encode_tlv
 
-    paths = sorted(glob.glob("/etc/ssl/certs/*.pem"))
+    paths = sorted(p for p in glob.glob("/etc/ssl/certs/*.pem") if os.path.isfile(p))
     if not paths:
         return  # no host trust store: nothing to widen
     spki = compile_module(
@@ -563,7 +563,7 @@ def test_rfc5280_authority_key_identifier_round_trips_the_whole_host_trust_store
     store is absent, e.g. Windows). Breadth catches shapes one fixture cannot."""
     from bcir.asn1.values import decode_oid
 
-    paths = sorted(glob.glob("/etc/ssl/certs/*.pem"))
+    paths = sorted(p for p in glob.glob("/etc/ssl/certs/*.pem") if os.path.isfile(p))
     if not paths:
         return  # no host trust store: nothing to widen
     aki = _pkix().module.types["AuthorityKeyIdentifier"]

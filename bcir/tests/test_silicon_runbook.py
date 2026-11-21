@@ -17,7 +17,12 @@ import sys
 from bcir.kbcir import TARGETS
 from bcir.kbcir.calibloop import measured_replan
 from bcir.examples import vector_add
-from bcir.silicon import cpufreq_info, perf_counters_available, rapl_available
+from bcir.silicon import (
+    cpufreq_info,
+    perf_counters_available,
+    rapl_available,
+    read_thermal_millideg,
+)
 from bcir.toolchain import host_bash
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -57,10 +62,10 @@ def test_runbook_runs_end_to_end_and_is_honest():
     assert r.returncode == 0, r.stdout + r.stderr
     out = r.stdout
     assert "capability probe" in out and "measured replan" in out and "verdict" in out
-    if perf_counters_available():
+    if _rig_ready():
         assert "MEASURED replan win" in out and "provenance=real" in out
     else:
-        # the sandbox/CI case: honest degrade, no measured number claimed.
+        # the sandbox/CI or partial-host case: honest degrade, no measured number claimed.
         assert "degraded (synthetic)" in out and "no MEASURED win" in out
 
 
@@ -100,7 +105,7 @@ def test_rig_fires_exactly_when_all_three_signals_are_present():
 def test_runbook_require_real_fails_without_a_rig():
     """`--require-real` (used on the rig) must FAIL where the real signals are absent --
     so a CI/sandbox run can never masquerade as a measured result."""
-    if perf_counters_available():
+    if _rig_ready():
         return  # on a real rig this would pass; not assertable here
     r = _runbook("--require-real")
     if r is None:
@@ -110,9 +115,22 @@ def test_runbook_require_real_fails_without_a_rig():
 
 def test_certificate_provenance_is_tagged_honestly():
     """The replan certificate records whether the telemetry was real or synthetic -- the
-    integrity tag the runbook keys on. In a sandbox it is synthetic; admissible holds."""
+    integrity tag the runbook keys on. Without host silicon signals it is synthetic;
+    where real signals exist, only actually available signals appear in provenance."""
     cert = measured_replan(vector_add(), AVX)
     assert cert.cert.admissible
-    if not perf_counters_available():
-        assert "synthetic" in cert.provenance and not cert.measured
-        assert cert.win == 0  # honest: no measured value without the rig
+    available = {
+        tag
+        for tag, ok in (
+            ("pmu", perf_counters_available()),
+            ("rapl", rapl_available()),
+            ("thermal", read_thermal_millideg() is not None),
+        )
+        if ok
+    }
+    if not available:
+        assert cert.provenance == ("synthetic",) and not cert.measured
+        assert cert.win == 0  # honest: no measured value without real signals
+    else:
+        assert cert.measured and "synthetic" not in cert.provenance
+        assert (set(cert.provenance) - {"os"}) <= available
