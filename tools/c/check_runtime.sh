@@ -149,6 +149,8 @@ echo "[c-runtime] tokenizers (PORT-2): bcir-tokenize's BPE and SentencePiece loa
 show_section tokenizer || exit 1
 echo "[c-runtime] event transducer (PORT-4): test_etl's contracts, and bcir-etl's verdicts == the oracle's (bcir/etl)"
 show_section etl || exit 1
+echo "[c-runtime] counter-based RNG (Philox4x32-10): test_rng's known answers and contracts, and its answers == the oracle's"
+show_section rng || exit 1
 
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1

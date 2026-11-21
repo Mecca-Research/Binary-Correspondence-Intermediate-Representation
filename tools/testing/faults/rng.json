@@ -1,0 +1,133 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_rng:_CC",
+    "bcir.tests.test_c_rng:test_the_c_twin_answers_every_request_as_the_oracle_does",
+    "bcir.tests.test_c_rng:test_the_c_twin_holds_its_contracts_and_the_known_answers",
+    "bcir.tests.test_c_rng:test_the_oracle_gives_the_published_known_answers",
+    "bcir.tests.test_c_rng:test_the_oracle_refuses_what_is_not_a_word"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_c_twin_holds_its_contracts_and_the_known_answers",
+      "label": "R1 the C rounds bump the key before the first round",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "    if (round) {",
+      "new": "    if (1) {"
+    },
+    {
+      "expects": "test_the_c_twin_holds_its_contracts_and_the_known_answers",
+      "label": "R2 the C round takes the wrong multiplier",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "#define PHILOX_M1 0xCD9E8D57u",
+      "new": "#define PHILOX_M1 0xCD9E8D59u"
+    },
+    {
+      "expects": "test_the_c_twin_holds_its_contracts_and_the_known_answers",
+      "label": "R3 the C round swaps the high-word xors",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "    uint32_t n0 = (uint32_t)(p1 >> 32) ^ c1 ^ k0, n2 = (uint32_t)(p0 >> 32) ^ c3 ^ k1;",
+      "new": "    uint32_t n0 = (uint32_t)(p1 >> 32) ^ c3 ^ k0, n2 = (uint32_t)(p0 >> 32) ^ c1 ^ k1;"
+    },
+    {
+      "expects": "test_the_c_twin_holds_its_contracts_and_the_known_answers",
+      "label": "R4 nine rounds",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "  for (int round = 0; round < 10; round++) {",
+      "new": "  for (int round = 0; round < 9; round++) {"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R5 the stream's high word dropped from the counter",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "  counter[3] = (uint32_t)(stream >> 32);",
+      "new": "  counter[3] = 0;"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R6 an element's lane taken from the wrong bits",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "  return out[index & 3u];",
+      "new": "  return out[(index >> 1) & 3u];"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R7 a fill keeps a block past its lanes",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "    if (index >> 2 != have) {",
+      "new": "    if ((index & 3u) == 0 && index >> 2 != have) {"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R8 the f32 conversion keeps 25 bits",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "float bcir_rng_unit_f32(uint32_t bits) { return (float)(bits >> 8) * 0x1p-24f; }",
+      "new": "float bcir_rng_unit_f32(uint32_t bits) { return (float)(bits >> 7) * 0x1p-25f; }"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R9 the f64 conversion takes the words in the other order",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "  uint64_t bits = ((uint64_t)hi << 32) | lo;",
+      "new": "  uint64_t bits = ((uint64_t)lo << 32) | hi;"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R10 the bounded draw never rejects",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "    while (low < threshold) {",
+      "new": "    while (0) {"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R11 the rejected band is (2^32 - 1) mod the bound, one short",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "    uint32_t threshold = (uint32_t)(0u - bound) % bound;   /* 2^32 mod bound: the rejected band */",
+      "new": "    uint32_t threshold = UINT32_MAX % bound;"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R12 the draw keeps the low word",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "  return (uint32_t)(m >> 32);",
+      "new": "  return (uint32_t)m % bound;"
+    },
+    {
+      "expects": "test_the_c_twin_answers_every_request_as_the_oracle_does",
+      "label": "R13 Fisher-Yates draws below i, not i + 1",
+      "path": "runtime/c/bcir_rng.c",
+      "old": "    uint32_t j = bcir_rng_below(key, stream, index, i + 1);",
+      "new": "    uint32_t j = bcir_rng_below(key, stream, index, i);"
+    },
+    {
+      "expects": "test_the_oracle_gives_the_published_known_answers",
+      "label": "R14 the oracle's rounds miss the second key word's bump",
+      "path": "bcir/frontends/models/rng.py",
+      "old": "            k1 = (k1 + _W1) & _U32",
+      "new": "            k1 = k1 & _U32"
+    },
+    {
+      "expects": "test_the_oracle_gives_the_published_known_answers",
+      "label": "R15 the oracle's round keeps a high word unxored",
+      "path": "bcir/frontends/models/rng.py",
+      "old": "            ((p0 >> 32) ^ c3 ^ k1) & _U32,",
+      "new": "            ((p0 >> 32) ^ c3) & _U32,"
+    },
+    {
+      "expects": "test_the_oracle_refuses_what_is_not_a_word",
+      "label": "R16 the oracle takes a stream past 64 bits",
+      "path": "bcir/frontends/models/rng.py",
+      "old": "    _key(key)\n    _word(stream, \"a stream id\", _U64)\n",
+      "new": "    _key(key)\n"
+    },
+    {
+      "expects": "test_the_oracle_refuses_what_is_not_a_word",
+      "label": "R17 the oracle takes a bool as a word",
+      "path": "bcir/frontends/models/rng.py",
+      "old": "    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= mask:",
+      "new": "    if not isinstance(value, int) or not 0 <= value <= mask:"
+    }
+  ]
+}

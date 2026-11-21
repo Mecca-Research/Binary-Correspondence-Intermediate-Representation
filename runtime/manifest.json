@@ -72,6 +72,10 @@
       "class": "freestanding_core",
       "sources": ["bcir_etl.c"]
     },
+    "bcir_rng": {
+      "class": "freestanding_core",
+      "sources": ["bcir_rng.c"]
+    },
     "bcir_asn1": {
       "class": "freestanding_core",
       "sources": [
@@ -188,6 +192,7 @@
     "test_decode": {"sources": ["test_decode.c"], "libraries": ["bcir_streampack", "bcir_base"], "options": ["-ffp-contract=off"]},
     "test_binrec": {"sources": ["test_binrec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "test_etl": {"sources": ["test_etl.c"], "libraries": ["bcir_etl"]},
+    "test_rng": {"sources": ["test_rng.c"], "libraries": ["bcir_rng"]},
     "test_train": {"sources": ["test_train.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_train_stream": {"sources": ["test_train_stream.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_telemetry_frame": {"sources": ["test_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
@@ -360,6 +365,7 @@
     "bundle_listing": {"script": "tools/c/sections/bundle_listing.sh", "harnesses": ["test_ab_listing", "bcir-bundle"]},
     "tokenizer": {"script": "tools/c/sections/tokenizer.sh", "harnesses": ["test_bpe", "test_spm", "bcir-tokenize"]},
     "etl": {"script": "tools/c/sections/etl.sh", "harnesses": ["test_etl", "bcir-etl"]},
+    "rng": {"script": "tools/c/sections/rng.sh", "harnesses": ["test_rng"]},
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},
@@ -487,6 +493,6 @@
     "bcir_control_plane.c", "bcir_ring.c", "bcir_telemetry_envelope.c", "bcir_handoff.c",
     "bcir_shard_manifest.c", "bcir_kplan.c", "bcir_artifact_bundle.c", "bcir_asn1.c",
     "bcir_asn1_streampack.c", "bcir_per.c", "bcir_per_plan.c", "bcir_oer.c", "bcir_xer.c", "bcir_jer.c",
-    "bcir_emit.c", "bcir_sp_listing.c", "bcir_ab_listing.c", "bcir_etl.c"
+    "bcir_emit.c", "bcir_sp_listing.c", "bcir_ab_listing.c", "bcir_etl.c", "bcir_rng.c"
   ]
 }

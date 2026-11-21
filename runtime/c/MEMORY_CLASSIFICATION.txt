@@ -6,6 +6,7 @@ freestanding_core bcir_control_plane.c
 freestanding_core bcir_artifact_bundle.c
 freestanding_core bcir_binrec.c
 freestanding_core bcir_etl.c
+freestanding_core bcir_rng.c
 freestanding_core bcir_decode.c
 freestanding_core bcir_encode.c
 freestanding_core bcir_exec.c

@@ -27,7 +27,7 @@ below.
 | `bcir.asn1` | 46 | 8 | 0 | 0 | 8 | 0 |
 | `bcir.codegen` | 4 | 0 | 0 | 0 | 0 | 0 |
 | `bcir.etl` | 5 | 4 | 0 | 0 | 4 | 0 |
-| `bcir.frontends` | 48 | 9 | 0 | 0 | 9 | 1 |
+| `bcir.frontends` | 49 | 10 | 0 | 0 | 10 | 1 |
 | `bcir.gem` | 18 | 5 | 2 | 5 | 11 | 6 |
 | `bcir.hosted` | 29 | 3 | 0 | 0 | 3 | 0 |
 | `bcir.kbcir` | 94 | 8 | 1 | 15 | 23 | 3 |
@@ -35,7 +35,7 @@ below.
 | `bcir.make` | 6 | 0 | 0 | 0 | 0 | 0 |
 | `bcir.model` | 4 | 1 | 0 | 0 | 1 | 0 |
 | `bcir.verify` | 5 | 1 | 0 | 1 | 1 | 1 |
-| **all** | **314** | **54** | **3** | **21** | **75** | **13** |
+| **all** | **315** | **55** | **3** | **21** | **76** | **13** |
 
 ## Hot paths
 
@@ -103,6 +103,7 @@ modules on each rail.
 | `bcir_provenance.c` | `bcir.kbcir.provenance` | addrmember, aggregate, astore, atomiclocal, bcir_cc, blockscope, boolcast, boolnorm, builtins, cexpr, cfront_loop, chartypes, commastep, complit, compoundwide, csub_ratchet, designate, designated, effects, emitlink, emptystmt, encoder, enumtype, executor, extern, extvariadic, fallback, fieldderef, floatsigncast, fnptrchain, generic, handoff, intpromote, intsigncast, link, linkflags, localmd, longdouble, longunary, loopreuse, loopscope, memberarray, multidecl, multiptr, nestmember, nestoffset, project, pscale, ptr2ptr, ptrfield, ptrlocal, ptrsign, ptrstore, ptrvalue, r21policy, recover, scale, signedbf, signedcmp, signedload, signedty, stmtexpr, structmulti, telemetry_frame, threadlocal, typeof, uartdrv, unarypromote, variadic, writeguard | fuzz_binrec, fuzz_encode, fuzz_exec, fuzz_handoff, fuzz_telemetry_frame |
 | `bcir_q4_kernel.c` | `bcir.kbcir.lowbit` | — | fuzz_decoder_gem, fuzz_q8_model |
 | `bcir_ring.c` | `bcir.gem.ring` | control_plane, handoff, kplan, ring, ring_tsan | fuzz_control_plane, fuzz_handoff, fuzz_kplan, fuzz_ring |
+| `bcir_rng.c` | `bcir.frontends.models.rng` | rng | — |
 | `bcir_runtime.c` | `bcir.abi.execution_plan_abi`, `bcir.abi.streampack_abi` | addrmember, aggregate, artifact_bundle, asn1bench, asn1fast, astore, atomiclocal, bcir_cc, blockscope, boolcast, boolnorm, builtins, bundle_listing, cexpr, cfront, cfront_abi, cfront_loop, chartypes, commastep, complit, compoundwide, control_plane, csub_ratchet, designate, designated, effects, emitlink, emptystmt, encoder, enumtype, execution_plan, executor, extern, extvariadic, fallback, fieldderef, floatsigncast, fnptrchain, generic, handoff, intpromote, intsigncast, jer, kplan, link, linkflags, localmd, longdouble, longunary, loopreuse, loopscope, memberarray, multidecl, multiptr, nestmember, nestoffset, plan_sign, project, pscale, ptr2ptr, ptrfield, ptrlocal, ptrsign, ptrstore, ptrvalue, r21policy, recover, ring, ring_tsan, runtime, scale, signedbf, signedcmp, signedload, signedty, sp_listing, stmtexpr, structmulti, telemetry_frame, threadlocal, tokenizer, typeof, uartdrv, unarypromote, variadic, writeguard | fuzz_artifact_bundle, fuzz_asn1_streampack, fuzz_bpe, fuzz_control_plane, fuzz_cpp, fuzz_encode, fuzz_exec, fuzz_handoff, fuzz_jer, fuzz_kplan, fuzz_plan_sign, fuzz_ring, fuzz_sp_listing, fuzz_spm, fuzz_streampack, fuzz_telemetry_frame |
 | `bcir_shard_manifest.c` | `bcir.abi.shard_manifest` | control_plane, handoff, kplan, ring, ring_tsan | fuzz_control_plane, fuzz_handoff, fuzz_kplan, fuzz_ring |
 | `bcir_sp_listing.c` | `bcir.abi.streampack_tool` | bundle_listing, sp_listing | fuzz_artifact_bundle, fuzz_sp_listing |

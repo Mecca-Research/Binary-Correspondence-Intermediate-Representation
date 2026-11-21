@@ -302,6 +302,24 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
   - Where the rest of the PORT order stands: PORT-6's first slice landed (`kbcir.csp`); PORT-7 (N6) and PORT-8
     (N9's planning half) are not started; PORT-9 (N7) waits on IF-1 and IF-2, as the audit's N7 row says.
 
+- **2026-11-21 — The counter-based RNG: Philox4x32-10 in freestanding C, and its oracle.**
+  - The C rail had no random-number generator; native weight initialization, sampling, dropout and shuffling all
+    went through Python (the C subset audit's first native addition). `runtime/c/bcir_rng.c` is Philox4x32-10 --
+    a key plus a counter and no hidden state, so element `i` of a stream is one number whatever thread or batch asks
+    for it -- with the streams over it: a 64-bit stream id beside the key, element `i` lane `i & 3` of block
+    `i >> 2`; fills; floats in [0, 1) from the top 24 or 53 bits, exact; bounded integers by multiply-and-shift
+    with rejection (Lemire); and Fisher-Yates permutations, the data loader's shuffle. Freestanding: no allocation,
+    no libc. `bcir/frontends/models/rng.py` is its oracle.
+  - **Evidence.** Both rails give the generator's published known answers (Random123's three Philox4x32-10
+    vectors: Salmon, Moraes, Dror and Shaw, SC11). `test_c_rng.py`: the C driver answers 1,309 generated requests
+    as the oracle does -- blocks at the counter space's corners, fills from every lane offset and up to its last
+    element, bounded draws across the rejection band, permutations, both float conversions -- and reaches the
+    rejection loop. `test_rng.c` holds the contracts; the `rng` section runs both. `bcir_rng.c` compiles clean
+    under `bcir-cc`: the ratchet is 40 of 61 units.
+  - **Standing faults.** `rng.json`, 17, each swept RED. A band one short (2^32 - 1 mod the bound) differs
+    only at a power-of-two bound, so the corpus draws below 2^30 and 2^31; and every oracle entry checks its
+    request before it draws, so a fill of 0 or a bound of 0 refuses a bad stream as a draw does.
+
 - **2026-11-21 — PORT-6, first slice: the exact finite-domain solver (`kbcir.csp`) in the hosted C++ library.**
   - G28's integer CSP / ILP rail -- the one exact rail a problem spanning schedule and memory has -- ran in Python
     only. `runtime/cpp/bcir_csp.cpp` behind `bcir_csp.h` is `csp.solve` node for node: bounds consistency on each

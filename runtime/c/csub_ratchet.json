@@ -200,6 +200,9 @@
       "construct": "<stdatomic.h>: `ATOMIC_LLONG_LOCK_FREE` in a static assertion, then the explicit-order calls",
       "rung": "CSUB-4"
     },
+    "bcir_rng.c": {
+      "verdict": "clean"
+    },
     "bcir_runtime.c": {
       "verdict": "clean"
     },
