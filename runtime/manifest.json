@@ -80,6 +80,10 @@
       "class": "freestanding_core",
       "sources": ["bcir_digest_hw.c"]
     },
+    "bcir_tokload": {
+      "class": "freestanding_core",
+      "sources": ["bcir_tokload.c"]
+    },
     "bcir_asn1": {
       "class": "freestanding_core",
       "sources": [
@@ -152,6 +156,10 @@
       "sources": ["bcir_etl_tool.c"],
       "libraries": ["bcir_etl"]
     },
+    "bcir-tokload": {
+      "sources": ["bcir_tokload_tool.c"],
+      "libraries": ["bcir_tokload", "bcir_digest", "bcir_rng", "bcir_base"]
+    },
     "bcir-tokenize": {
       "sources": ["bcir_tokenize_cli.c"],
       "libraries": ["bcir_tokenizer", "bcir_asn1", "bcir_base"]
@@ -198,6 +206,7 @@
     "test_etl": {"sources": ["test_etl.c"], "libraries": ["bcir_etl"]},
     "test_rng": {"sources": ["test_rng.c"], "libraries": ["bcir_rng"]},
     "test_digest_hw": {"sources": ["test_digest_hw.c"], "libraries": ["bcir_digest", "bcir_base"]},
+    "test_tokload": {"sources": ["test_tokload.c"], "libraries": ["bcir_tokload", "bcir_digest", "bcir_rng", "bcir_base"]},
     "test_train": {"sources": ["test_train.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_train_stream": {"sources": ["test_train_stream.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_telemetry_frame": {"sources": ["test_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
@@ -264,6 +273,7 @@
     "fuzz_encode": {"sources": ["fuzz_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_binrec": {"sources": ["fuzz_binrec.c"], "libraries": ["bcir_streampack"], "max_len": "64"},
     "fuzz_etl": {"sources": ["fuzz_etl.c"], "libraries": ["bcir_etl"], "max_len": "4096"},
+    "fuzz_tokload": {"sources": ["fuzz_tokload.c"], "libraries": ["bcir_tokload", "bcir_digest", "bcir_rng", "bcir_base"], "max_len": "4096"},
     "fuzz_asn1_streampack": {"sources": ["fuzz_asn1_streampack.c"], "libraries": ["bcir_asn1", "bcir_base"], "max_len": "8192"}
   },
   "seam_libraries": {
@@ -372,6 +382,7 @@
     "etl": {"script": "tools/c/sections/etl.sh", "harnesses": ["test_etl", "bcir-etl"]},
     "rng": {"script": "tools/c/sections/rng.sh", "harnesses": ["test_rng"]},
     "digest_hw": {"script": "tools/c/sections/digest_hw.sh", "harnesses": ["test_digest_hw"]},
+    "tokload": {"script": "tools/c/sections/tokload.sh", "harnesses": ["test_tokload", "bcir-tokload"]},
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},
@@ -500,6 +511,6 @@
     "bcir_shard_manifest.c", "bcir_kplan.c", "bcir_artifact_bundle.c", "bcir_asn1.c",
     "bcir_asn1_streampack.c", "bcir_per.c", "bcir_per_plan.c", "bcir_oer.c", "bcir_xer.c", "bcir_jer.c",
     "bcir_emit.c", "bcir_sp_listing.c", "bcir_ab_listing.c", "bcir_etl.c", "bcir_rng.c",
-    "bcir_digest_hw.c"
+    "bcir_digest_hw.c", "bcir_tokload.c"
   ]
 }

@@ -1,0 +1,146 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_tokload:_CC",
+    "bcir.tests.test_c_tokload:test_the_c_harness_holds_its_contracts",
+    "bcir.tests.test_c_tokload:test_the_c_tool_answers_as_the_oracle_does",
+    "bcir.tests.test_c_tokload:test_the_oracle_holds_its_laws"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L1 the magic never checked",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  if (length < BCIR_TOKSHARD_HEADER || data[0] != 'B' || data[1] != 'T' || data[2] != 'K' || data[3] != 'S')\n",
+      "new": "  if (length < BCIR_TOKSHARD_HEADER)\n"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L2 the eight reserved octets never checked",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  for (unsigned i = 24; i < 32; i++) reserved |= data[i] != 0u;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L3 a width-2 shard takes a vocabulary of 65,537",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "(width == 2u && vocab > 65536u)) return BCIR_TOKLOAD_ERR_FORMAT;",
+      "new": "(width == 2u && vocab > 65537u)) return BCIR_TOKLOAD_ERR_FORMAT;"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L4 a length past the count taken",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  if (count > body / width || (size_t)count * width != body) return BCIR_TOKLOAD_ERR_FORMAT;",
+      "new": "  if (count > body / width) return BCIR_TOKLOAD_ERR_FORMAT;"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L5 a token at the vocabulary taken",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  if (count && worst >= vocab) return BCIR_TOKLOAD_ERR_TOKEN;",
+      "new": "  if (count && worst > vocab) return BCIR_TOKLOAD_ERR_TOKEN;"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L6 the digest asked before the tokens",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  if (count && worst >= vocab) return BCIR_TOKLOAD_ERR_TOKEN;\n  bcir_sha256_digest_hw(s.payload, body, s.digest, digest_features);\n  if (!bcir_sha256_equal(s.digest, data + 32, 32u)) return BCIR_TOKLOAD_ERR_DIGEST;\n",
+      "new": "  bcir_sha256_digest_hw(s.payload, body, s.digest, digest_features);\n  if (!bcir_sha256_equal(s.digest, data + 32, 32u)) return BCIR_TOKLOAD_ERR_DIGEST;\n  if (count && worst >= vocab) return BCIR_TOKLOAD_ERR_TOKEN;\n"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L7 the digest never compared",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  if (!bcir_sha256_equal(s.digest, data + 32, 32u)) return BCIR_TOKLOAD_ERR_DIGEST;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_the_c_harness_holds_its_contracts",
+      "label": "L8 a refused shard written before its digest is checked",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  bcir_sha256_digest_hw(s.payload, body, s.digest, digest_features);\n",
+      "new": "  bcir_sha256_digest_hw(s.payload, body, s.digest, digest_features);\n  *shard = s;\n"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L9 a shard's windows counted without the shared token",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  return context && count > context ? (count - 1u) / context : 0u;",
+      "new": "  return context && count > context ? count / context : 0u;"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L10 a window starts T + 1 tokens on from the last",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "      *start = (uint64_t)w * l->context;",
+      "new": "      *start = (uint64_t)w * (l->context + 1u);"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L11 every epoch shuffled alike",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "        bcir_rng_permutation(loader->key, epoch, &at, loader->perm, loader->windows);",
+      "new": "        bcir_rng_permutation(loader->key, 0u, &at, loader->perm, loader->windows);"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L12 the permutation never redrawn for a new epoch",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "      if (loader->epoch != epoch) {",
+      "new": "      if (loader->epoch == UINT64_MAX) {"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L13 the targets are the inputs",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "      targets[(size_t)r * t + k] = bcir_tokshard_token(shard, start + k + 1u);",
+      "new": "      targets[(size_t)r * t + k] = bcir_tokshard_token(shard, start + k);"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L14 shards of two vocabularies taken",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "    if (shards[s].vocab != shards[0].vocab) return BCIR_TOKLOAD_ERR_VOCAB;",
+      "new": "    if (0) return BCIR_TOKLOAD_ERR_VOCAB;"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L15 a batch past the last sample taken",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "  if (index > (UINT64_MAX - (size - 1u)) / size) return BCIR_TOKLOAD_ERR_ARG;",
+      "new": "  if (index > UINT64_MAX / size) return BCIR_TOKLOAD_ERR_ARG;"
+    },
+    {
+      "expects": "test_the_oracle_holds_its_laws",
+      "label": "L16 the oracle counts windows without the shared token",
+      "path": "bcir/frontends/models/token_shards.py",
+      "old": "    return (count - 1) // context if count > context else 0",
+      "new": "    return count // context if count > context else 0"
+    },
+    {
+      "expects": "test_the_oracle_holds_its_laws",
+      "label": "L17 the oracle shuffles every epoch alike",
+      "path": "bcir/frontends/models/token_shards.py",
+      "old": "            self._perm = {epoch: rng.permutation(self.key, epoch, 0, self.windows)[0]}",
+      "new": "            self._perm = {epoch: rng.permutation(self.key, 0, 0, self.windows)[0]}"
+    },
+    {
+      "expects": "test_the_oracle_holds_its_laws",
+      "label": "L18 the oracle asks the digest before the tokens",
+      "path": "bcir/frontends/models/token_shards.py",
+      "old": "    if any(t >= vocab for t in tokens):\n        raise ShardError(ERR_TOKEN, \"a token id past the vocabulary\")\n    digest = bytes(data[32:64])\n    if hashlib.sha256(payload).digest() != digest:\n        raise ShardError(ERR_DIGEST, \"a payload that is not its digest\")\n",
+      "new": "    digest = bytes(data[32:64])\n    if hashlib.sha256(payload).digest() != digest:\n        raise ShardError(ERR_DIGEST, \"a payload that is not its digest\")\n    if any(t >= vocab for t in tokens):\n        raise ShardError(ERR_TOKEN, \"a token id past the vocabulary\")\n"
+    },
+    {
+      "expects": "test_the_c_tool_answers_as_the_oracle_does",
+      "label": "L19 pack writes the width where the version goes",
+      "path": "runtime/c/bcir_tokload_tool.c",
+      "old": "  out[6] = (uint8_t)width;",
+      "new": "  out[4] = (uint8_t)width;"
+    }
+  ]
+}

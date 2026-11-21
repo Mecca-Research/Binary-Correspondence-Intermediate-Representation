@@ -310,6 +310,11 @@ add_target binrec "binrec" "-max_len=64" \
 add_target etl "event transducer" "-max_len=4096" \
   "${C}/fuzz_etl.c" "${C}/bcir_etl.c"
 
+# bcir_tokload.c reads token shards from disk (the native data loader): a hostile shard, and the same shard with its
+# digest made whole so the token checks and the loader are reached, every batch's tokens held below the vocabulary.
+add_target tokload "token shards" "-max_len=4096" \
+  "${C}/fuzz_tokload.c" "${C}/bcir_tokload.c" "${C}/bcir_digest_hw.c" "${C}/bcir_rng.c" "${C}/bcir_sha256.c"
+
 # bcir_asn1_streampack.c does not merely READ hostile octets, it WRITES a native artifact
 # derived from them. The harness therefore feeds every blessed output straight back into
 # the native decoder and the semantic verifier: a fast path that emitted a subtly

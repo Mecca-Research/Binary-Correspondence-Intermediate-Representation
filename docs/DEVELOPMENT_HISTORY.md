@@ -302,6 +302,30 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
   - Where the rest of the PORT order stands: PORT-6's first slice landed (`kbcir.csp`); PORT-7 (N6) and PORT-8
     (N9's planning half) are not started; PORT-9 (N7) waits on IF-1 and IF-2, as the audit's N7 row says.
 
+- **2026-11-21 — The native data loader: token shards, and batches straight into the trainer's arrays.**
+  - The trainer took its token ids from Python; this is the C subset audit's loader, the last of its three native
+    additions. A BTKS shard (version 0) is one token sequence at 2 or 4 bytes a token, addressed by the SHA-256 of
+    its payload -- its generation -- and `runtime/c/bcir_tokload.c` opens one only whole: header, exact length,
+    every token below the vocabulary, the digest (on the hardware path the probe allows), before a token is read,
+    and reads it in place. The loader's windows are T + 1 tokens with one shared between neighbours, as the hosted
+    token source's rows are; sample p is window perm_e[p mod N] of epoch p / N, perm_e the RNG's Fisher-Yates
+    permutation under the loader's key on stream e; batch b is samples [bB, (b + 1)B), written into the trainer's
+    `tokens` and `targets`. A batch is a function of its index alone, so a run resumes exactly. Freestanding; the
+    permutation's workspace is the caller's. `bcir-tokload` (hosted) packs shards and maps them from files
+    (`mmap` where the host has it, the hosted allocator where it has not). The oracle is
+    `bcir/frontends/models/token_shards.py`, which states the format. `bcir_tokload.c` compiles clean under
+    `bcir-cc` (the ratchet: 42 of 64 units); `bcir-tokload` waits on CSUB-5's `<stdio.h>`, as the other tools do.
+  - **Evidence.** `test_c_tokload.py`: the oracle's laws (an epoch visits every window once, a batch is its
+    index's alone, neighbours share a token, the unshuffled walk is shard order); `bcir-tokload pack` writes the
+    oracle's octets at both widths; `info` answers as `open_shard` does over shards and every field's corruption;
+    `batch` prints the oracle's rows over generated corpora -- short shards, contexts and sizes to small bounds,
+    shuffled and not, batches straddling epochs and next to the last sample -- and its refusals the oracle's codes.
+    `test_tokload.c` holds the C contracts: every refusal leaves the caller's shard as it was, an exact resume
+    across epochs, the last sample's index. `fuzz_tokload.c` feeds hostile shards, also with their digests made
+    whole so the token checks and the loader are reached. The `tokload` section runs the harness and the tool.
+  - **Standing faults.** `tokload.json`, 19, each swept RED; the two on the oracle are caught by its own laws (a
+    shard of 40 tokens holds 9 windows of 5, and epoch 1 is not epoch 0 again).
+
 - **2026-11-21 — The hardware digests: SHA-256 and CRC-32 on the CPU's own instructions.**
   - CRC-SLICE took the portable half of the digest work; this is the hardware half the C subset audit names.
     `runtime/c/bcir_digest_hw.c` computes the SHA-256 of `bcir_sha256.c` on SHA-NI or the ARMv8 SHA-2

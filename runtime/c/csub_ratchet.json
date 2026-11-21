@@ -242,6 +242,15 @@
       "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
       "rung": "CSUB-5"
     },
+    "bcir_tokload.c": {
+      "verdict": "clean"
+    },
+    "bcir_tokload_tool.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'FILE'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
     "bcir_train.c": {
       "verdict": "clean"
     },
