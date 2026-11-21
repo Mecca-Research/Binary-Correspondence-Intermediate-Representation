@@ -7,9 +7,9 @@ token mixer -- a rank-22 Grassmann/Plücker head offered as an alternative to at
 SwiGLU) -- that end with a rerun on merged main after PR #818 (10-17 *Global Wedge Advancement*,
 10-18 *Global Integrated Recipe*, 10-18 *Query-Aware Head*, 10-18 *PR818 Geometric Head*). The
 reports and their figures live in the requester's "BCIR Research" folder; the five study bundles
-were uploaded to main on 2026-10-21 under `docs/research/` (`gp-global`, `wedge-next`,
-`wedge-integrated`, `wedge-query-aware`, `wedge-pr818`: 1,370 files, 1.77 GB, each a
-self-contained research tree with its frozen protocols, run records and selected checkpoints). This
+(1,370 files, 1.77 GB of frozen protocols, run records and selected checkpoints) were uploaded to
+main on 2026-10-21 and later removed from main (preserved only at git commit `490f5be0` and in the
+external Drive archives). This
 note reads the reports against the tree: what the tree confirms, what it corrects, which confounds
 the comparisons carry, and what the repository adopted -- the slice the last report names,
 **coupling per-layer caching with packing-aware buffer planning** (GEO-3, the NDT measure note's
@@ -188,8 +188,9 @@ recipes on merged PR #818, its 15 bf16 runs the new numerical family -- from the
 uploaded and against current main, every record held to Codex's field by field with no tolerance.
 Records: [measurements/2026-10-22/geo2/](measurements/2026-10-22/geo2/).
 
-**The bundles (GEO-0).** Each bundle's manifest against the bytes main holds
-([bundles.json](measurements/2026-10-22/geo2/bundles.json)):
+**The bundles (GEO-0).** Each bundle's manifest against the bytes main held at `490f5be0`
+(before the five study trees were removed from main;
+[bundles.json](measurements/2026-10-22/geo2/bundles.json)):
 
 | Bundle | Manifest entries | Byte-identical | Equal but a trailing newline | Absent |
 |---|---:|---:|---:|---|

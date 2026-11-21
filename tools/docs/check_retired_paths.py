@@ -21,7 +21,16 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _SKIP_DIRS = (".git", "__pycache__", "node_modules", ".mypy_cache")
 
 # Retired path prefixes (removed trees). Add to this list as trees are retired.
-RETIRED = ("runtime/llvm/", "runtime/llvm`", "runtime/llvm)")
+RETIRED = (
+    "runtime/llvm/",
+    "runtime/llvm`",
+    "runtime/llvm)",
+    "docs/research/gp-global",
+    "docs/research/wedge-next",
+    "docs/research/wedge-integrated",
+    "docs/research/wedge-query-aware",
+    "docs/research/wedge-pr818",
+)
 ALLOW_MARKER = "allow-retired-paths"
 
 
