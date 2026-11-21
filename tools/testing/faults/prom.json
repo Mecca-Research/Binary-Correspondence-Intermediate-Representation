@@ -1,0 +1,208 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_prom:_CC",
+  "bcir.tests.test_c_prom:test_the_c_twin_holds_its_contracts",
+  "bcir.tests.test_c_prom:test_the_c_twin_exposes_as_the_oracle_does"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR1 a negative value written unsigned",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  if (negative) buf[--n] = '-';\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR2 a digit-led name not led by an underscore",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  if (name.n && name.p[0] >= '0' && name.p[0] <= '9') lit(w, \"_\");\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR3 the colon refused in a name",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "(c >= '0' && c <= '9') || c == '_' || c == ':';",
+   "new": "(c >= '0' && c <= '9') || c == '_';"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR4 a code point outside the charset as one underscore an octet",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    k += step;\n  }\n}\n\n/* a label value",
+   "new": "    k += 1;\n  }\n}\n\n/* a label value"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR5 a backslash in a label unescaped",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    if (c == '\\\\') lit(w, \"\\\\\\\\\");\n    else if (c == '\"')",
+   "new": "    if (0) lit(w, \"\\\\\\\\\");\n    else if (c == '\"')"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR6 a newline in a label unescaped",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    else if (c == '\\n') lit(w, \"\\\\n\");\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR7 Python's wider whitespace kept",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "(c >= 0x09u && c <= 0x0Du) || (c >= 0x1Cu && c <= 0x20u) || c == 0x85u || c == 0xA0u || c == 0x1680u ||",
+   "new": "(c >= 0x09u && c <= 0x0Du) || c == 0x20u || c == 0x1680u ||"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR8 the ideographic space kept",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "         c == 0x3000u;",
+   "new": "         0;"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR9 a description's interior newline kept",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    if (d.p[k] == '\\n') lit(w, \" \");\n    else raw(w, d.p + k, 1);",
+   "new": "    raw(w, d.p + k, 1);"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR10 trailing whitespace kept",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    if (!py_space(cp)) last = k;",
+   "new": "    last = k;"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR11 no cost dimension written empty",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    label_value(w, s->cost_dim.n ? s->cost_dim : t_of(\"none\"));",
+   "new": "    label_value(w, s->cost_dim);"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR12 an unknown signal labelled from no definition",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  if (s->has_definition) {\n    lit(w, \"\\\",cost_dim=\\\"\");",
+   "new": "  if (1) {\n    lit(w, \"\\\",cost_dim=\\\"\");"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR13 a signal that did not read given a value line",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    if (!s->available) continue; /* no value line for a signal that did not read: honest */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR14 the help fallback the snapshot's key",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    help_text(w, s->description.n ? s->description : s->definition_name);",
+   "new": "    help_text(w, s->description.n ? s->description : s->name);"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR15 every series a gauge",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    lit(w, s->counter ? \" counter\\n\" : \" gauge\\n\");",
+   "new": "    lit(w, \" gauge\\n\");"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR16 the availability inverted",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    lit(w, series[k].available ? \" 1\\n\" : \" 0\\n\");",
+   "new": "    lit(w, series[k].available ? \" 0\\n\" : \" 1\\n\");"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR17 the sensitivity header dropped",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  if (n_sens) {\n    lit(w, \"# HELP bcir_signal_sensitivity",
+   "new": "  if (n_sens) {\n    if (0) lit(w, \"# HELP bcir_signal_sensitivity"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR18 the frame counters always written",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  if (frames) {\n    counter(w, \"telemetry_frames_accepted\"",
+   "new": "  if (1) {\n    counter(w, \"telemetry_frames_accepted\""
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR19 a missing frame not frame evidence",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  int frames = wit->frames_accepted || wit->frames_rejected || wit->frames_missing || wit->frames_reordered ||",
+   "new": "  int frames = wit->frames_accepted || wit->frames_rejected || wit->frames_reordered ||"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR20 a duplicate frame left monotonic",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    lit(w, wit->frames_reordered == 0 && wit->frames_duplicated == 0 ? \"\\\"} 1\\n\" : \"\\\"} 0\\n\");",
+   "new": "    lit(w, wit->frames_reordered == 0 ? \"\\\"} 1\\n\" : \"\\\"} 0\\n\");"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR21 blind when anything was rejected",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  lit(w, wit->accepted == 0 ? \"\\\"} 1\\n\" : \"\\\"} 0\\n\");",
+   "new": "  lit(w, wit->accepted == 0 || wit->rejected ? \"\\\"} 1\\n\" : \"\\\"} 0\\n\");"
+  },
+  {
+   "expects": "test_the_c_twin_exposes_as_the_oracle_does",
+   "label": "PR22 the dropped counter skipped",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  counter(w, \"telemetry_dropped\", \"Telemetry records evicted upstream before read (ring overwrite / suppression).\",\n          wit->dropped, channel);\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "PR23 the text written while it is measured",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  writer w = {0, 0};",
+   "new": "  writer w = {out, 0};"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "PR24 names out of order taken",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    if (k && !bytes_lt(series[k - 1u].name, s->name)) return BCIR_PROM_ERR_ORDER;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "PR25 an overlong form taken as UTF-8",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  if (v < min || v > 0x10FFFFu || (v >= 0xD800u && v <= 0xDFFFu)) return 0;",
+   "new": "  if (v > 0x10FFFFu || (v >= 0xD800u && v <= 0xDFFFu)) return 0;"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "PR26 a surrogate taken as UTF-8",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  if (v < min || v > 0x10FFFFu || (v >= 0xD800u && v <= 0xDFFFu)) return 0;",
+   "new": "  if (v < min || v > 0x10FFFFu) return 0;"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "PR27 a reading without its definition taken",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    if (s->available && !s->has_definition) return BCIR_PROM_ERR_ARG;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "PR28 counters past 2**63 written signed",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "  decimal(w, v, 0);\n  lit(w, \"\\n\");",
+   "new": "  int64(w, (int64_t)v);\n  lit(w, \"\\n\");"
+  }
+ ]
+}

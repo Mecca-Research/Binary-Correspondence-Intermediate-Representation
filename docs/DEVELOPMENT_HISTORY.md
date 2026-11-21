@@ -289,6 +289,34 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-21 — N13: the telemetry export's Prometheus exposition, in freestanding C.**
+  - Tier 3 of the native port audit: the body a native telemetry or ledger service returns to `GET /metrics`.
+    `runtime/c/bcir_prom.c` is the twin of `to_prometheus` (`bcir/telemetry_export.py`), octet for octet: the
+    availability block (one `bcir_signal_up` series a signal, labelled from its definition when one is known),
+    each reading's HELP (the description with newlines folded and Python's whitespace -- `str.isspace()`'s set,
+    NEL, NBSP and the Unicode spaces among it -- stripped from both ends, or the definition's name), TYPE and
+    value, the sensitivity ranking, and the integrity witness (the frame counters and the frame-order gauge only
+    when a frame counter is nonzero, as the oracle decides). Names map to Prometheus's charset as
+    `sanitize_metric_name` maps them, one `_` a code point; label values escape a backslash, a quote and a newline.
+    The text is measured, then written only when it fits.
+  - **Integers only, on purpose.** A native exporter carries what native sources measure -- counters, levels,
+    milli-unit ratios -- and the oracle writes an integer as `str(int)`. A float's text is Python's shortest
+    round-trip `repr`, which the C does not reimplement, so float series and the T3 derived metrics stay the
+    oracle's; so do the OTLP push and the Redfish report, which are hosted adapters' JSON. The signals come in the
+    oracle's order, names strictly ascending by octet (code point order) and UTF-8, or the C refuses them.
+  - **Evidence.** `test_c_prom.py`: over 600 generated snapshots -- names with dots, a leading digit, non-ASCII and
+    astral code points; descriptions with newlines and Python's whitespace at both ends; label values with
+    quotes, backslashes and newlines; counters and gauges; signals that read and that do not, with a known
+    definition and without; values across int64 -- with and without the sensitivity ranking and the witness,
+    `test_prom FILE` writes `to_prometheus`'s text octet for octet (962,888 octets). `test_prom.c` holds what the
+    oracle cannot state: a short output (its length, nothing written), names out of order or not UTF-8, a reading
+    without its definition, every NULL, a known snapshot's text, witness counters past 2^63 printed unsigned. The
+    `prom` section runs the comparison.
+  - **Standing faults.** `prom.json`, 28, each swept RED; two survived the first sweep -- a frame counter alone as
+    frame evidence, which the corpus never drew until it drew each counter alone, and a short output's write that
+    was an equivalent mutant, replaced by the real hazard (writing while measuring). `bcir_prom.c` compiles clean
+    under `bcir-cc` once its UTF-8 decoder's comma-operator statements were split (the ratchet: 46 of 68 units).
+
 - **2026-11-21 — N11: device manifests bound at instantiation, in freestanding C.**
   - Tier 3 of the native port audit: an instance binds its device's static hardware schema (D-R1) from the persisted
     envelope the planner was given when it starts, rather than from a header generated per device.

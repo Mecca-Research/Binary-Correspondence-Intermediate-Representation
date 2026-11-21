@@ -507,6 +507,7 @@ _MODULES = [
     "bcir.tests.test_c_dma",
     "bcir.tests.test_c_serve",
     "bcir.tests.test_c_devman",
+    "bcir.tests.test_c_prom",
     "bcir.tests.test_csub_ratchet",
     "bcir.tests.test_verify_cost",
     "bcir.tests.test_precision_lowering",

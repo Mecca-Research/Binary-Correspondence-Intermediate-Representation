@@ -100,6 +100,10 @@
       "sources": ["bcir_devman.c"],
       "libraries": ["bcir_asn1", "bcir_dma", "bcir_base"]
     },
+    "bcir_prom": {
+      "class": "freestanding_core",
+      "sources": ["bcir_prom.c"]
+    },
     "bcir_asn1": {
       "class": "freestanding_core",
       "sources": [
@@ -226,6 +230,7 @@
     "test_dma": {"sources": ["test_dma.c"], "libraries": ["bcir_dma"]},
     "test_serve": {"sources": ["test_serve.c"], "libraries": ["bcir_serve", "bcir_dma"]},
     "test_devman": {"sources": ["test_devman.c"], "libraries": ["bcir_devman", "bcir_asn1", "bcir_dma", "bcir_base"]},
+    "test_prom": {"sources": ["test_prom.c"], "libraries": ["bcir_prom"]},
     "test_train": {"sources": ["test_train.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_train_stream": {"sources": ["test_train_stream.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
     "test_telemetry_frame": {"sources": ["test_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
@@ -406,6 +411,7 @@
     "dma": {"script": "tools/c/sections/dma.sh", "harnesses": ["test_dma"]},
     "serve": {"script": "tools/c/sections/serve.sh", "harnesses": ["test_serve"]},
     "devman": {"script": "tools/c/sections/devman.sh", "harnesses": ["test_devman"]},
+    "prom": {"script": "tools/c/sections/prom.sh", "harnesses": ["test_prom"]},
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},
@@ -535,6 +541,6 @@
     "bcir_asn1_streampack.c", "bcir_per.c", "bcir_per_plan.c", "bcir_oer.c", "bcir_xer.c", "bcir_jer.c",
     "bcir_emit.c", "bcir_sp_listing.c", "bcir_ab_listing.c", "bcir_etl.c", "bcir_rng.c",
     "bcir_digest_hw.c", "bcir_tokload.c", "bcir_dma.c", "bcir_serve.c",
-    "bcir_devman.c"
+    "bcir_devman.c", "bcir_prom.c"
   ]
 }

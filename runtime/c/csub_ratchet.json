@@ -173,6 +173,9 @@
     "bcir_plan_sign.c": {
       "verdict": "clean"
     },
+    "bcir_prom.c": {
+      "verdict": "clean"
+    },
     "bcir_provenance.c": {
       "verdict": "clean"
     },

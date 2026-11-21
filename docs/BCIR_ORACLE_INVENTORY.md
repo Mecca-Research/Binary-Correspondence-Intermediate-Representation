@@ -22,7 +22,7 @@ below.
 
 | package | modules | with a C twin | with a C++ twin | with an MLIR twin | with any twin | on a timed hot path |
 |---|---:|---:|---:|---:|---:|---:|
-| `bcir` | 22 | 4 | 0 | 0 | 4 | 0 |
+| `bcir` | 22 | 5 | 0 | 0 | 5 | 0 |
 | `bcir.abi` | 14 | 11 | 0 | 0 | 11 | 2 |
 | `bcir.asn1` | 46 | 8 | 0 | 0 | 8 | 0 |
 | `bcir.codegen` | 4 | 0 | 0 | 0 | 0 | 0 |
@@ -35,7 +35,7 @@ below.
 | `bcir.make` | 6 | 0 | 0 | 0 | 0 | 0 |
 | `bcir.model` | 4 | 2 | 0 | 0 | 2 | 0 |
 | `bcir.verify` | 5 | 1 | 0 | 1 | 1 | 1 |
-| **all** | **316** | **61** | **3** | **21** | **82** | **13** |
+| **all** | **316** | **62** | **3** | **21** | **83** | **13** |
 
 ## Hot paths
 
@@ -102,6 +102,7 @@ modules on each rail.
 | `bcir_pack_cli.c` | `bcir.abi.streampack_tool` | sp_listing | — |
 | `bcir_per.c` | `bcir.asn1.per` | artifact_bundle, asn1_emit, asn1bench, asn1fast, devman, jer, oer, per, per_plan, tokenizer, xer | fuzz_asn1, fuzz_asn1_streampack, fuzz_bpe, fuzz_devman, fuzz_emit, fuzz_jer, fuzz_oer, fuzz_per, fuzz_per_plan, fuzz_spm, fuzz_xer |
 | `bcir_plan_sign.c` | `bcir.abi.plan_sign_abi` | addrmember, aggregate, artifact_bundle, asn1bench, asn1fast, astore, atomiclocal, bcir_cc, blockscope, boolcast, boolnorm, builtins, bundle_listing, cexpr, cfront, cfront_abi, cfront_loop, chartypes, commastep, complit, compoundwide, control_plane, csub_ratchet, designate, designated, devman, digest_hw, effects, emitlink, emptystmt, encoder, enumtype, execution_plan, executor, extern, extvariadic, fallback, fieldderef, floatsigncast, fnptrchain, generic, handoff, intpromote, intsigncast, jer, kplan, link, linkflags, localmd, longdouble, longunary, loopreuse, loopscope, memberarray, multidecl, multiptr, nestmember, nestoffset, plan_sign, project, pscale, ptr2ptr, ptrfield, ptrlocal, ptrsign, ptrstore, ptrvalue, r21policy, recover, ring, ring_tsan, runtime, scale, signedbf, signedcmp, signedload, signedty, sp_listing, stmtexpr, structmulti, telemetry_frame, threadlocal, tokenizer, tokload, typeof, uartdrv, unarypromote, variadic, writeguard | fuzz_artifact_bundle, fuzz_asn1_streampack, fuzz_bpe, fuzz_control_plane, fuzz_cpp, fuzz_devman, fuzz_encode, fuzz_exec, fuzz_handoff, fuzz_jer, fuzz_kplan, fuzz_plan_sign, fuzz_ring, fuzz_sp_listing, fuzz_spm, fuzz_streampack, fuzz_telemetry_frame, fuzz_tokload |
+| `bcir_prom.c` | `bcir.telemetry_export` | prom | — |
 | `bcir_provenance.c` | `bcir.kbcir.provenance` | addrmember, aggregate, astore, atomiclocal, bcir_cc, blockscope, boolcast, boolnorm, builtins, cexpr, cfront_loop, chartypes, commastep, complit, compoundwide, csub_ratchet, designate, designated, effects, emitlink, emptystmt, encoder, enumtype, executor, extern, extvariadic, fallback, fieldderef, floatsigncast, fnptrchain, generic, handoff, intpromote, intsigncast, link, linkflags, localmd, longdouble, longunary, loopreuse, loopscope, memberarray, multidecl, multiptr, nestmember, nestoffset, project, pscale, ptr2ptr, ptrfield, ptrlocal, ptrsign, ptrstore, ptrvalue, r21policy, recover, scale, signedbf, signedcmp, signedload, signedty, stmtexpr, structmulti, telemetry_frame, threadlocal, typeof, uartdrv, unarypromote, variadic, writeguard | fuzz_binrec, fuzz_encode, fuzz_exec, fuzz_handoff, fuzz_telemetry_frame |
 | `bcir_q4_kernel.c` | `bcir.kbcir.lowbit` | — | fuzz_decoder_gem, fuzz_q8_model |
 | `bcir_ring.c` | `bcir.gem.ring` | control_plane, handoff, kplan, ring, ring_tsan | fuzz_control_plane, fuzz_handoff, fuzz_kplan, fuzz_ring |
@@ -170,7 +171,7 @@ The oracle modules no unit on any rail mirrors: the semantics, the research and 
 generators the migration proposal keeps in Python (its §8.1), and the candidates for the
 next twin ([`research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md`](research/BCIR_NATIVE_PORT_AUDIT_2026-11-09.md)).
 
-- `bcir` (18): `bcir`, `bcir._artifact_json`, `bcir._collector`, `bcir.api`, `bcir.bench`, `bcir.channel_plugin`, `bcir.clang_compare`, `bcir.examples`, `bcir.perf_budget`, `bcir.performance_audit`, `bcir.registry_tool`, `bcir.run`, `bcir.signal_registry`, `bcir.signal_table`, `bcir.silicon`, `bcir.telemetry_export`, `bcir.telemetry_replay`, `bcir.toolchain`
+- `bcir` (17): `bcir`, `bcir._artifact_json`, `bcir._collector`, `bcir.api`, `bcir.bench`, `bcir.channel_plugin`, `bcir.clang_compare`, `bcir.examples`, `bcir.perf_budget`, `bcir.performance_audit`, `bcir.registry_tool`, `bcir.run`, `bcir.signal_registry`, `bcir.signal_table`, `bcir.silicon`, `bcir.telemetry_replay`, `bcir.toolchain`
 - `bcir.abi` (3): `bcir.abi`, `bcir.abi.embed`, `bcir.abi.q8_tables`
 - `bcir.asn1` (38): `bcir.asn1.artifact_bundle`, `bcir.asn1.calibration`, `bcir.asn1.certified`, `bcir.asn1.cgen`, `bcir.asn1.codec`, `bcir.asn1.constraints`, `bcir.asn1.control_plane`, `bcir.asn1.der`, `bcir.asn1.dialect`, `bcir.asn1.ecn`, `bcir.asn1.ecn_encode`, `bcir.asn1.ecn_link`, `bcir.asn1.ecn_mapping`, `bcir.asn1.ecn_param`, `bcir.asn1.ecn_props`, `bcir.asn1.ecn_syntax`, `bcir.asn1.ecn_transform`, `bcir.asn1.ecn_user`, `bcir.asn1.encode_plan`, `bcir.asn1.execution_plan`, `bcir.asn1.graph`, `bcir.asn1.its_native`, `bcir.asn1.its_security`, `bcir.asn1.its_study`, `bcir.asn1.jer`, `bcir.asn1.jer_bounds`, `bcir.asn1.length`, `bcir.asn1.manifest`, `bcir.asn1.native_bench`, `bcir.asn1.program`, `bcir.asn1.schema`, `bcir.asn1.selection`, `bcir.asn1.simd_hosts`, `bcir.asn1.staged`, `bcir.asn1.surface`, `bcir.asn1.tags`, `bcir.asn1.tlv`, `bcir.asn1.values`
 - `bcir.codegen` (4): `bcir.codegen`, `bcir.codegen.artifact_bundle`, `bcir.codegen.codegen`, `bcir.codegen.targets`

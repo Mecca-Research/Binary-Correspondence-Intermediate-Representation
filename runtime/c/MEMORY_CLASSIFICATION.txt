@@ -12,6 +12,7 @@ freestanding_core bcir_tokload.c
 freestanding_core bcir_dma.c
 freestanding_core bcir_serve.c
 freestanding_core bcir_devman.c
+freestanding_core bcir_prom.c
 freestanding_core bcir_decode.c
 freestanding_core bcir_encode.c
 freestanding_core bcir_exec.c

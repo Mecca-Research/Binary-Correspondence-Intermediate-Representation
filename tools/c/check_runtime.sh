@@ -161,6 +161,8 @@ echo "[c-runtime] serving control plane (N10): test_serve's contracts, and its p
 show_section serve || exit 1
 echo "[c-runtime] device manifests bound at instantiation (N11): test_devman's contracts, and its loads, probes and bound admissions == the oracle's"
 show_section devman || exit 1
+echo "[c-runtime] telemetry export, the Prometheus exposition (N13): test_prom's contracts, and its text == the oracle's octet for octet"
+show_section prom || exit 1
 
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1
