@@ -8,9 +8,15 @@ SwiGLU) -- that end with a rerun on merged main after PR #818 (10-17 *Global Wed
 10-18 *Global Integrated Recipe*, 10-18 *Query-Aware Head*, 10-18 *PR818 Geometric Head*). The
 reports and their figures live in the requester's "BCIR Research" folder; the five study bundles
 (1,370 files, 1.77 GB of frozen protocols, run records and selected checkpoints) were uploaded to
-main on 2026-10-21 and later removed from main (preserved only at git commit `490f5be0` and in the
-external Drive archives). This
-note reads the reports against the tree: what the tree confirms, what it corrects, which confounds
+main on 2026-10-21 and later moved out of main into
+[`Mecca-Research/Modular-AI`](https://github.com/Mecca-Research/Modular-AI) under
+`BCIR Model Training/` (alongside the follow-on `BCIR-50M-Study`, and preserved in this
+repository's git history at commit `490f5be0`). For the full synthesis of all six `Modular-AI`
+training archives and the follow-on architecture, kernel, and weight-space build proposals, see
+[BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md](BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md)
+and
+[BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md](BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md).
+This note reads the reports against the tree: what the tree confirms, what it corrects, which confounds
 the comparisons carry, and what the repository adopted -- the slice the last report names,
 **coupling per-layer caching with packing-aware buffer planning** (GEO-3, the NDT measure note's
 [§42](BCIR_NDT_MEASURE_2026-10-12.md), records in
