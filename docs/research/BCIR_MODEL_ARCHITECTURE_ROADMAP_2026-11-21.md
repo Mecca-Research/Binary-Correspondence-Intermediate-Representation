@@ -17,6 +17,8 @@
 >   [BCIR_TRAINING_ACCELERATION_ROADMAP.md](BCIR_TRAINING_ACCELERATION_ROADMAP.md)
 > - Small-language-model laboratory and byte-native pipeline:
 >   [`training/SLM_ROADMAP.md`](../../training/SLM_ROADMAP.md)
+> - Bare-metal C LittleBit / LittleBit-2 sub-1-bit compression study (`COMP-1`):
+>   [BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md)
 
 The GEM+ measurement discipline
 ([BCIR_GEMPLUS_ROADMAP.md §0](BCIR_GEMPLUS_ROADMAP.md#0-the-measurement-discipline-and-why-it-comes-first))
@@ -26,11 +28,14 @@ and resume parity, and every capability claim is gated by paired held-out tests 
 
 ---
 
-## 0. Five Structural Laws Established by the Six Training Archives
+## 0. Six Structural Laws Established by the Training Archives & Sub-1-Bit Study
 
-The six archives in `Mecca-Research/Modular-AI` (`BCIR Model Training/`) provide an unusually clean
-controlled evidence base because every run shares BCIR's deterministic C11 tensor kernels, fixed
-random batch hashes, and explicit memory accounting. Five concrete architectural laws emerge:
+The six archives in `Mecca-Research/Modular-AI` (`BCIR Model Training/`) and the companion
+bare-metal C LittleBit/LittleBit-2 study
+([BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md))
+provide an unusually clean controlled evidence base because every run shares BCIR's deterministic
+C11 tensor kernels, fixed random batch hashes, and explicit memory accounting. Six concrete
+architectural laws emerge:
 
 1. **Single-vector prefix compression hits a hard write-side associative-binding wall.**
    In `wedge-integrated`, `wedge-query-qware`, and `wedge-pr818`, the rank-22 unweighted prefix sum
@@ -76,6 +81,19 @@ random batch hashes, and explicit memory accounting. Five concrete architectural
    only ~12 words, and Experiment B showed individual `wide50m` MLP columns can be amplified
    `256×` with `-0.000045` CE impact — signaling high MLP activation sparsity that conditional
    compute (MoE) or byte-latent patching can exploit.
+6. **Sub-1-bit latent matrix factorization is a wide-MLP deployment multiplier, not a narrow-model
+   or training replacement.**
+   Native-C evaluation of LittleBit / LittleBit-2 (`BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md`)
+   establishes four quantitative boundaries: (a) FP16 multi-scale vectors impose a hard
+   $32(1/d_{\text{in}} + 1/d_{\text{out}})$ floor (`0.425 BPW` at $d=128$, `0.313 BPW` on 4:1 GQA
+   `K/V` at $d=512$), restricting extreme sub-1-bit gains to wide layers ($d \ge 512$); (b) at
+   $d=512$, Joint-ITQ 2-path Residual reaches `7.32` PPL at `0.545 BPW` (`+0.032` nats vs `7.09`
+   FP32) and beats matched-byte low-rank FP16 (`11.78` PPL) by `>4` PPL, while zero-shot PTQ breaks
+   attention circuits (`0.0–9.4%` `kv_single`) yet spares SwiGLU MLPs (`100.0%` zero-shot);
+   (c) exact 1.0-bit/weight 2-nibbles-per-byte AVX-512 LUT4 (`_mm512_permutexvar_ps`) accelerates
+   `N=1` decode by `18.1×` (`wide50m 0.30b`) to `224.5×` (`70B 0.10b`) over FP16 (`14.9–130×` over
+   BCIR Q8), while prefill ($N \ge 64$) crosses back to blocked FMA; and (d) QAT+KD imposes a
+   `2.0–3.1×` training-step slowdown and `1.63×` RAM tax, keeping it strictly post-training.
 
 ---
 
@@ -268,6 +286,14 @@ finding directly to exact attention.
 (over $d_R$ only), `bcir_tensor_attention_contract_variant_scan_ws_pool` (`ATT-CONTIG` / `P-BANDS` /
 `BF16-ATTN`), and upcoming tiled online-softmax training attention (`TRAIN-OPT-5`).
 
+**Why `BCIR-MLA` strictly supersedes LittleBit latent KV caching:** The LittleBit study
+([BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md) §2)
+proved that caching binary-factorized pre-up-projection KV latents *expands* KV cache under GQA +
+2-path Residual + `kv_factor=4` (`0.89×` on `wide50m`, `0.61×` on `Llama3-8B`, `0.55×` on
+`Llama2-70B` at `0.55 BPW`) and cannot commute with post-projection RoPE. `BCIR-MLA` solves exact
+KV compression cleanly via decoupled RoPE and weight absorption with zero sub-1-bit attention
+degradation.
+
 ---
 
 ### Arch-5: Byte-Latent Patch Decoder (`BCIR-BLT`) — *P1 Byte-Native Scale Multiplier*
@@ -304,11 +330,16 @@ achieve strictly lower test bits-per-byte (BPB) at equal wall time with zero tok
 
 ### Arch-6: Deterministic Fixed-Capacity Sparse SwiGLU MoE (`BCIR-MoE`) — *P2 Compute-Sparse 50M+ Scaling*
 
-**Motivation:** Two direct empirical signals from `BCIR-50M-Study`:
+**Motivation:** Three direct empirical signals:
 - Dense `wide50m` took **4.75× longer** per token than `wide10m` (`440` vs `2,091 tok/s`), because
-  every token multiplied all 50.54M weights.
+  every token multiplied all 50.54M weights (`BCIR-50M-Study`).
 - In Experiment B, multiplying an entire middle-layer `wide50m` `down_proj` column by `256×` moved
   test CE by `-0.000045` nats (0.26% top-1 flips), confirming massive token-level MLP sparsity.
+- In [BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md) §4.2,
+  SwiGLU MLP layers absorbed sub-1-bit factorization with **100.0% zero-shot `kv_single` circuit
+  retention** (while attention collapsed to `9.4%`). Because routed experts are `>80%` of `BCIR-MoE`
+  total bytes, pairing `Arch-6` with `COMP-1` post-training expert compression directly removes MoE's
+  cold-expert DRAM footprint bottleneck at decode time.
 
 **BCIR-Safe Deterministic MoE Design (Zero Heap, Bit-Exact Across Thread Counts):**
 - Replace each dense SwiGLU MLP ($d_{\text{ff}} = 2048$ in `wide50m`) with **1 shared always-on
@@ -331,6 +362,45 @@ achieve strictly lower test bits-per-byte (BPB) at equal wall time with zero tok
 and dense `wide50m` at **equal wall-clock time** and **equal training tokens** (≥10M tokens); must
 beat dense `wide50m` by **$\ge 2.2\times$ tokens/sec** while achieving lower held-out CE than
 `wide10m` at matched active FLOPs (tracking expert load-balance utilization $\ge 85\%$).
+
+---
+
+### Deployment Compression Track (`COMP-1`): Hybrid Q8-Attention + Sub-1-Bit Joint-ITQ Packed-LUT4 MLP
+
+**Motivation ([BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md)):**
+Standard `BCIRQ8 v1` (`runtime/c/bcir_q8_model.h`) is lossless at `8.50 BPW` (group-32 int16 exponents) and remains the
+right deployment format for narrow models ($d < 512$) and exact-circuit attention layers. For wide
+models ($d \ge 512$ — `wide10m`, `wide50m`, `BCIR-MoE`, and ingested 1B–70B checkpoints), SwiGLU
+MLP weights represent `67–85%` of total bytes and dominate autoregressive decode DRAM traffic while
+tolerating extreme sub-1-bit latent factorization far better than attention.
+
+**Specification (Post-Training Export Extension to `BCIRQ8` & `bcir_ai_kernels.h`):**
+1. **Strict width & layer admission gates:** Apply sub-1-bit compression **only** to wide linear
+   projections with $d_{\text{in}}, d_{\text{out}} \ge 512$ (avoiding the $32(1/d_{\text{in}} + 1/d_{\text{out}})$
+   scale floor). Because attention suffers **`12.5×` more CE damage per parameter** than SwiGLU MLP
+   at `0.30 BPW` (`+0.1235` nats from `21.7%` params vs `+0.0355` nats from `78.3%`), default policy
+   keeps embeddings, RMSNorms, and attention/MLA projections in lossless `BCIRQ8` (`8.50 BPW`) while
+   compressing SwiGLU MLPs (`W_gate, W_up, W_down` and MoE experts) to `0.30–0.55 BPW` via
+   **Dual-SVID + 50-iteration Joint-ITQ + `Clipped-STE` + `Output KL (λ = 0)`** QAT (validated on
+   `wide512`: `7.26` PPL hybrid at `2.08` effective body BPW vs `7.09` FP32, and `7.33` PPL all-layer
+   at `0.311 BPW` with `kv_factor = 2.0`, beating published Eq. 11 `8.75` PPL by `-1.42` PPL at
+   `1.54×` faster QAT). Use 1-path if ever forced onto narrow $d \le 256$ layers; use 2-path
+   Residual for $d \ge 512$.
+2. **Exact 1.0-bit/weight 2-nibbles-per-byte `BCIRQ8 v2` tensor encoding:** Pack 4-weight binary
+   LUT nibbles for rows `[r0..r0+15]` in low nibbles and `[r0+16..r0+31]` in high nibbles of the
+   same 16 bytes (verified to halve DRAM/L3 traffic and deliver `3.14×` speedup over 1-byte/nibble
+   on 70B layers), protected by per-tensor CRC32 and source SHA-256 provenance matching `BCIRQ8 v1`.
+3. **Deterministic `LUT4-LANES` kernel contract & prefill/decode dispatch:** Add `LUT4-LANES`
+   (`portable` / `AVX2` / `AVX-512` bit-identical via fixed ascending 4-weight group order, plus
+   `DECODE-THREADS` column slicing) beside `Q8-LANES` in `runtime/c/bcir_ai_kernels.h`. Dispatch
+   `LUT4-LANES` for autoregressive decode ($N \le 16$, measured `14.9–130×` faster than Q8), and
+   switch to blocked FP32/BF16 GEMM for batched prefill ($N \ge 64$, where FMA overtakes LUT4).
+
+**Falsifiable GO/STOP Gate:** On `wide10m` / `wide50m` (`d >= 512`), `COMP-1` must achieve
+**`>= 8×` end-to-end MLP weight reduction** vs FP32 (`>= 3×` total artifact reduction vs `BCIRQ8`),
+**`>= 5×` single-token decode speedup** over `BCIRQ8` on AVX-512 hosts, `0` bit drift between
+portable and AVX-512 `LUT4-LANES` instances, and `<= 0.04` nat WikiText-2 CE drift with `>= 99%`
+exact associative recall retention.
 
 ---
 
@@ -368,6 +438,10 @@ caught in `gp-global` and `wedge-next`):
    ([`TRAIN-OPT-1..8`](BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md)) with
    $\ge 10\text{M}$ training tokens and archive all raw checkpoints/logs in
    `Mecca-Research/Modular-AI` under `BCIR Model Training/`.
+5. **Phase M5 (`COMP-1` Deployment Export):** Add `BCIRQ8 v2` hybrid Q8-Attention + Sub-1-Bit
+   Joint-ITQ Packed-LUT4 MLP export and deterministic `LUT4-LANES` kernels (`bcir_ai_kernels.h`,
+   `bcir_llama.c`) targeting `wide10m`, `wide50m`, `BCIR-MoE`, and ingested open-weight models
+   ($d \ge 512$).
 
 ---
 
@@ -380,4 +454,6 @@ caught in `gp-global` and `wedge-next`):
 - Ren et al., *Samba: Simple Hybrid State Space Models for Efficient Unlimited Context Language Modeling* (2024): https://arxiv.org/abs/2406.07522
 - DeepSeek-AI, *DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model* (MLA & MoE, 2024): https://arxiv.org/abs/2405.04434
 - Pagnoni et al., *Byte Latent Transformer: Patches Scale Better Than Tokens* (2024): https://arxiv.org/abs/2412.09871
+- Lee et al., *LittleBit: Ultra Low-Bit Quantization via Latent Factorization* (NeurIPS 2025, v5): https://arxiv.org/abs/2506.13771
+- Lee et al., *LittleBit-2: Joint Iterative Quantization for Sub-1-Bit Latent Factorization* (ICML 2026, v2): https://arxiv.org/abs/2603.00042
 - Archived BCIR model-training evidence (`gp-global`, `wedge-next`, `wedge-integrated`, `wedge-query-qware`, `wedge-pr818`, `BCIR-50M-Study`): https://github.com/Mecca-Research/Modular-AI

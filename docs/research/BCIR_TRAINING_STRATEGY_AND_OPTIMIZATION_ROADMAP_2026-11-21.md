@@ -8,8 +8,11 @@
 > against BCIR's production native C11 trainer ([`bcir_decoder_train.h`](../../runtime/c/bcir_decoder_train.h),
 > [`bcir_tensor.h`](../../runtime/c/bcir_tensor.h), ABI 5).
 >
-> Companion architecture roadmap:
-> [BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md](BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md).
+> Companion documents:
+> - Architecture build roadmap:
+>   [BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md](BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md)
+> - Bare-metal C LittleBit / LittleBit-2 sub-1-bit compression study (`COMP-1`):
+>   [BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md)
 
 Every slice below cites the exact measurement or raw-log anomaly that motivates it, defines its
 numerical/provenance contract, and specifies a falsifiable acceptance gate.
@@ -335,6 +338,50 @@ Combined with `wedge-integrated`'s 68-byte C exact KV registry (`1,568/1,568`), 
 
 ---
 
+## Part D. Post-Training Sub-1-Bit Compression & Deployment Guidance (`COMP-1`)
+
+Controlled bare-metal C evaluation of LittleBit (`arXiv:2506.13771v5`) and LittleBit-2
+(`arXiv:2603.00042v2`) on BCIR models
+([BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md))
+establishes four concrete training and inference engineering rules:
+
+1. **Keep pretraining dense FP32/BF16 — never use sub-1-bit QAT as a training accelerator.**
+   From-scratch sub-1-bit CE training on `wide512 @ 0.30 BPW` collapses (`12.82` vs `7.09` FP32
+   PPL), and KD QAT imposes a **`1.97–3.08×`** training-step slowdown (`228–357 ms` vs `115.9 ms`
+   FP32 at `0.55–1.00 BPW`) plus **`1.63×`** RAM (`216.7` vs `133.1 MiB` with teacher).
+   Pretraining acceleration remains the sole job of `TRAIN-OPT-1..7`.
+2. **Use BCIR's verified `Joint-ITQ + Clipped-STE + Output-KL (λ = 0)` QAT recipe instead of the
+   published `SmoothSign(k=100) + λ=10·InterMSE` default.**
+   Bare-metal C gradient telemetry exposed two destructive interactions in the published recipe:
+   - *Joint-ITQ × SmoothSign gradient freezing:* Joint-ITQ rotates latent weights toward `±1`
+     corners, zeroing `51.9–81.5%` of `SmoothSign(k=100)` gradients. Replacing `SmoothSign(k=100)`
+     with **`Clipped-STE`** restores `100%` active gradient flow, improves PPL (`8.41` vs `8.43`),
+     and speeds up native-C QAT backward by `1.22×`.
+   - *Intermediate-MSE sign thrashing:* LittleBit Eq. 11's `10·InterMSE` increases sign-flip rate
+     by `+65%` (`0.00110 → 0.00182`) and worsens 120-step PPL by `+0.63` (`8.12 → 8.75`). Pure
+     **`Output KL` (`λ = 0`)** beats `2.5×` longer Eq. 11 QAT (`8.12` in 120 steps vs `8.16` in 300
+     steps); when teacher RAM is unavailable, teacher-free `Dual-SVID + CE` (`8.44`, `83.6 MiB`)
+     still outperforms Eq. 11 (`8.75`, `216.7 MiB`).
+   - *Stacked validation (`wide512` 120 steps):* Combining `Joint-ITQ + Clipped-STE + Output KL
+     (λ = 0) + GQA kv_factor = 2.0` drops `0.311 BPW` PPL from **`8.75 → 7.33`** (`-1.42` PPL,
+     `3.0×` less sign thrashing, `116.3 ms/step`), and `COMP-1` Hybrid (`BCIRQ8` Attention + `0.30b`
+     MLP) reaches **`7.26` PPL** (`+0.024` nats over FP32) at `114.4 ms/step`.
+3. **Protect Attention (`12.5×` higher per-parameter sensitivity) and enforce $d \ge 512$.**
+   At `0.30 BPW` on `wide512`, compressing `21.7%` attention weights causes `+0.1235` nats CE loss
+   vs only `+0.0355` nats from compressing `78.3%` SwiGLU MLP weights (`12.5×` higher sensitivity
+   per parameter; zero-shot `kv_single` retention is `100%` for `MLP_only` vs `9.4%` for
+   `Attn_only`). Keep narrow models ($d < 512$) and attention layers on lossless `BCIRQ8` (`8.50
+   BPW`), applying `COMP-1` strictly to wide ($d \ge 512$) MLPs and `BCIR-MoE` experts.
+4. **Split inference dispatch by token batch $N$: `LUT4-LANES` for decode ($N \le 16$), blocked
+   GEMM for prefill ($N \ge 64$).**
+   Naive bit-packing and AVX-512 Sign-XOR lose on CPU. Exact 1.0-bit/weight 2-nibbles-per-byte
+   AVX-512 LUT4 (`_mm512_permutexvar_ps`) delivers **`18.1×`** (`wide50m 0.30b`, `5.8 us`),
+   **`71.4×`** (`7B 0.30b`, `152.6 us`), and **`224.5×`** (`70B 0.10b`, `296.7 us`) over FP16
+   (`14.9–130×` over BCIR Q8) at `N = 1` decode, while blocked `LowRank-FP32` / FMA overtakes LUT4
+   for batched prefill ($N \ge 64$).
+
+---
+
 ## Priority Execution Matrix
 
 | Priority | Slice | Primary Metric Targeted | Dependencies |
@@ -345,3 +392,4 @@ Combined with `wedge-integrated`'s 68-byte C exact KV registry (`1,568/1,568`), 
 | **4** | `MIXER-EXT` + `Arch-1` (`BCIR-DeltaNet`) & `Arch-2` (`BCIR-Hybrid-SWA`) | Solve 4-pair KV binding (`>80%`) + `T2048` recall + byte LM simultaneously | ABI 6 + `TRAIN-OPT-1..2` |
 | **5** | `TRAIN-OPT-6` (`AVX512_BF16` `VDPBF16PS` contract) & `TRAIN-OPT-7` (Q8/Adafactor state) | Turn AMD EPYC BF16 `0.877× → >1.35×`; halve persistent state (`16 → 8 B/p`) | `bcir_tensor.c` / `bcir_decoder_train.c` |
 | **6** | `TRAIN-OPT-3` (Tier M/L 10M–50M token scaling) + `Arch-4/5/6` + `WSP-1..4` | True scaling laws (`>= 1` tok/param), `4×` byte-patch throughput, auditable patches | Priorities 1–5 + `Modular-AI` archive contract |
+| **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP & `LUT4-LANES`) | `>= 15×` MLP decode speedup vs `BCIRQ8` & `4×` smaller edge artifacts ($d \ge 512$) | `bcir_q8_model.h`, `bcir_ai_kernels.h`, `wide10m/50m` |
