@@ -6,6 +6,6 @@
 # RUN: grep -F '[assemble-valid-semantically-risky] training/llvm/exercises/adversarial/bcir-mapping-drift-risk.ll' %t
 # RUN: grep -F '[intentionally-invalid] training/llvm/exercises/adversarial/abi-attribute-mismatch.invalid.ll.txt' %t
 # RUN: grep -F '[target-specific] training/llvm/exercises/adversarial/target-specific-intrinsic-misuse-risk.ll' %t
-# RUN: test "$(wc -l < %t)" -eq 12
+# RUN: python3 -c 'assert sum(1 for _ in open("%t", encoding="utf-8")) == 12'
 # RUN: bash %training_root/tools/verify-adversarial-fixtures.sh
 # REQUIRES: llvm-as, opt

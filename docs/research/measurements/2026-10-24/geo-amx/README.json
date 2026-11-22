@@ -32,7 +32,7 @@
   ]
  },
  "commands": [
-  "git archive origin/main docs/research/wedge-pr818 | tar -x -C BUNDLE --strip-components=2; GEO-2b's level-2 work (../../2026-10-22/geo2/README.json's reproduce)",
+  "git archive 490f5be0 docs/research/wedge-pr818 | tar -x -C BUNDLE --strip-components=2; GEO-2b's level-2 work (../../2026-10-22/geo2/README.json's reproduce)",
   "python3 -I build_amx.py LEVEL2_WORK WORK TREE/runtime/c MAIN_SRC  # WORK a copy of LEVEL2_WORK without build/",
   "python3 amx_pairs.py WORK OUT.json --rounds 24 --steps 3",
   "python geo_bf16_compare.py WORK OUT.json --rounds 16 --steps 3 --cases attention:256,attention:512,attention:1024,attention:2048,global:256,global:512,query_full:256,query_full:512  # torch 2.13.0"

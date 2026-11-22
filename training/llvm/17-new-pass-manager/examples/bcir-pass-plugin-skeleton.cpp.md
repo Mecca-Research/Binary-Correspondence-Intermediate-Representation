@@ -6,7 +6,11 @@ manager integration points rather than on build-system details.
 ```cpp
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassBuilder.h"
+#if defined(__has_include) && __has_include("llvm/Plugins/PassPlugin.h")
+#include "llvm/Plugins/PassPlugin.h"
+#else
 #include "llvm/Passes/PassPlugin.h"
+#endif
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
 
