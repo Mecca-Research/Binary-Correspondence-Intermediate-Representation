@@ -61,16 +61,24 @@ use) this technique:
    with zero QAT steps**. After QAT+KD at `0.75 BPW`, `LittleBit-1P` recovers **`100.0%` exact
    accuracy** on `kv_single`, `ordered`, and `ordered value_swap` (`both_correct = 100.0%`), while
    matched-byte `Tiny-Rank FP16` stalls at `72.7%` (`kv_single`), `55.5%` (`ordered`), and `28.9%`
-   (`value_swap`). `BCIRQ8` (`8.50 BPW`, group-32 int16 exponents) retains `100.0%` zero-shot across all tasks.
+   (`value_swap`). `BCIRQ8` (`8.50 BPW`, lossy group-32 quantization via `quantize_per_group`)
+   achieved near-lossless retention on these checkpoints (`100.0%` zero-shot on
+   `kv_single`/`ordered`/`value_swap`, `+0.00004` nat LM CE delta at `0.0078` relative weight
+   Frobenius error, and `in_cand` `99.2% → 98.4%` on `kv_curriculum_4pair`).
 5. **Naive bit-packing loses on CPU; exact 1.0-bit/weight 2-nibbles-per-byte AVX-512 LUT4
-   delivers `18–225×` decode speedups (`N=1`), while prefill (`N >= 64`) crosses back to FMA.**
+   delivers `18–225×` decode speedups (`N=1`), and the prefill crossover is shape- and
+   kernel-dependent.**
    On Intel Xeon Platinum 8481C (Sapphire Rapids, 1 thread), portable bit-packing and AVX-512
    Sign-XOR lose to dense FP32/Q8 at small widths and during prefill (`N=256`). Packing two 4-bit
    LUT nibbles per byte (exact `1.0 bit/weight`, halving DRAM/L3 traffic) with `_mm512_permutexvar_ps`
    accelerates `N=1` decode by **`18.1×`** vs FP16 (`14.9×` vs Q8) on `BCIR-wide50m` (`5.8 us`),
    **`71.4×`** (`31.5×` vs Q8) on `Llama2-7B 0.30b` (`152.6 us`), and **`224.5×`** (`130.0×` vs
-   Q8) on `Llama2-70B 0.10b` (`296.7 us`, L3-resident). At prefill `N >= 64` on `wide50m 0.30b`,
-   blocked `LowRank-FP32` (`433.6 us` / `1,606.3 us`) overtakes `LUT4` (`516.0 us` / `2,197.7 us`).
+   Q8) on `Llama2-70B 0.10b` (`296.7 us`, L3-resident). Across batched prefill (`N = 4..256`),
+   4-token weight-reusing `packed1b_LUT4_mb4` beats dense `BCIR FP32 kblock` everywhere
+   (`2.6×–8.0×` faster at `N = 64–256`); against unpacked rank-matched `LowRank-FP32`, the
+   crossover shifts strongly with shape and rank (`N ≈ 64–128` on `wide512`/`wide50m 0.30b`,
+   `N > 256` on `wide50m 0.55b`, and `N > 128` on `Llama2-7B 0.30b/0.55b`, where `mb4` stays
+   `1.96×–2.50×` faster).
 6. **Sub-1-bit QAT+KD carries a heavy training compute and RAM tax (`2.0–3.1×` slower, `1.63×` RAM).**
    On `BCIR-wide512` (2 threads native C), `LittleBit_Res_0.55_KD` runs at **`228.4 ms/step`**
    (`1.97×` slower than Dense FP32 `115.9 ms`, `4.96×` slower than `LowRank FP16 KD` `46.0 ms`)
@@ -80,19 +88,43 @@ use) this technique:
 
 ---
 
-## 1. Native C Engine & 3-Gate Verification
+## 1. Native C Engine, Reproducible Bundle & 3-Gate Verification
+
+The complete native-C implementation (`src/bcir_littlebit.h`, `bcir_littlebit_core.c`,
+`bcir_littlebit_bench.c`, `bench_lut4_packed.c`), portable `Makefile`, Python drivers
+(`src/lb_harness.py`, `pillar1..5*.py`, `pillar5_packed_batched_bench.py`), trained FP32 teacher
+checkpoints (`checkpoints/*.npz`), raw JSON/text outputs (`results/*.json`,
+`results/verify_gates_output.txt`), and SHA-256 provenance manifest (`results/MANIFEST.json`,
+pinning every source file, trained teacher, saved `../wedge-pr818/checkpoints/*.npz` checkpoint,
+and `../gp-global/data/wikitext2-*.parquet` split) are archived in the companion repository at
+pinned commit **`31bebc39a446b7b61f2a826c8a02a40cff88e0e5`**:
+
+- Pinned bundle:
+  https://github.com/Mecca-Research/Modular-AI/tree/31bebc39a446b7b61f2a826c8a02a40cff88e0e5/BCIR%20Model%20Training/littlebit-sub1bit-study
+- BCIR base commit linked during build and verification: `3fdb708d73371a6e0e1abf7dde70b7239fc2fc06`
 
 All measurements were executed on Intel Xeon Platinum 8481C (`avx512f`, `avx512_bf16`,
-`avx512_fp16`, `avx512_vnni`, `avx512_vpopcntdq`), 2 cores, 7.8 GiB RAM, compiled with Clang 23
-(`-O3 -march=native`) directly against BCIR's [`runtime/c/bcir_tensor.c`](../../runtime/c/bcir_tensor.c)
-(k-blocked GEMM, fused RMSNorm, RoPE, causal GQA forward/backward, SwiGLU) and validated across
-three gates before running experiments:
+`avx512_fp16`, `avx512_vnni`, `avx512_vpopcntdq`), 2 cores, 7.8 GiB RAM, compiled with Clang 23.1.6
+(`-O3 -std=c11 -D_POSIX_C_SOURCE=200809L -march=native -ffp-contract=off`) directly against BCIR's
+[`runtime/c/bcir_tensor.c`](../../runtime/c/bcir_tensor.c) and
+[`runtime/c/bcir_decoder_train.c`](../../runtime/c/bcir_decoder_train.c) (k-blocked GEMM, fused
+RMSNorm, RoPE, causal GQA forward/backward, SwiGLU):
 
-| Verification Gate | Check Scope | Measured Error | Verdict |
+```bash
+cd "BCIR Model Training/littlebit-sub1bit-study"
+export BCIR_REPO=/path/to/Binary-Correspondence-Intermediate-Representation
+make verify          # builds libbcir_littlebit.so + bcir_decoder_train.so and runs Gates 1-3
+make bench-packed    # runs batched Packed-1b LUT4 (token-major & mb4) prefill/decode sweep
+./build/bench_lut4_packed
+```
+
+All three verification gates passed on a clean build (`results/verify_gates_output.txt`):
+
+| Verification Gate | Check Scope | Measured Error (`-ffp-contract=off`) | Verdict |
 |---|---|---|---|
-| **Gate 1: Dense BCIR Parity** | Dense mode vs unmodified `bcir_decoder_train.so` (forward loss + all parameter gradients) | `loss_diff = 5.30e-10`, `max_grad_diff = 2.98e-8` | **PASS** |
-| **Gate 2: Finite-Diff Adjoints** | Central finite differences (`eps = 2e-3`) across `LOWRANK_FP16`, `ONEBIT_FULL`, `LITTLEBIT_1P`, `LITTLEBIT_RES` + `KL + 10*InterMSE` KD | Max rel-err `5.86e-4` (`RES+KD`) to `3.90e-3` (`ONEBIT` at `1.7e-6` mag) | **PASS** |
-| **Gate 3: Bit-Packed Kernels** | `PORTABLE_BITPACK`, `AVX512_SIGNXOR`, `AVX512_LUT4`, `DENSE_FP16_STREAM`, `DENSE_Q8_BCIR` vs exact FP32 reference | `0.00e+00` (portable/Q8) to `1.49e-7` (FP16/AVX-512) | **PASS** |
+| **Gate 1: Dense BCIR Parity** | `LB_MODE_DENSE_FP32` vs unmodified `bcir_decoder_train.so` (forward loss + all parameter gradients) | `loss_diff = 0.00e+00`, `max_grad_diff = 0.00e+00` | **PASS** |
+| **Gate 2: Finite-Diff Adjoints** | Central finite differences (`eps = 2e-3`, stratified spans + top gradients) across `LOWRANK_FP16`, `ONEBIT_FULL`, `LITTLEBIT_1P`, `LITTLEBIT_RES` + `KL + 10*InterMSE` KD | `max_abs_err <= 5.45e-5`; `max_rel_err` `5.86e-4` (`RES+KD`) to `4.54e-3` (`ONEBIT`) | **PASS** |
+| **Gate 3: Bit-Packed Kernels** | `PORTABLE_BITPACK`, `AVX512_SIGNXOR`, `AVX512_LUT4`, `AVX512_LUT4_PACKED1B`, `AVX512_LUT4_PACKED1B_MB4`, `DENSE_FP16_STREAM`, `DENSE_Q8_BCIR` vs exact FP32 reference (plus non-multiple `130×258, r=13, N=1,7` and production shapes up to `N=64`) | `0.00e+00` (portable/Q8) to `8.94e-8` (AVX-512 LUT4 / Packed-1b / mb4) and `1.49e-7` (FP16); `<= 4.47e-7` at `768×2048, N=64` | **PASS** |
 
 Formulations match LittleBit v5 (Appendix D BPW, Eqs. 6–8 Dual-SVID, SmoothSign $k=100$,
 Eq. 11 $\mathcal{L}_{\text{KL}} + 10\,\mathcal{L}_{\text{inter-MSE}}$, Proposition 1 factorized
@@ -323,8 +355,8 @@ under Joint-ITQ), A4 (`Output KL λ = 0` replacing `10·InterMSE`), and A5/A6 (`
 
 Fixing the three bare-metal bottlenecks drops all-layer `0.31 BPW` PPL by **`-1.42` PPL (`8.75 →
 7.33`)** — matching `0.545 BPW` LittleBit-2 (`7.32`) at **43% fewer bits** and `1.54×` faster QAT —
-while `COMP-1` Hybrid reaches **`7.26` PPL** (beating full-rank 1-bit `OneBit` `7.27`) with
-lossless Q8 attention circuits.
+while `COMP-1` Hybrid reaches **`7.26` PPL** (beating full-rank 1-bit `OneBit` `7.27`) while
+keeping attention in per-group Q8 (`BCIRQ8` g32, verified per-checkpoint against the FP32 teacher).
 
 ---
 
@@ -332,25 +364,65 @@ lossless Q8 attention circuits.
 
 ### 6.1 Single-Thread AVX-512 Inference Microbenchmark (Sapphire Rapids)
 
+#### Decode (`N = 1`) — Standalone Packed-1b vs Dense & Bit-Packed Baselines
+
 Comparing BCIR's production `kblock` FP32 GEMM, `bf16` GEMM, AVX-512 FP16 stream, Q8 g32 (`8.25b`
 1B-exp/32 microbench; `BCIRQ8 v1` uses `8.50b` int16-exp/32), rank-matched `LowRank-FP32`, portable
 bit-packed C, AVX-512 masked Sign-XOR, unpacked 4-bit LUT (`1 B/nibble`), and **exact
-1.0-bit/weight 2-nibbles-per-byte AVX-512 LUT4 (`packed1b_LUT4`)**:
+1.0-bit/weight 2-nibbles-per-byte AVX-512 LUT4 (`packed1b_LUT4`, `bench_lut4_packed.txt`)**:
 
 | Shape (`din×dout`) | $N$ | BPW | $r$/path | BCIR FP32 | FP16 Stream | Q8 g32 | LowRank FP32 | AVX-512 SignXOR | Unpacked LUT4 | **Packed-1b LUT4** | **Packed-1b vs FP16 / Q8** |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | `wedge128` `128×256` | 1 | 0.55 | 8 | 5.4 us | 1.8 us | 2.3 us | 1.6 us | 2.9 us | 0.5 us | — | `3.6×` / `4.5×` (LUT4) |
-| `wide512` `512×1536` | 1 | 0.30 | 41 | 152.8 us | 41.7 us | 43.3 us | 24.5 us | 72.3 us | 3.8 us | — | `11.1×` / `11.5×` (LUT4) |
+| `wide512` `512×1536` | 1 | 0.30 | 41 | 152.8 us | 41.7 us | 43.3 us | 24.5 us | 72.3 us | 3.8 us | **3.7 us** | **`11.3×`** / **`11.7×`** |
 | `wide50m` `768×2048` | 1 | 0.30 | 67 | 342.9 us | 104.9 us | 86.2 us | 58.9 us | 28.3 us | 7.1 us | **5.8 us** (63 KiB) | **`18.1×`** / **`14.9×`** |
-| `wide50m` `768×2048` | 16 | 0.30 | 67 | 696.4 us | 1,826.6 us | 1,411.5 us | 157.8 us | 521.9 us | 136.6 us | — | `13.4×` / `10.3×` (`1.16×` LR) |
-| `wide50m` `768×2048` | 64 | 0.30 | 67 | 1,743.6 us | 7,195.7 us | 6,289.4 us | **433.6 us** | 1,860.5 us | 516.0 us | — | **LR beats LUT4 (`0.84×`)** |
-| `wide50m` `768×2048` | 256 | 0.30 | 67 | 6,146.5 us | 27,609.9 us | 22,838.7 us | **1,606.3 us** | 7,692.3 us | 2,197.7 us | — | **LR beats LUT4 (`0.73×`)** |
 | `Llama2-7B` `4096×11008` | 1 | 0.55 | 804 | 23,813.7 us | 12,085.9 us | 4,498.6 us | 13,677.7 us | 1,788.2 us | 559.5 us | **337.4 us** (3.0 MiB) | **`35.8×`** / **`13.3×`** |
 | `Llama2-7B` `4096×11008` | 1 | 0.30 | 431 | 23,352.6 us | 10,893.7 us | 4,802.9 us | 5,487.3 us | 1,452.1 us | 238.3 us | **152.6 us** (1.6 MiB) | **`71.4×`** / **`31.5×`** |
 | `Llama2-7B` `4096×11008` | 1 | 0.10 | 133 | 18,900.9 us | 9,076.9 us | 4,590.6 us | 969.3 us | 256.1 us | 64.5 us | **51.9 us** (585 KiB) | **`174.9×`** / **`88.5×`** |
 | `Llama2-70B` `8192×28672` | 1 | 0.55 | 1735 | 135,630.4 us | 67,568.4 us | 38,391.8 us | 82,517.7 us | 4,819.2 us | 6,353.7 us | **2,023.9 us** (15.8 MiB) | **`33.4×`** / **`19.0×`** (`3.14×` vs unpacked!) |
 | `Llama2-70B` `8192×28672` | 1 | 0.30 | 939 | 135,866.3 us | 67,555.3 us | 38,634.6 us | 43,438.1 us | 5,410.0 us | 2,778.8 us | **1,055.3 us** (8.6 MiB) | **`64.0×`** / **`36.6×`** |
 | `Llama2-70B` `8192×28672` | 1 | 0.10 | 302 | 131,830.4 us | 66,621.2 us | 38,577.8 us | 11,397.2 us | 3,296.2 us | 510.2 us | **296.7 us** (2.9 MiB) | **`224.5×`** / **`130.0×`** |
+
+#### Batched Prefill Crossover (`N = 1..256`) — Direct Packed-1b LUT4 & 4-Token Micro-Batch (`mb4`) Benchmark
+
+Benchmarking exact 1.0-bit/weight `packed1b_LUT4` (token-major) and 4-token weight-reusing
+`packed1b_LUT4_mb4` (same 1.0-bit/weight storage, amortizing each 16-byte load and nibble unpack
+across 4 tokens; Gate-3 `max_abs_err <= 4.47e-7`) directly inside `bcir_littlebit_bench.c`
+(`results/bench_lut4_packed_batched.json`) against BCIR's `kblock` FP32 GEMM (`BCIR FP32`) and
+unpacked rank-matched `LowRank-FP32` (`2`-step `bcir_tensor_mm_kblock_pool`):
+
+| Shape (`din×dout`) | BPW ($r$/path) | $N$ | BCIR FP32 | LowRank FP32 | Unpacked LUT4 | **Packed-1b (1-tok)** | **Packed-1b (`mb4`)** | **LowRank / `mb4`** | **FP32 / `mb4`** |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `wide512` `512×1536` | 0.30 (41) | 1 | 151.4 us | 27.0 us | 3.8 us | **3.7 us** | 3.7 us | `7.27×` | `40.9×` |
+| `wide512` `512×1536` | 0.30 (41) | 16 | 342.7 us | 68.2 us | 67.5 us | 70.8 us | **59.6 us** | `1.14×` | `5.75×` |
+| `wide512` `512×1536` | 0.30 (41) | 32 | 517.3 us | **102.0 us** | 132.2 us | 145.2 us | 107.5 us | `0.95×` | `4.81×` |
+| `wide512` `512×1536` | 0.30 (41) | 64 | 906.5 us | 242.8 us | 273.3 us | 284.6 us | **235.0 us** | `1.03×` | `3.86×` |
+| `wide512` `512×1536` | 0.30 (41) | 128 | 1,587.5 us | **369.5 us** | 541.6 us | 569.5 us | 495.8 us | **`0.75×`** | `3.20×` |
+| `wide512` `512×1536` | 0.30 (41) | 256 | 3,052.2 us | **743.6 us** | 1,119.0 us | 1,161.5 us | 1,037.2 us | **`0.72×`** | `2.94×` |
+| `wide50m` `768×2048` | 0.30 (67) | 1 | 336.4 us | 60.3 us | 7.4 us | **6.9 us** | 7.0 us | `8.68×` | `48.1×` |
+| `wide50m` `768×2048` | 0.30 (67) | 16 | 680.9 us | 154.5 us | 134.0 us | 133.2 us | **110.5 us** | `1.40×` | `6.16×` |
+| `wide50m` `768×2048` | 0.30 (67) | 32 | 1,030.3 us | 238.2 us | 261.5 us | 264.7 us | **214.4 us** | `1.11×` | `4.81×` |
+| `wide50m` `768×2048` | 0.30 (67) | 64 | 1,722.8 us | 426.7 us | 517.4 us | 484.3 us | **426.4 us** | **`1.00×`** (tie) | `4.04×` |
+| `wide50m` `768×2048` | 0.30 (67) | 128 | 3,171.0 us | **817.7 us** | 999.6 us | 1,003.0 us | 850.0 us | **`0.96×`** | `3.73×` |
+| `wide50m` `768×2048` | 0.30 (67) | 256 | 6,151.2 us | **1,553.7 us** | 2,129.0 us | 1,973.3 us | 1,699.2 us | **`0.91×`** | `3.62×` |
+| `wide50m` `768×2048` | 0.55 (136) | 64 | 1,749.2 us | 851.8 us | 776.6 us | 778.0 us | **615.7 us** | **`1.38×`** | `2.84×` |
+| `wide50m` `768×2048` | 0.55 (136) | 256 | 6,084.3 us | 2,997.3 us | 3,339.8 us | 3,066.3 us | **2,364.6 us** | **`1.27×`** | `2.57×` |
+| `Llama2-7B` `4096×11008` | 0.30 (431) | 1 | 18,501.5 us | 4,492.4 us | 240.4 us | **159.2 us** | 159.9 us | `28.09×` | `115.7×` |
+| `Llama2-7B` `4096×11008` | 0.30 (431) | 16 | 30,089.8 us | 9,057.4 us | 3,053.0 us | 2,784.9 us | **2,118.9 us** | **`4.27×`** | `14.2×` |
+| `Llama2-7B` `4096×11008` | 0.30 (431) | 64 | 61,225.2 us | 17,721.6 us | 11,908.7 us | 10,633.5 us | **7,651.0 us** | **`2.32×`** | `8.00×` |
+| `Llama2-7B` `4096×11008` | 0.30 (431) | 128 | 105,036.8 us | 31,185.6 us | 23,674.8 us | 21,232.4 us | **15,946.1 us** | **`1.96×`** | `6.59×` |
+| `Llama2-7B` `4096×11008` | 0.55 (804) | 64 | 61,396.3 us | 33,359.4 us | 25,799.5 us | 18,781.7 us | **13,367.1 us** | **`2.50×`** | `4.59×` |
+| `Llama2-70B` `8192×28672` | 0.30 (939) | 16 | 162,781.7 us | 48,058.4 us | 25,152.8 us | 17,675.7 us | **11,306.7 us** | **`4.25×`** | `14.4×` |
+
+**Key dispatch finding:** Against dense `BCIR FP32 kblock` (or `BF16`), `packed1b_LUT4_mb4` wins
+across every tested batch size (`N = 1..256`). Against an unpacked rank-matched `LowRank-FP32` GEMM
+(which requires `32×` dequantized weight scratch), the crossover `N*(din, dout, r, kernel, backend)`
+depends strongly on shape, rank, and weight reuse: token-major `packed1b_LUT4` crosses at `N = 16`
+(`wide512 0.30b`) or `N = 32` (`wide50m 0.30b`), whereas `packed1b_LUT4_mb4` ties at `N = 64` and
+crosses at `N >= 128` on `wide50m 0.30b`, stays `1.27×` faster through `N = 256` on `wide50m 0.55b`,
+and remains `1.96×–2.50×` faster through `N = 64–128` on `Llama2-7B`. No single fixed `N` cutoff
+generalizes across shapes or backends; `COMP-1` must calibrate the crossover per `(din, dout, r,
+backend, threads)`.
 
 ### 6.2 Native-C QAT Training Step Time & Memory Tax (2 Threads, B4/T64)
 
@@ -376,23 +448,28 @@ These measurements establish a clear separation of concerns for BCIR's roadmap:
 
 1. **Do NOT adopt LittleBit for pretraining or narrow models ($d < 512$).** Pretraining stays on
    BCIR's native FP32/BF16 blocked GEMMs and `TRAIN-OPT-1..7`. Narrow models ($d \le 256$) deploy on
-   existing `BCIRQ8` (`8.50 BPW`, zero-shot lossless, `100%` exact circuit retention).
+   existing `BCIRQ8` (`8.50 BPW`, lossy per-group Q8 via `quantize_per_group` with near-lossless
+   retention on the tested checkpoints — `<= 0.00004` nat CE delta and `100%` `kv_single`/`ordered`
+   recall — and per-checkpoint qualification).
 2. **Do NOT adopt LittleBit's latent KV-cache replacement.** Use `Arch-4` (`BCIR-MLA` with
    decoupled RoPE) for exact-attention KV compression and `Arch-1`/`Arch-2` (`BCIR-DeltaNet` /
    `BCIR-Hybrid-SWA`) for fixed-state global memory.
 3. **Adopt `COMP-1` (Hybrid Q8-Attention + Sub-1-Bit Joint-ITQ Packed-LUT4 MLP Deployment) for
    wide models ($d \ge 512$, `wide10m`, `wide50m`, `BCIR-MoE`, and ingested 1B–70B models):**
    - Keep embeddings, RMSNorms, and sensitive attention (`W_q, W_k, W_v, W_o`, or MLA projections) in
-     `BCIRQ8` (`bcir_q8_model.h`), while compressing the dominant SwiGLU MLP tensors (`W_gate, W_up,
+     `BCIRQ8` (`bcir_q8_model.h`, verified per-checkpoint for CE/logit drift and exact-circuit recall
+     against the FP32 teacher), while compressing the dominant SwiGLU MLP tensors (`W_gate, W_up,
      W_down` — `~67–75%` of dense weights and `~85%+` of `BCIR-MoE` expert weights!) to `0.30–0.55
      BPW` via Dual-SVID + Joint-ITQ + short post-training KD QAT.
    - Store binary factors in the verified **exact 1.0-bit/weight 2-nibbles-per-byte layout** under
      an append-only `BCIRQ8 v2` tensor encoding tag with per-tensor CRC32 verification.
    - Implement a deterministic `LUT4-LANES` kernel family beside `Q8-LANES` in
      [`runtime/c/bcir_ai_kernels.h`](../../runtime/c/bcir_ai_kernels.h) (`portable` / `AVX2` /
-     `AVX-512` bit-identical via fixed ascending 4-weight group accumulation, with `DECODE-THREADS`
-     column slicing) for autoregressive decode ($N \le 16$), dispatching batched prefill ($N \ge 64$)
-     through BCIR's blocked FMA / low-rank GEMM path.
+     `AVX-512` bit-identical via fixed ascending 4-weight group accumulation, supporting both
+     single-token decode and 4-token weight-reusing micro-batch `mb4`, with `DECODE-THREADS` column
+     slicing). Keep any prefill fallback threshold `N*(din, dout, r, backend, threads)` to unpacked
+     low-rank GEMM explicitly provisional and calibrated per shape and backend rather than globally
+     fixed.
 
 ---
 
@@ -402,5 +479,9 @@ These measurements establish a clear separation of concerns for BCIR's roadmap:
   https://arxiv.org/abs/2506.13771
 - Lee et al., *LittleBit-2: Joint Iterative Quantization for Sub-1-Bit Latent Factorization*
   (ICML 2026, v2): https://arxiv.org/abs/2603.00042
-- Archived BCIR teacher checkpoints (`wedge-pr818`) and WikiText-2 byte splits:
-  https://github.com/Mecca-Research/Modular-AI
+- Pinned reproducible native-C experiment bundle, trained FP32 teachers, raw JSON/text outputs,
+  3-gate verification log, and SHA-256 provenance manifest (covering `wedge-pr818` checkpoints and
+  `gp-global/data/` WikiText-2 splits):
+  https://github.com/Mecca-Research/Modular-AI/tree/31bebc39a446b7b61f2a826c8a02a40cff88e0e5/BCIR%20Model%20Training/littlebit-sub1bit-study
+  ([PR #227](https://github.com/Mecca-Research/Modular-AI/pull/227),
+  [`results/MANIFEST.json`](https://github.com/Mecca-Research/Modular-AI/blob/31bebc39a446b7b61f2a826c8a02a40cff88e0e5/BCIR%20Model%20Training/littlebit-sub1bit-study/results/MANIFEST.json))

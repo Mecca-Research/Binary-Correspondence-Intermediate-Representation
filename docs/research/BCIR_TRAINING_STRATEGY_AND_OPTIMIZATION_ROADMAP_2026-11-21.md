@@ -370,15 +370,22 @@ establishes four concrete training and inference engineering rules:
    At `0.30 BPW` on `wide512`, compressing `21.7%` attention weights causes `+0.1235` nats CE loss
    vs only `+0.0355` nats from compressing `78.3%` SwiGLU MLP weights (`12.5×` higher sensitivity
    per parameter; zero-shot `kv_single` retention is `100%` for `MLP_only` vs `9.4%` for
-   `Attn_only`). Keep narrow models ($d < 512$) and attention layers on lossless `BCIRQ8` (`8.50
-   BPW`), applying `COMP-1` strictly to wide ($d \ge 512$) MLPs and `BCIR-MoE` experts.
-4. **Split inference dispatch by token batch $N$: `LUT4-LANES` for decode ($N \le 16$), blocked
-   GEMM for prefill ($N \ge 64$).**
+   `Attn_only`). Keep narrow models ($d < 512$) and attention layers on `BCIRQ8` (`8.50 BPW`,
+   lossy per-group quantization via `bcir/frontends/models/weights_io.py:quantize_per_group`, which
+   achieved near-lossless retention on the tested checkpoints but must still pass per-checkpoint CE
+   and exact-recall qualification), applying `COMP-1` strictly to wide ($d \ge 512$) MLPs and
+   `BCIR-MoE` experts.
+4. **Use packed 1.0-bit/weight `LUT4-LANES` (1-token decode + 4-token `mb4` prefill) with
+   shape/backend-calibrated GEMM dispatch.**
    Naive bit-packing and AVX-512 Sign-XOR lose on CPU. Exact 1.0-bit/weight 2-nibbles-per-byte
    AVX-512 LUT4 (`_mm512_permutexvar_ps`) delivers **`18.1×`** (`wide50m 0.30b`, `5.8 us`),
    **`71.4×`** (`7B 0.30b`, `152.6 us`), and **`224.5×`** (`70B 0.10b`, `296.7 us`) over FP16
-   (`14.9–130×` over BCIR Q8) at `N = 1` decode, while blocked `LowRank-FP32` / FMA overtakes LUT4
-   for batched prefill ($N \ge 64$).
+   (`14.9–130×` over Q8 g32) at `N = 1` decode. Across batched prefill (`N = 4..256`), 4-token
+   weight-reusing `packed1b_LUT4_mb4` beats dense `BCIR FP32 kblock` everywhere (`2.6–8.0×` at
+   `N = 64–256`), while its crossover against unpacked `LowRank-FP32` varies strongly with shape and
+   rank (`N ≈ 64–128` on `wide512`/`wide50m 0.30b` vs `N > 128–256` on `wide50m 0.55b` and
+   `Llama2-7B`); any LUT4-vs-GEMM prefill threshold must therefore remain provisional and calibrated
+   per `(d_in, d_out, r, backend, threads)`.
 
 ---
 
