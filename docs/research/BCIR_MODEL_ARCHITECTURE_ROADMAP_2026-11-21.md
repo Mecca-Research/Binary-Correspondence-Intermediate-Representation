@@ -371,31 +371,38 @@ beat dense `wide50m` by **$\ge 2.2\times$ tokens/sec** while achieving lower hel
 ### Deployment Compression Track (`COMP-1`): Hybrid Q8-Attention + Sub-1-Bit Joint-ITQ Packed-LUT4 MLP
 
 **Motivation ([BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md)):**
-Standard `BCIRQ8 v1` (`bcir/frontends/models/weights_io.py:quantize_per_group` ->
-`runtime/c/bcir_q8_model.h`, `8.50 BPW`, group-32 integer codes with a shared power-of-two scale)
-is a **lossy** quantization format that exhibited near-lossless quality retention on the tested
-BCIR checkpoints (`wide512` `7.0906` vs `7.0906` PPL at `0.0080` relative weight Frobenius error;
-`wedge128` `9.2115` vs `9.2111` LM PPL and `100.0%` zero-shot `kv_single`/`ordered`/`value_swap`
-recall at `0.0078` relative weight Frobenius error, though `kv_curriculum_4pair` `in_cand` shifted
-`99.2% → 98.4%`). Because that retention is checkpoint-specific rather than mathematically exact
-for arbitrary FP32 weights, `BCIRQ8` remains the right default for narrow models ($d < 512$) and
-attention layers **subject to per-checkpoint accuracy qualification**. For wide models
-($d \ge 512$ — `wide10m`, `wide50m`, `BCIR-MoE`, and ingested 1B–70B checkpoints), SwiGLU MLP
-weights represent `67–85%` of total bytes and dominate autoregressive decode DRAM traffic while
-tolerating extreme sub-1-bit latent factorization far better than attention.
+Standard `BCIRQ8 v1` (`bcir/frontends/models/weights_io.py` ->
+`bcir/kbcir/quantize.py:quantize_per_group` -> `runtime/c/bcir_q8_model.h`, `8.50 BPW`) reconstructs
+weights as $\hat{w} = q \cdot 2^e$ with bounded rounding error $|w - \hat{w}| \le 2^{e-1}$ (absent
+clipping). It is **deterministic lossy quantization with measured quality retention and bounded
+weight reconstruction error**, not exact FP32 preservation. On the tested BCIR checkpoints it
+exhibited near-lossless retention (`wide512` `6.165M`: `7.0906` vs `7.0906` PPL at `0.0080`
+relative weight Frobenius error; `wedge128` `0.526M`: `9.2115` vs `9.2111` LM PPL and `100.0%`
+zero-shot `kv_single`/`ordered`/`value_swap` recall at `0.0078` relative weight Frobenius error,
+while `kv_curriculum_4pair` `in_cand` shifted `99.2% → 98.4%`). Because that retention is
+checkpoint-specific, `BCIRQ8` remains the default for narrow models ($d < 512$) and attention layers
+**subject to per-checkpoint qualification**. For wide models ($d \ge 512$ — `wide10m`, `wide50m`,
+`BCIR-MoE`, and ingested 1B–70B checkpoints), SwiGLU MLP weights represent `67–85%` of projection
+bytes and dominate autoregressive decode DRAM traffic while tolerating extreme sub-1-bit latent
+factorization far better than attention. (Note: at `BCIR-wide50m`'s `50.544M` 8-layer `d=768` GQA
+3:1 geometry — `75.0%` MLP / `25.0%` attention projections — a `0.30 BPW` MLP + `8.50 BPW` Q8
+attention split yields a **projected** projection-only density of `2.35 BPW`, excluding embeddings,
+norms, container metadata, and alignment; this `50.544M` figure is a mathematical projection, not
+yet a trained, exported, or benchmarked 50M `COMP-1` artifact.)
 
 **Specification (Post-Training Export Extension to `BCIRQ8` & `bcir_ai_kernels.h`):**
 1. **Strict width & layer admission gates:** Apply sub-1-bit compression **only** to wide linear
    projections with $d_{\text{in}}, d_{\text{out}} \ge 512$ (avoiding the $32(1/d_{\text{in}} + 1/d_{\text{out}})$
    scale floor). Because attention suffers **`12.5×` more CE damage per parameter** than SwiGLU MLP
-   at `0.30 BPW` (`+0.1235` nats from `21.7%` params vs `+0.0355` nats from `78.3%`), default policy
-   keeps embeddings, RMSNorms, and attention/MLA projections in per-group `BCIRQ8` (`8.50 BPW`,
-   gated per checkpoint against the FP32 teacher) while compressing SwiGLU MLPs (`W_gate, W_up,
-   W_down` and MoE experts) to `0.30–0.55 BPW` via **Dual-SVID + 50-iteration Joint-ITQ +
-   `Clipped-STE` + `Output KL (λ = 0)`** QAT (validated on `wide512`: `7.26` PPL hybrid at `2.08`
-   effective body BPW vs `7.09` FP32, and `7.33` PPL all-layer at `0.311 BPW` with `kv_factor = 2.0`,
-   beating published Eq. 11 `8.75` PPL by `-1.42` PPL at `1.54×` faster QAT). Use 1-path if ever
-   forced onto narrow $d \le 256$ layers; use 2-path Residual for $d \ge 512$.
+   at `0.30 BPW` on `wide512` (`+0.1235` nats from `21.74%` body params vs `+0.0355` nats from
+   `78.26%`), default policy keeps embeddings, RMSNorms, and attention/MLA projections in
+   deterministic lossy `BCIRQ8` (`8.50 BPW`, gated per checkpoint against the FP32 teacher) while
+   compressing SwiGLU MLPs (`W_gate, W_up, W_down` and MoE experts) to `0.30–0.55 BPW` via
+   **Dual-SVID + 50-iteration Joint-ITQ + `Clipped-STE` + `Output KL (λ = 0)`** QAT (validated on
+   `wide512` `6.165M`: `7.26` PPL hybrid at `2.083` effective body BPW / `2.390` total BPW vs
+   `7.09` FP32, and `7.33` PPL all-layer at `0.311 BPW` with `kv_factor = 2.0`, beating published
+   Eq. 11 `8.75` PPL by `-1.42` PPL at `1.54×` faster QAT). Use 1-path if ever forced onto narrow
+   $d \le 256$ layers; use 2-path Residual for $d \ge 512$.
 2. **Exact 1.0-bit/weight 2-nibbles-per-byte `BCIRQ8 v2` tensor encoding:** Pack 4-weight binary
    LUT nibbles for rows `[r0..r0+15]` in low nibbles and `[r0+16..r0+31]` in high nibbles of the
    same 16 bytes (verified to halve DRAM/L3 traffic and deliver `3.14×` speedup over 1-byte/nibble
@@ -404,25 +411,30 @@ tolerating extreme sub-1-bit latent factorization far better than attention.
    Add `LUT4-LANES` (`portable` / `AVX2` / `AVX-512` bit-identical via fixed ascending 4-weight
    group order, providing both single-token decode and 4-token weight-reusing micro-batched `mb4`
    paths plus `DECODE-THREADS` column slicing) beside `Q8-LANES` in `runtime/c/bcir_ai_kernels.h`.
-   Measured Sapphire Rapids 1T benchmarks (`bench_lut4_packed_batched.json`) show `packed1b_LUT4`
-   achieves `11.3–224.5×` decode (`N = 1`) speedup over FP16 (`11.7–130×` over Q8 g32), while
-   `packed1b_LUT4_mb4` beats dense `BCIR FP32 kblock` across all tested batch sizes (`N = 1..256`,
-   `2.6–8.0×` at `N = 64–256`) and crosses over against unpacked rank-matched `LowRank-FP32` at a
-   **shape- and rank-dependent** batch size (`N ≈ 64–128` on `wide512`/`wide50m 0.30b`, `N > 256` on
-   `wide50m 0.55b`, and `N > 128` on `Llama2-7B 0.30b/0.55b`, where `mb4` stays `1.96–2.50×` faster).
-   Any prefill fallback threshold $N^*(d_{\text{in}}, d_{\text{out}}, r, \text{backend},
-   \text{threads})$ between packed `LUT4-LANES` and a blocked GEMM fallback is therefore **explicitly
-   provisional** and must be calibrated per shape and backend (`AVX-512` / `AVX2` / `NEON` /
-   `portable`, 1T vs multi-thread) during qualification rather than fixed globally.
+   Measured Sapphire Rapids 1T **isolated linear-layer** benchmarks (`bench_lut4_packed_batched.json`)
+   show `packed1b_LUT4` achieves `11.3–224.5×` decode (`N = 1`) speedup over FP16 (`11.7–130×` over
+   Q8 g32), while `packed1b_LUT4_mb4` beats dense `BCIR FP32 kblock` across all tested batch sizes
+   (`N = 1..256`, `2.6–8.0×` at `N = 64–256`) and crosses over against unpacked rank-matched
+   `LowRank-FP32` at a **shape- and rank-dependent** batch size (`N ≈ 64–128` on `wide512`/`wide50m
+   0.30b`, `N > 256` on `wide50m 0.55b`, and `N > 128` on `Llama2-7B 0.30b/0.55b`, where `mb4` stays
+   `1.96–2.50×` faster). Isolated layer speedups do not transfer automatically into end-to-end
+   whole-model throughput (which also includes attention, norms, embeddings, and KV cache), and any
+   prefill fallback threshold $N^*(d_{\text{in}}, d_{\text{out}}, r, \text{backend}, \text{threads})$
+   between packed `LUT4-LANES` and a blocked GEMM fallback is **explicitly provisional** and must be
+   calibrated per shape and backend (`AVX-512` / `AVX2` / `NEON` / `portable`, 1T vs multi-thread)
+   during whole-model qualification.
 
-**Falsifiable GO/STOP Gate:** On every exported checkpoint (`wide10m` / `wide50m`, `d >= 512`),
-`COMP-1` must achieve **`>= 8×` end-to-end MLP weight reduction** vs FP32 (`>= 3×` total artifact
-reduction vs `BCIRQ8`), **`>= 5×` single-token decode speedup** over `BCIRQ8` on AVX-512 hosts,
-`0` bit drift between portable and AVX-512 `LUT4-LANES` instances, and pass **both** separate
-Q8-attention-only and full-hybrid accuracy qualification against the FP32 teacher (`<= 0.01` nat
-CE drift and `>= 99%` exact associative/counterfactual recall retention for the Q8-attention
-sub-layer alone, failing export or falling back to FP16 attention if exceeded; `<= 0.04` nat
-WikiText-2 CE drift and `>= 99%` exact recall retention for the full hybrid model).
+**Falsifiable GO/STOP Gate (Governed by Precision Policy Rules `P1–P6`):** On every exported
+checkpoint (`wide10m` / `wide50m`, `d >= 512`), `COMP-1` must achieve **`>= 8×` end-to-end MLP
+weight reduction** vs FP32 (`>= 3×` total artifact reduction vs `BCIRQ8`), **`>= 5×` isolated MLP
+and positive whole-model single-token decode speedup** over `BCIRQ8` on AVX-512 hosts (reporting
+full end-to-end decode and prefill latency separately from kernel microbenchmarks), `0` bit drift
+between portable and AVX-512 `LUT4-LANES` instances, `0` unexplained nonfinite values, and pass
+**both** separate Q8-attention-only and full-hybrid accuracy qualification against the frozen FP32
+teacher across seeds (`<= 0.01` nat CE drift and `>= 99%` exact associative/counterfactual recall
+retention for the Q8-attention sub-layer alone, failing export or falling back to FP16 attention if
+exceeded; `<= 0.04` nat WikiText-2 CE drift — `<= 4.08%` PPL ratio $e^{\Delta\text{CE}}$ — and
+`>= 99%` exact recall retention for the full hybrid model).
 
 ---
 
@@ -479,4 +491,4 @@ caught in `gp-global` and `wedge-next`):
 - Lee et al., *LittleBit: Ultra Low-Bit Quantization via Latent Factorization* (NeurIPS 2025, v5): https://arxiv.org/abs/2506.13771
 - Lee et al., *LittleBit-2: Joint Iterative Quantization for Sub-1-Bit Latent Factorization* (ICML 2026, v2): https://arxiv.org/abs/2603.00042
 - Archived BCIR model-training evidence (`gp-global`, `wedge-next`, `wedge-integrated`, `wedge-query-qware`, `wedge-pr818`, `BCIR-50M-Study`): https://github.com/Mecca-Research/Modular-AI
-- Pinned LittleBit / LittleBit-2 bare-metal C experiment bundle (`littlebit-sub1bit-study`, commit `31bebc39a446b7b61f2a826c8a02a40cff88e0e5`, PR #227): https://github.com/Mecca-Research/Modular-AI/tree/31bebc39a446b7b61f2a826c8a02a40cff88e0e5/BCIR%20Model%20Training/littlebit-sub1bit-study
+- Pinned LittleBit / LittleBit-2 bare-metal C experiment bundle (`littlebit-sub1bit-study`, commit `c83cc78e4396d7690ff518faec82f57ed321bc72`, PR #227): https://github.com/Mecca-Research/Modular-AI/tree/c83cc78e4396d7690ff518faec82f57ed321bc72/BCIR%20Model%20Training/littlebit-sub1bit-study

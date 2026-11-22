@@ -26,12 +26,13 @@ use) this technique:
 
 1. **Sub-1-bit latent binary factorization decisively beats matched-byte low-rank FP16, and
    fixing three bare-metal bottlenecks in the published recipe slashes `0.31 BPW` PPL by `-1.42`.**
-   On `BCIR-wide512` (`5.50M` params, 4:1 GQA, `FP32` test PPL `7.09`, `BCIRQ8` `7.09`, full
-   1-bit `OneBit` `7.27` at `1.050 BPW`), published `LittleBit-2 (ITQ Res)` reaches **`7.26` PPL at
-   `0.697 BPW`** (beating full 1-bit `OneBit` at 34% fewer bits), **`7.32` PPL at `0.545 BPW`**
-   (`+0.032` nats over FP32 at `58.7×` body compression), **`8.43` PPL at `0.301 BPW`**, and
-   **`9.17` PPL at `0.205 BPW`** (`156×` body compression), while matched-byte `Tiny-Rank FP16 + KD`
-   degrades to `9.32`, `11.78`, `20.70`, and `27.85` PPL respectively. Replacing the published
+   On `BCIR-wide512` (`6,164,992` total params = `6.165M`, legacy checkpoint filename
+   `wide512_5.50M.npz`; 4:1 GQA, `FP32` test PPL `7.09`, `BCIRQ8` `7.09`, full 1-bit `OneBit`
+   `7.27` at `1.050 BPW`), published `LittleBit-2 (ITQ Res)` reaches **`7.26` PPL at `0.697 BPW`**
+   (beating full 1-bit `OneBit` at 34% fewer bits), **`7.32` PPL at `0.545 BPW`** (`+0.032` nats
+   over FP32 at `58.7×` body compression), **`8.43` PPL at `0.301 BPW`**, and **`9.17` PPL at
+   `0.205 BPW`** (`156×` body compression), while matched-byte `Tiny-Rank FP16 + KD` degrades to
+   `9.32`, `11.78`, `20.70`, and `27.85` PPL respectively. Replacing the published
    `SmoothSign(k=100) + λ=10·InterMSE` recipe with BCIR's ablation-derived **`Joint-ITQ +
    Clipped-STE + Output KL (λ = 0) + GQA kv_factor = 2.0`** recipe drops `0.311 BPW` PPL from
    **`8.75 → 7.33`** (`-1.42` PPL, `3.0×` less sign thrashing, `1.54×` faster QAT), and hybrid
@@ -61,24 +62,27 @@ use) this technique:
    with zero QAT steps**. After QAT+KD at `0.75 BPW`, `LittleBit-1P` recovers **`100.0%` exact
    accuracy** on `kv_single`, `ordered`, and `ordered value_swap` (`both_correct = 100.0%`), while
    matched-byte `Tiny-Rank FP16` stalls at `72.7%` (`kv_single`), `55.5%` (`ordered`), and `28.9%`
-   (`value_swap`). `BCIRQ8` (`8.50 BPW`, lossy group-32 quantization via `quantize_per_group`)
-   achieved near-lossless retention on these checkpoints (`100.0%` zero-shot on
-   `kv_single`/`ordered`/`value_swap`, `+0.00004` nat LM CE delta at `0.0078` relative weight
-   Frobenius error, and `in_cand` `99.2% → 98.4%` on `kv_curriculum_4pair`).
+   (`value_swap`). `BCIRQ8` (`8.50 BPW`, deterministic lossy per-group quantization
+   $\hat{w} = q \cdot 2^e$, $|w - \hat{w}| \le 2^{e-1}$ absent clipping via
+   `bcir/kbcir/quantize.py:quantize_per_group`) achieved near-lossless retention on these
+   checkpoints (`100.0%` zero-shot on `kv_single`/`ordered`/`value_swap`, `+0.00004` nat LM CE
+   delta at `0.0078` relative weight Frobenius error, and `in_cand` `99.2% → 98.4%` on
+   `kv_curriculum_4pair`).
 5. **Naive bit-packing loses on CPU; exact 1.0-bit/weight 2-nibbles-per-byte AVX-512 LUT4
-   delivers `18–225×` decode speedups (`N=1`), and the prefill crossover is shape- and
-   kernel-dependent.**
+   delivers `18–225×` isolated linear-layer decode speedups (`N=1`), and the prefill crossover is
+   shape- and kernel-dependent.**
    On Intel Xeon Platinum 8481C (Sapphire Rapids, 1 thread), portable bit-packing and AVX-512
    Sign-XOR lose to dense FP32/Q8 at small widths and during prefill (`N=256`). Packing two 4-bit
    LUT nibbles per byte (exact `1.0 bit/weight`, halving DRAM/L3 traffic) with `_mm512_permutexvar_ps`
-   accelerates `N=1` decode by **`18.1×`** vs FP16 (`14.9×` vs Q8) on `BCIR-wide50m` (`5.8 us`),
-   **`71.4×`** (`31.5×` vs Q8) on `Llama2-7B 0.30b` (`152.6 us`), and **`224.5×`** (`130.0×` vs
-   Q8) on `Llama2-70B 0.10b` (`296.7 us`, L3-resident). Across batched prefill (`N = 4..256`),
-   4-token weight-reusing `packed1b_LUT4_mb4` beats dense `BCIR FP32 kblock` everywhere
-   (`2.6×–8.0×` faster at `N = 64–256`); against unpacked rank-matched `LowRank-FP32`, the
-   crossover shifts strongly with shape and rank (`N ≈ 64–128` on `wide512`/`wide50m 0.30b`,
-   `N > 256` on `wide50m 0.55b`, and `N > 128` on `Llama2-7B 0.30b/0.55b`, where `mb4` stays
-   `1.96×–2.50×` faster).
+   accelerates isolated linear-layer `N=1` decode by **`18.1×`** vs FP16 (`14.9×` vs Q8) on
+   `BCIR-wide50m` (`5.8 us`), **`71.4×`** (`31.5×` vs Q8) on `Llama2-7B 0.30b` (`152.6 us`), and
+   **`224.5×`** (`130.0×` vs Q8) on `Llama2-70B 0.10b` (`296.7 us`, L3-resident) — microbenchmark
+   layer gains that must still be qualified end-to-end including attention, norms, and KV cache.
+   Across batched prefill (`N = 4..256`), 4-token weight-reusing `packed1b_LUT4_mb4` beats dense
+   `BCIR FP32 kblock` everywhere (`2.6×–8.0×` faster at `N = 64–256`); against unpacked rank-matched
+   `LowRank-FP32`, the crossover shifts strongly with shape and rank (`N ≈ 64–128` on
+   `wide512`/`wide50m 0.30b`, `N > 256` on `wide50m 0.55b`, and `N > 128` on `Llama2-7B 0.30b/0.55b`,
+   where `mb4` stays `1.96×–2.50×` faster).
 6. **Sub-1-bit QAT+KD carries a heavy training compute and RAM tax (`2.0–3.1×` slower, `1.63×` RAM).**
    On `BCIR-wide512` (2 threads native C), `LittleBit_Res_0.55_KD` runs at **`228.4 ms/step`**
    (`1.97×` slower than Dense FP32 `115.9 ms`, `4.96×` slower than `LowRank FP16 KD` `46.0 ms`)
@@ -97,10 +101,10 @@ checkpoints (`checkpoints/*.npz`), raw JSON/text outputs (`results/*.json`,
 `results/verify_gates_output.txt`), and SHA-256 provenance manifest (`results/MANIFEST.json`,
 pinning every source file, trained teacher, saved `../wedge-pr818/checkpoints/*.npz` checkpoint,
 and `../gp-global/data/wikitext2-*.parquet` split) are archived in the companion repository at
-pinned commit **`31bebc39a446b7b61f2a826c8a02a40cff88e0e5`**:
+pinned commit **`c83cc78e4396d7690ff518faec82f57ed321bc72`**:
 
 - Pinned bundle:
-  https://github.com/Mecca-Research/Modular-AI/tree/31bebc39a446b7b61f2a826c8a02a40cff88e0e5/BCIR%20Model%20Training/littlebit-sub1bit-study
+  https://github.com/Mecca-Research/Modular-AI/tree/c83cc78e4396d7690ff518faec82f57ed321bc72/BCIR%20Model%20Training/littlebit-sub1bit-study
 - BCIR base commit linked during build and verification: `3fdb708d73371a6e0e1abf7dde70b7239fc2fc06`
 
 All measurements were executed on Intel Xeon Platinum 8481C (`avx512f`, `avx512_bf16`,
@@ -146,8 +150,8 @@ $$\text{BPW}_{\text{res}}(r) = \frac{2r(d_{\text{in}} + d_{\text{out}}) + 32(d_{
 | `BCIR-wedge128` (0.53M, MHA) | 128 | 128 | 256 | 6.50% | `0.4250` / `0.2125` | `0.5000` | `0.453` / `1.464` (`7/7`) | `64.00×` / `16.00×` (clamped $r=1$) |
 | `BCIR-pilot192` (0.86M, GQA 2:1) | 192 | 96 | 512 | 5.90% | `0.2727` / `0.1364` | `0.5000` | `0.290` / `1.218` (`7/7`) | `48.00×` / `12.00×` (clamped $r=1$) |
 | `BCIR-mid384` (3.25M, GQA 3:1) | 384 | 128 | 1024 | 3.13% | `0.1380` / `0.0690` | `0.3333` | `0.147` / `0.643` (`7/7`) | `6.40×` / `1.60×` |
-| `BCIR-wide512` (5.50M, GQA 4:1) | 512 | 128 | 1536 | 2.20% | `0.1005` / `0.0503` | `0.3125` | `0.115` / `0.465` (`4/7`) | `5.82×` / `1.46×` |
-| `BCIR-wide50m` (50.5M, GQA 3:1) | 768 | 256 | 2048 | 0.42% | `0.0690` / `0.0345` | `0.1667` | `0.102` / **`0.169`** (`2/7`) | `3.56×` / **`0.89×` (expands)** |
+| `BCIR-wide512` (6.165M, GQA 4:1) | 512 | 128 | 1536 | 2.20% | `0.1005` / `0.0503` | `0.3125` | `0.115` / `0.465` (`4/7`) | `5.82×` / `1.46×` |
+| `BCIR-wide50m` (50.544M, GQA 3:1) | 768 | 256 | 2048 | 0.42% | `0.0690` / `0.0345` | `0.1667` | `0.102` / **`0.169`** (`2/7`) | `3.56×` / **`0.89×` (expands)** |
 | `OPT-1.3B` (MHA) | 2048 | 2048 | 8192 | 6.01% | `0.0225` / `0.0112` | `0.0312` | `0.099` / `1.056` (`0/7`) | `3.88×` / **`0.97×` (expands)** |
 | `Llama2-7B` (MHA) | 4096 | 4096 | 11008 | 3.89% | `0.0123` / `0.0062` | `0.0156` | `0.100` / `0.719` (`0/7`) | `3.75×` / **`0.94×` (expands)** |
 | `Llama3-8B` (GQA 4:1) | 4096 | 1024 | 14336 | 13.09% | `0.0120` / `0.0060` | `0.0391` | `0.100` / **`2.181`** (`0/7`) | `2.46×` / **`0.61×` (expands)** |
@@ -170,10 +174,10 @@ and the mechanism behind LittleBit-2's Joint-ITQ improvement:
 
 | BCIR Teacher | Projs | Mean $\gamma$ | Mean `erank%` | Row Distortion $\lambda$ (Raw → ITQ) | Max $\lambda$ (Raw → ITQ) | Kurtosis (Raw → ITQ) | Zero-Shot `0.55 BPW` Rel-Frob Err: FP16 / LB1P / LBRes / ITQ1P / ITQRes | `OneBit` / `Q8` Err |
 |---|---:|---:|---:|---|---|---|---|---|
-| `wedge128_lm` (0.53M) | 21 | 0.397 | 65.0% | `0.349 → 0.273` | `0.622 → 0.540` | `3.01 → 2.45` | `0.965` / `0.895` / `0.930` / **`0.869`** / `0.925` | `0.598` / `0.0078` |
-| `wedge128_kv1` (0.53M) | 21 | 0.393 | 65.5% | `0.350 → 0.273` | `0.638 → 0.544` | `3.02 → 2.46` | `0.968` / `0.897` / `0.932` / **`0.871`** / `0.927` | `0.599` / `0.0077` |
-| `pilot192_lm` (0.86M) | 14 | 0.693 | 26.4% | `0.395 → 0.263` | `0.692 → 0.440` | `4.28 → 2.42` | `0.855` / `0.797` / `0.769` / **`0.704`** / `0.731` | `0.590` / `0.0078` |
-| `wide512_lm` (5.50M) | 14 | 0.436 | 43.7% | `0.387 → 0.259` | `0.676 → 0.383` | `4.14 → 2.32` | `0.852` / `0.834` / `0.801` / `0.754` / **`0.751`** | `0.598` / `0.0080` |
+| `wedge128_lm` (0.526M) | 21 | 0.397 | 65.0% | `0.349 → 0.273` | `0.622 → 0.540` | `3.01 → 2.45` | `0.965` / `0.895` / `0.930` / **`0.869`** / `0.925` | `0.598` / `0.0078` |
+| `wedge128_kv1` (0.526M) | 21 | 0.393 | 65.5% | `0.350 → 0.273` | `0.638 → 0.544` | `3.02 → 2.46` | `0.968` / `0.897` / `0.932` / **`0.871`** / `0.927` | `0.599` / `0.0077` |
+| `pilot192_lm` (0.862M) | 14 | 0.693 | 26.4% | `0.395 → 0.263` | `0.692 → 0.440` | `4.28 → 2.42` | `0.855` / `0.797` / `0.769` / **`0.704`** / `0.731` | `0.590` / `0.0078` |
+| `wide512_lm` (6.165M) | 14 | 0.436 | 43.7% | `0.387 → 0.259` | `0.676 → 0.383` | `4.14 → 2.32` | `0.852` / `0.834` / `0.801` / `0.754` / **`0.751`** | `0.598` / `0.0080` |
 
 Key spectral findings:
 - **Joint-ITQ works on 100% of audited matrices (70/70):** Orthogonal Procrustes rotation reduces
@@ -188,13 +192,22 @@ Key spectral findings:
 
 ## 4. Sub-1-Bit Accuracy Frontier & Exact-Circuit Stress Test
 
-### 4.1 Language Modeling Frontier (`BCIR-wide512` 5.50M & `BCIR-pilot192` 0.86M)
+### 4.1 Language Modeling Frontier (`BCIR-wide512` 6.165M & `BCIR-pilot192` 0.862M)
+
+**Exact `BCIR-wide512` tensor inventory and BPW denominators** (checkpoint file `wide512_5.50M.npz`
+carries a legacy nominal filename; exact instantiated count in `wide512_5.50M.json["params"]` is
+**`6,164,992`**):
+- Attention projections (`W_q, W_k, W_v, W_o` × 2 layers, `d=512, d_kv=128`): **`1,310,720`** (`21.74%` of body / `21.26%` of total)
+- SwiGLU MLP projections (`W_gate, W_up, W_down` × 2 layers, `d=512, d_ff=1536`): **`4,718,592`** (`78.26%` of body / `76.54%` of total)
+- **Body projection denominator (`Body BPW`):** `body_params = 6,029,312` (`97.80%` of total)
+- Non-linear tensors (tied token embedding `260×512 = 133,120` + 5 RMSNorms `2,560`): `nonlin_params = 135,680` (`2.20%` of total)
+- **Total parameter denominator (`Total BPW (FP16 emb)`):** `tot_params = 6,164,992` (`body_bits / 6,029,312` vs `(body_bits + 16 × 135,680) / 6,164,992`; full FP32 all-tensor storage is `24,082 KiB`, FP32 body + FP16 non-linear is `23,817 KiB`, `BCIRQ8` g32 across all `6,164,992` params is `6,397 KiB`, and `COMP-1 Hybrid` `8.50b` attn + `0.301b` MLP is `2.083` effective body BPW / `2.390` total BPW = `1,798 KiB` excluding container headers/alignment).
 
 Evaluated on 16,384 held-out WikiText-2 test bytes (64 batches × B4 × T64) after native-C QAT+KD
 (`KL + 10·InterMSE`, `SmoothSign k=100`, cosine LR `8e-4`, 120 steps on `wide512`, 300 steps on
 `pilot192`):
 
-| Variant (`wide512_5.50M`) | Body BPW | Total BPW (FP16 emb) | Deploy KiB | Layer-0 Ranks `(q, k, mlp)` | PTQ Test PPL | QAT Test PPL | Test CE | Byte Acc | Step ms (2T) |
+| Variant (`BCIR-wide512`, 6.165M) | Body BPW | Total BPW (FP16 emb) | Deploy KiB | Layer-0 Ranks `(q, k, mlp)` | PTQ Test PPL | QAT Test PPL | Test CE | Byte Acc | Step ms (2T) |
 |---|---:|---:|---:|---|---:|---:|---:|---:|---:|
 | `FP32_teacher` | 32.000 | 31.648 | 23,817 | dense | 7.09 | **7.09** | 1.9588 | 43.12% | — |
 | `BCIR_Q8_PTQ` (`BCIRQ8` g32) | 8.500 | 8.500 | 6,397 | dense Q8 | 7.09 | **7.09** | 1.9588 | 43.11% | — |
@@ -215,8 +228,8 @@ Evaluated on 16,384 held-out WikiText-2 test bytes (64 batches × B4 × T64) aft
 | `LBv1_Res_0.20` | 0.205 | 0.553 | 416 | `(9×2, 2×2, 22×2)` | 24.61 | 9.55 | 2.2561 | 35.01% | 123.0 |
 | `LBv2_ITQ_Res_0.20` | 0.205 | 0.553 | 416 | `(9×2, 2×2, 22×2)` | **23.09** | **9.17** | **2.2161** | **35.53%** | 121.4 |
 
-On narrower `pilot192_0.86M` (`FP32` `6.87`, `Q8` `6.87`, `OneBit` `7.03` at `1.136 BPW`), the
-$O(1/d)$ scale floor manifests directly:
+On narrower `pilot192_0.86M` (`861,888` total / `811,008` body params; `FP32` `6.87`, `Q8` `6.87`,
+`OneBit` `7.03` at `1.136 BPW`), the $O(1/d)$ scale floor manifests directly:
 - `0.990 BPW`: `TinyRankFP16 = 12.28`, `LBv1_Res = 7.34` (PTQ `17.26`), **`LBv2_ITQ_Res = 7.14`** (PTQ `8.11`).
 - `0.695 BPW`: `TinyRankFP16 = 16.16`, `LBv1_Res = 7.64` (PTQ `23.55`), **`LBv2_ITQ_Res = 7.43`** (PTQ `12.12`).
 - `0.538 BPW`: `TinyRankFP16 = 23.53`, `LBv1_Res = 8.78` (PTQ `35.97`), **`LBv2_ITQ_Res = 8.66`** (PTQ `32.59`).
@@ -224,7 +237,7 @@ $O(1/d)$ scale floor manifests directly:
 
 ### 4.2 Exact Associative Binding & Ordered Counterfactuals (`BCIR-wedge128`, Saved `Modular-AI` Teachers)
 
-Evaluated on saved `Modular-AI` (`wedge-pr818`) FP32 attention checkpoints (`d=128, L=3, MHA`):
+Evaluated on saved `Modular-AI` (`wedge-pr818`) FP32 attention checkpoints (`d=128, L=3, MHA`, `525,696` total / `491,520` body params):
 
 | Variant (`BCIR-wedge128`) | Body BPW | LM Test PPL (PTQ → QAT) | `kv_single` Acc (PTQ → QAT) | `ordered` Acc (PTQ → QAT) | `ordered` `value_swap` Both-Correct |
 |---|---:|---:|---:|---:|---:|
@@ -241,10 +254,11 @@ Evaluated on saved `Modular-AI` (`wedge-pr818`) FP32 attention checkpoints (`d=1
 
 ---
 
-## 5. Controlled Ablation Matrix (`BCIR-wide512` 5.50M GQA 4:1)
+## 5. Controlled Ablation Matrix (`BCIR-wide512` 6.165M GQA 4:1)
 
 All ablations hold dataset, batch schedule (`B4×T64`), optimizer (`AdamW`, cosine `8e-4`, 120
-steps), and teacher (`wide512_5.50M`, `FP32` test PPL `7.09`) identical.
+steps), and teacher (`BCIR-wide512`, `6,164,992` params, ckpt `wide512_5.50M.npz`, `FP32` test PPL
+`7.09`) identical.
 
 ### 5.1 A1: Residual Compensation vs 1-Path (Matched Bit Budget)
 
@@ -345,13 +359,13 @@ Combining the three failure-mode repairs uncovered in A3 (`Clipped-STE` replacin
 under Joint-ITQ), A4 (`Output KL λ = 0` replacing `10·InterMSE`), and A5/A6 (`kv_factor = 2.0` or
 `BCIRQ8` Attention) yields a dramatic simultaneous gain in accuracy, sign stability, and QAT speed:
 
-| Recipe (`wide512_5.50M`, identical 120 QAT steps) | Effective Body BPW | PTQ PPL | QAT Test PPL | Test CE | Sign Flip Rate | Step ms (2T) |
+| Recipe (`BCIR-wide512`, 6.165M, identical 120 QAT steps) | Effective Body BPW | PTQ PPL | QAT Test PPL | Test CE | Sign Flip Rate | Step ms (2T) |
 |---|---:|---:|---:|---:|---:|---:|
 | `FP32_teacher` / `BCIRQ8` g32 PTQ | `32.00` / `8.50` | `7.09` | `7.09` | `1.9588` | — | `115.9 ms` (FP32) |
 | Published `LittleBit-v1` (Eq. 11: `Dual-SVID + SmoothSign k=100 + λ=10`) | `0.301` | `20.01` | `8.75` | `2.1693` | `0.00182` | `152.6 ms` |
 | Published `LittleBit-2` (`Joint-ITQ + SmoothSign k=100 + λ=10`) | `0.301` | `16.52` | `8.43` | `2.1317` | `0.00141` | `179.0 ms` |
 | **`BCIR All-Layer Synthesis` (`Joint-ITQ + Clipped-STE + KL λ=0 + kv=2`)** | **`0.311`** (`103×` vs FP32) | **`8.51`** | **`7.33`** | **`1.9923`** (`+0.034` nats) | **`0.00060`** (`3.0×` lower!) | **`116.3 ms`** (`1.54×` faster!) |
-| **`BCIR COMP-1 Hybrid` (`BCIRQ8` g32 Attn + `0.30b` ITQ+STE+KL MLP)** | **`2.08`** (`15.4×` vs FP32) | **`8.17`** | **`7.26`** | **`1.9828`** (`+0.024` nats) | **`0.00063`** | **`114.4 ms`** |
+| **`BCIR COMP-1 Hybrid` (`BCIRQ8` g32 Attn + `0.30b` ITQ+STE+KL MLP)** | **`2.083`** (`15.4×` vs FP32) | **`8.17`** | **`7.26`** | **`1.9828`** (`+0.024` nats) | **`0.00063`** | **`114.4 ms`** |
 
 Fixing the three bare-metal bottlenecks drops all-layer `0.31 BPW` PPL by **`-1.42` PPL (`8.75 →
 7.33`)** — matching `0.545 BPW` LittleBit-2 (`7.32`) at **43% fewer bits** and `1.54×` faster QAT —
@@ -433,22 +447,25 @@ backend, threads)`.
 | `pilot192_0.86M` | `LittleBit_Res_0.55_CE` | 33.68 ms | `1.91×` slower | 17.64 MiB | 17.64 MiB | 0.150 MiB |
 | `pilot192_0.86M` | `LittleBit_Res_0.55_KD` | 40.26 ms | `2.28×` slower | 17.64 MiB | 44.02 MiB | 0.150 MiB |
 | `pilot192_0.86M` | `LittleBit_Res_1.00_KD` | 56.92 ms | `3.23×` slower | 23.26 MiB | 49.64 MiB | 0.193 MiB |
-| `wide512_5.50M` | `Dense_FP32_CE` | 115.86 ms | `1.00×` | 133.13 MiB | 133.13 MiB | 23.259 MiB |
-| `wide512_5.50M` | `LowRank_FP16_0.55_KD` | 46.02 ms | `0.40×` (faster) | 44.41 MiB | 177.53 MiB | 0.646 MiB |
-| `wide512_5.50M` | `LittleBit_Res_0.55_CE` | 204.56 ms | `1.77×` slower | 83.57 MiB | 83.57 MiB | 0.650 MiB |
-| `wide512_5.50M` | `LittleBit_Res_0.55_KD` | 228.35 ms | **`1.97×` slower** | 83.57 MiB | **216.70 MiB (`1.63×`)** | 0.650 MiB |
-| `wide512_5.50M` | `LittleBit_Res_0.30_KD` | 160.64 ms | `1.39×` slower | 60.78 MiB | 193.90 MiB (`1.46×`) | 0.476 MiB |
-| `wide512_5.50M` | `LittleBit_Res_1.00_KD` | 356.70 ms | **`3.08×` slower** | 126.11 MiB | **259.24 MiB (`1.95×`)** | 0.975 MiB |
+| `wide512` (6.165M) | `Dense_FP32_CE` | 115.86 ms | `1.00×` | 133.13 MiB | 133.13 MiB | 23.259 MiB |
+| `wide512` (6.165M) | `LowRank_FP16_0.55_KD` | 46.02 ms | `0.40×` (faster) | 44.41 MiB | 177.53 MiB | 0.646 MiB |
+| `wide512` (6.165M) | `LittleBit_Res_0.55_CE` | 204.56 ms | `1.77×` slower | 83.57 MiB | 83.57 MiB | 0.650 MiB |
+| `wide512` (6.165M) | `LittleBit_Res_0.55_KD` | 228.35 ms | **`1.97×` slower** | 83.57 MiB | **216.70 MiB (`1.63×`)** | 0.650 MiB |
+| `wide512` (6.165M) | `LittleBit_Res_0.30_KD` | 160.64 ms | `1.39×` slower | 60.78 MiB | 193.90 MiB (`1.46×`) | 0.476 MiB |
+| `wide512` (6.165M) | `LittleBit_Res_1.00_KD` | 356.70 ms | **`3.08×` slower** | 126.11 MiB | **259.24 MiB (`1.95×`)** | 0.975 MiB |
 
 ---
 
 ## 7. BCIR Integration Decision & `COMP-1` Proposal
 
-These measurements establish a clear separation of concerns for BCIR's roadmap:
+These measurements establish a clear separation of concerns for BCIR's roadmap (governed by
+Precision Policy v0.1 Rules `P1–P6` in
+[`BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md`](BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md)):
 
 1. **Do NOT adopt LittleBit for pretraining or narrow models ($d < 512$).** Pretraining stays on
    BCIR's native FP32/BF16 blocked GEMMs and `TRAIN-OPT-1..7`. Narrow models ($d \le 256$) deploy on
-   existing `BCIRQ8` (`8.50 BPW`, lossy per-group Q8 via `quantize_per_group` with near-lossless
+   existing `BCIRQ8` (`8.50 BPW`, deterministic lossy per-group quantization $\hat{w} = q \cdot 2^e$,
+   $|w - \hat{w}| \le 2^{e-1}$ via `bcir/kbcir/quantize.py:quantize_per_group` with near-lossless
    retention on the tested checkpoints — `<= 0.00004` nat CE delta and `100%` `kv_single`/`ordered`
    recall — and per-checkpoint qualification).
 2. **Do NOT adopt LittleBit's latent KV-cache replacement.** Use `Arch-4` (`BCIR-MLA` with
@@ -459,17 +476,20 @@ These measurements establish a clear separation of concerns for BCIR's roadmap:
    - Keep embeddings, RMSNorms, and sensitive attention (`W_q, W_k, W_v, W_o`, or MLA projections) in
      `BCIRQ8` (`bcir_q8_model.h`, verified per-checkpoint for CE/logit drift and exact-circuit recall
      against the FP32 teacher), while compressing the dominant SwiGLU MLP tensors (`W_gate, W_up,
-     W_down` — `~67–75%` of dense weights and `~85%+` of `BCIR-MoE` expert weights!) to `0.30–0.55
-     BPW` via Dual-SVID + Joint-ITQ + short post-training KD QAT.
+     W_down` — `~67–75%` of dense projection weights and `~85%+` of `BCIR-MoE` expert weights;
+     projecting `2.35 BPW` projection-only body density at `wide50m`'s `50.544M` `75/25` split,
+     not yet trained or exported at 50M) to `0.30–0.55 BPW` via Dual-SVID + Joint-ITQ + short
+     post-training KD QAT.
    - Store binary factors in the verified **exact 1.0-bit/weight 2-nibbles-per-byte layout** under
      an append-only `BCIRQ8 v2` tensor encoding tag with per-tensor CRC32 verification.
    - Implement a deterministic `LUT4-LANES` kernel family beside `Q8-LANES` in
      [`runtime/c/bcir_ai_kernels.h`](../../runtime/c/bcir_ai_kernels.h) (`portable` / `AVX2` /
      `AVX-512` bit-identical via fixed ascending 4-weight group accumulation, supporting both
      single-token decode and 4-token weight-reusing micro-batch `mb4`, with `DECODE-THREADS` column
-     slicing). Keep any prefill fallback threshold `N*(din, dout, r, backend, threads)` to unpacked
-     low-rank GEMM explicitly provisional and calibrated per shape and backend rather than globally
-     fixed.
+     slicing). Qualify full-model end-to-end decode and prefill latency separately from isolated
+     linear-layer microbenchmarks, and keep any prefill fallback threshold `N*(din, dout, r,
+     backend, threads)` to unpacked low-rank GEMM explicitly provisional and calibrated per shape
+     and backend rather than globally fixed.
 
 ---
 
@@ -482,6 +502,6 @@ These measurements establish a clear separation of concerns for BCIR's roadmap:
 - Pinned reproducible native-C experiment bundle, trained FP32 teachers, raw JSON/text outputs,
   3-gate verification log, and SHA-256 provenance manifest (covering `wedge-pr818` checkpoints and
   `gp-global/data/` WikiText-2 splits):
-  https://github.com/Mecca-Research/Modular-AI/tree/31bebc39a446b7b61f2a826c8a02a40cff88e0e5/BCIR%20Model%20Training/littlebit-sub1bit-study
+  https://github.com/Mecca-Research/Modular-AI/tree/c83cc78e4396d7690ff518faec82f57ed321bc72/BCIR%20Model%20Training/littlebit-sub1bit-study
   ([PR #227](https://github.com/Mecca-Research/Modular-AI/pull/227),
-  [`results/MANIFEST.json`](https://github.com/Mecca-Research/Modular-AI/blob/31bebc39a446b7b61f2a826c8a02a40cff88e0e5/BCIR%20Model%20Training/littlebit-sub1bit-study/results/MANIFEST.json))
+  [`results/MANIFEST.json`](https://github.com/Mecca-Research/Modular-AI/blob/c83cc78e4396d7690ff518faec82f57ed321bc72/BCIR%20Model%20Training/littlebit-sub1bit-study/results/MANIFEST.json))
