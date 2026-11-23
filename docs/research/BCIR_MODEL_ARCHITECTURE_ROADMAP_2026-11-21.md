@@ -196,6 +196,15 @@ modes of the six `Modular-AI` studies.
 $\le 2.17$** at the 526k matched 32 MiB budget (beating both `query_full` and `attention32` on the
 4-pair binding suite).
 
+**Initial Bare-Metal C11 Gate Evidence ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md) §5):**
+Implemented with FP64 chunkwise WY solve ($C=16$, `0.000e+00` max abs diff vs token-by-token
+recurrence, exact adjoint passing finite-diff AD, `0` bit diffs 1T vs 2T). On `wide10m` raw-byte
+WikiText-2 (`160` steps, 2 seeds, `mup_v1`), `Arch-1 DeltaNet` reaches **`9.35` PPL (`2.2354` CE,
+`-0.1386` nats vs `GQA_Full` `10.74`)** with **`0.00 MiB` KV cache** (`0.50 MiB` constant $O(1)$
+state) and retains **`44.0%`** accuracy past the `W=16` filler horizon (`3.8×` `SWA_Only` `11.5%`,
+`2.5×` `GQA_Full` `17.4%`) in the multi-query phase-transition probe. `BCIRQ8_Uniform` transfers
+cleanly (`Delta CE = -0.0001`), while zero-QAT `COMP-1` PTQ incurs `+1.266` nats (requiring QAT).
+
 ---
 
 ### Arch-2: Interleaved Sliding-Window GQA + Global Associative Mixer (`BCIR-Hybrid-SWA`) — *P0 Production-Scale Candidate*
@@ -228,6 +237,17 @@ once without the static 50/50 interference that crippled `wedge-next`'s equal hy
 CE at $T=64$ and $T=512$, beat full-GQA on `T=1024/2048` ordered & KV recall, and fit `B4/T2048`
 training inside the 4 GiB native buffer budget at 50M without falling below `0.85×` full-GQA step
 speed at $T=256$.
+
+**Initial Bare-Metal C11 Gate Evidence ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md) §5):**
+Two 3:1 hybrid schedules were benchmarked on `wide10m` (`160` steps, 2 seeds, `mup_v1`):
+- **`Arch-2 Hybrid-DN+GQA` (`3× DeltaNet + 1× Full GQA`):** #1 overall quality at **`9.26` PPL
+  (`2.2257` CE, `-0.1483` nats / `-13.8%` PPL vs `GQA_Full` `10.74`)**, highest 6-pair length
+  extrapolation (`33.6%`), `2.2×` higher long-filler retention than `SWA_Only` (`25.8%` vs `11.5%`),
+  and `3.36×` smaller `T=4096` state (`2.00 MiB` KV + `0.38 MiB` recurrent vs `8.00 MiB` GQA).
+- **`Arch-2 Hybrid-SWA` (`3× SWA + 1× Full GQA`):** beats `GQA_Full` on both seeds (`10.65` vs
+  `10.74` PPL) at faster step time (`157.3` vs `159.6 ms/step`), cuts `T=4096` KV cache `3.90×`
+  (`2.05 MiB`), and composes with `COMP-1` for an `8.72×` total `T=4096` deploy cut (`45.26 → 5.19 MiB`).
+*(These initial gates use `40.96k` tokens and still require Tier M/L `>= 10M`-token G5 qualification.)*
 
 ---
 
@@ -296,6 +316,14 @@ proved that caching binary-factorized pre-up-projection KV latents *expands* KV 
 `Llama2-70B` at `0.55 BPW`) and cannot commute with post-projection RoPE. `BCIR-MLA` solves exact
 KV compression cleanly via decoupled RoPE and weight absorption with zero sub-1-bit attention
 degradation.
+
+**Initial Bare-Metal C11 Gate Evidence ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md) §5):**
+Verified absorbed decode vs unabsorbed attention to `2.067e-08` (`4.02e-7` whole-model prefill vs
+streaming decode) and finite-diff AD across all 28 MLA tensors. On `wide10m` (`160` steps, 2 seeds),
+`Arch-4 MLA` (`dc=128, dr=32`) cuts exact global-context `T=4096` KV cache `1.60×` vs 4:1 GQA
+(`8.00 → 5.00 MiB`, scaling to `3.20×` vs 3:1 GQA at `50M`), composes orthogonally with `BCIRQ8`
+(`15.64 MiB`, `Delta CE = +0.0001`) and `COMP-1` (`8.98 MiB`, `5.07×` total reduction vs FP32), and
+beats `GQA_Full` on 6-pair length extrapolation (`30.5%` vs `27.2%`).
 
 ---
 
@@ -435,6 +463,22 @@ teacher across seeds (`<= 0.01` nat CE drift and `>= 99%` exact associative/coun
 retention for the Q8-attention sub-layer alone, failing export or falling back to FP16 attention if
 exceeded; `<= 0.04` nat WikiText-2 CE drift — `<= 4.08%` PPL ratio $e^{\Delta\text{CE}}$ — and
 `>= 99%` exact recall retention for the full hybrid model).
+
+**Measured Whole-Model `50.54M` & Matched-Param `6.16M` Follow-Up ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md) §4):**
+- Whole-model `50.54M` streaming deployment (`wide50m_fp32_120st.npz`, `Xeon 6985P-C`, `avx_diff = 0.0`,
+  `q8_viol = 0.0`): `BCIRQ8_Uniform` (`49.90 MiB`, `8.25 BPW`) matches FP32 within `-0.0002` nats at
+  `46.4 tok/s` (`3.15×` FP32 `14.7 tok/s`). `COMP1_Q8Attn_LBMLP_r64_res` (`14.07 MiB`, `2.28` body
+  BPW) hits `164.8 tok/s` (`11.2×` FP32, `3.55×` `BCIRQ8`), while `LB_Uniform_r64_res` (`2.33 MiB`,
+  `0.32` body BPW) hits `680.2 tok/s` (`46.3×` FP32). Without QAT, however, high effective spectral
+  rank (`r90 = 70.8%` of `min_dim`, `stable_rank = 216.1`) causes `+0.7049` (`COMP-1`) to `+1.0415`
+  (`LB_Uniform`) nats PTQ collapse — confirming that QAT is mandatory and a low storage floor does
+  not imply acceptable accuracy.
+- Parameter-matched `6.16M` geometry (`wide_shallow_6m` `d=512, L=2` vs `narrow_deep_6m` `d=256, L=8`,
+  within `0.029%` params) proves width/aspect ratio — not parameter count — controls the storage floor
+  (`0.37` vs `0.47 BPW`, `2.02×` lower `r=1` floor, `1.69×` faster decode).
+- On 2-thread `Xeon 6985P-C` (`768×2048, r=64 res`), `packed1b_LUT4_mb4` beats `Dense FP32` across
+  `N = 1..256` (`35.9×` at `N=1`, `1.84×` at `N=256`) and crosses unpacked `LowRank-FP32` at
+  `N ≈ 32` (`140.9` vs `135.2 us`), reinforcing per-host/shape/thread calibration of the prefill boundary.
 
 ---
 

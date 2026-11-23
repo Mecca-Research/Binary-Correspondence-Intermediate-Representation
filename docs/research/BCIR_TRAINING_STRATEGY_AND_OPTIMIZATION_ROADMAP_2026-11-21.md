@@ -447,6 +447,39 @@ change:
 - **`P6` (Mandatory provenance):** Record source checkpoint SHA-256, tensor role, calibration data,
   numerical contract, kernel/compiler version, hardware backend, error metrics, and pass/fail logs.
 
+### Completed `50.54M` Precision Frontier & Operational Gate Findings ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md))
+
+Executed bare-metal C11 benchmarks on `Intel(R) Xeon(R) 6985P-C` (2T, `clang 23.1.6`, `-ffp-contract=off`,
+archived in `Modular-AI` PR #228, commit `141974aefee854d005f074b264cd98a93c62bdeb`) establish six
+operational rules for BCIR training and deployment:
+
+1. **Optimizer-state compression outweighs inference weight precision for training RAM:** At `50.54M`
+   (`wide50m`), `Opt_Q8_BF16Grad` (`8.05 B/param`, `387.86 MiB`) saves **`383.34 MiB` (`-49.7%`)** —
+   nearly `2×` the entire `192.8 MiB` FP32 weight tensor — while matching FP32 test CE within
+   `-0.0009` nats (`2.4603` vs `2.4613`) at `50.54M` (`+0.0001` at `6.16M`, `+0.0024` at `0.86M`).
+   `Opt_Adafactor` (`12.01 B/param`, saves `192.33 MiB`) improves equal-token CE (`-0.0106` nats at
+   `50.54M`) while staying near FP32 step speed (`825.6` vs `733.5 ms/step`), making it the Pareto
+   default on CPUs without hardware matrix units.
+2. **Equal-token vs equal-time separation on non-AMX CPUs (`P1` / `P5`):** At `50.54M` equal tokens
+   (`120` steps, `30.7k` tokens), all 10 policies (`FP32`, `Q8+BF16Grad`, `Adafactor`, `BF16_NDT`,
+   `BF16_VDP`, `FP8 E4M3/E5M2`, `MXFP4`, `Asym MXFP4/FP8`, and region-mixed policies) clear the `+0.04`
+   nat gate with zero nonfinites. At **equal wall time (`94.8 s`)**, `FP32_Ref` (`2.4225` val CE) and
+   `Opt_Adafactor` (`2.4400`) beat every emulated low-precision compute path (`2.4673–2.6524`) because
+   `fp32_kblock` (`273.3 GF/s`) outpaces non-AMX `bf16_ndt` (`161.2 GF/s`) and `bf16_vdp_avx512`
+   (`121.0 GF/s`). Hardware probing across Sapphire Rapids and Granite Rapids pins `VDPBF16PS` to
+   `ftz(fmaf(a0, b0, ftz(fmaf(a1, b1, acc))))` (`0` bit mismatches).
+3. **Separate Attention/MLP quantization-policy regions (`P2` / `P3`):** On `pilot1m` (`d=192`),
+   uniform `MXFP4` fails (`+0.0481` nats), while `Region_FP32Attn_MXFP4MLP` (`+0.0141`) and
+   `Region_FP8Attn_MXFP4MLP_Q8Opt` (`+0.0138` at `8.05 B/param`) rescue `>70%` of the error. At
+   `50.54M`, keeping Attention in FP32 cuts `P3` conditional FP64 guard promotions `36.4×` (`364 → 10`).
+4. **`TRAIN-OPT-1/2/4` verified across scales:** `mup_v1` lowers held-out test PPL across `0.86M`
+   (`10.54 → 9.69`), `6.16M` (`11.31 → 10.60`), and `50.54M` (`15.71 → 14.31`, `-0.093` nats); raising
+   `grad_clip` to `3.0` drops post-warmup clip saturation from `100.0%` to `0.0% / 2.6% / 42.6%`
+   (tracking natural $\sqrt{L}$ grad-norm scaling). `TRAIN-OPT-2` delivers `2.54×` real speedup on
+   padded KV batches (`max_loss_diff = 3.02e-7`); `TRAIN-OPT-4` cuts startup `5.4–20.8×` vs Python
+   stdlib without `2×` peak-RSS doubling. *(Note: these initial `30.7k–76.8k`-token gates, as well as
+   future `50M–100M`-token gates, remain pre-convergence research checks, not converged LLM runs.)*
+
 ---
 
 ## Priority Execution Matrix
