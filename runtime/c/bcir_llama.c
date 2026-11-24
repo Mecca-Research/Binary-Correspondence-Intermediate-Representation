@@ -51,6 +51,42 @@ static int tensor_ready(const bcir_q8_model *m, uint16_t id, int16_t layer,
   if(!t||t->rank!=rank||t->dim0!=d0||t->dim1!=d1||!d0||!d1) return 0;
   count=rank==1u?(uint64_t)d0:(uint64_t)d0*d1;
   if(count>UINT32_MAX) return 0;
+  if (t->encoding == BCIR_Q8_TENSOR_ENC_LUT4_1B) {
+    uint64_t scales_cursor = 0u, packed_cursor = 0u;
+    size_t k;
+    if (m->version != BCIR_Q8_VERSION_V2 || !(m->flags & BCIR_Q8_FLAG_HYBRID_LUT4_MLP) ||
+        !bcir_q8_tensor_is_mlp(id) || rank != 2u || count != t->element_count ||
+        t->lut4_path_count < 1u || t->lut4_path_count > BCIR_AI_LUT4_MAX_PATHS ||
+        t->exponent_offset > m->storage_size ||
+        t->lut4_scales_bytes > m->storage_size - t->exponent_offset ||
+        t->code_offset > m->storage_size ||
+        t->lut4_packed_bytes > m->storage_size - t->code_offset ||
+        t->exponents != m->storage + t->exponent_offset ||
+        t->codes != m->storage + t->code_offset)
+      return 0;
+    for (k = 0u; k < (size_t)t->lut4_path_count; ++k) {
+      const bcir_ai_lut4_path *lp = &t->lut4_paths[k];
+      uint16_t r = t->lut4_ranks[k];
+      size_t g_bytes = (size_t)d0 * 2u;
+      size_t l_bytes = (size_t)r * 2u;
+      size_t h_bytes = (size_t)d1 * 2u;
+      size_t v_bytes = 0u, u_bytes = 0u;
+      if (r < 1u || r > BCIR_AI_LUT4_MAX_RANK || lp->rank != (size_t)r ||
+          bcir_ai_lut4_packed_bytes(r, d0, &v_bytes) != BCIR_AI_OK ||
+          bcir_ai_lut4_packed_bytes(d1, r, &u_bytes) != BCIR_AI_OK ||
+          lp->v_packed_bytes != v_bytes || lp->u_packed_bytes != u_bytes ||
+          lp->g_fp16_le != t->exponents + (size_t)scales_cursor ||
+          lp->l_fp16_le != t->exponents + (size_t)scales_cursor + g_bytes ||
+          lp->h_fp16_le != t->exponents + (size_t)scales_cursor + g_bytes + l_bytes ||
+          lp->v_packed != t->codes + (size_t)packed_cursor ||
+          lp->u_packed != t->codes + (size_t)packed_cursor + v_bytes)
+        return 0;
+      scales_cursor += (uint64_t)g_bytes + (uint64_t)l_bytes + (uint64_t)h_bytes;
+      packed_cursor += (uint64_t)v_bytes + (uint64_t)u_bytes;
+    }
+    return scales_cursor == t->lut4_scales_bytes && packed_cursor == t->lut4_packed_bytes;
+  }
+  if (t->encoding != BCIR_Q8_TENSOR_ENC_Q8) return 0;
   groups=(count+m->group_size-1u)/m->group_size;
   exponent_bytes=groups*2u;
   if(count!=t->element_count||groups!=t->group_count||
@@ -65,15 +101,23 @@ static int tensor_ready(const bcir_q8_model *m, uint16_t id, int16_t layer,
 }
 
 int bcir_llama_model_ready(const bcir_q8_model *m) {
-  uint32_t layer,d,dk,kvd,expected;
+  uint32_t layer,d,dk,kvd,expected,allowed_flags,idx,lut4_seen=0u;
   if(!m||m->_owner_tag!=BCIR_Q8_MODEL_OWNER_TAG||
      !bcir_host_allocator_valid(&m->_allocator)||!m->storage||!m->tensors||
      !m->group_size||m->bits!=8u||!m->vocab_size||!m->d_model||!m->n_heads||!m->n_kv_heads||
      !m->n_layers||!m->d_ff||m->n_layers>(uint32_t)INT16_MAX||
      m->d_model%m->n_heads||m->n_heads%m->n_kv_heads||
      (m->d_model/m->n_heads)%2u||!isfinite(m->rope_base)||m->rope_base<=0.0||
-     !isfinite(m->rms_norm_eps)||m->rms_norm_eps<=0.0||
-     (m->flags&~BCIR_Q8_FLAG_TIED_EMBEDDINGS)) return 0;
+     !isfinite(m->rms_norm_eps)||m->rms_norm_eps<=0.0) return 0;
+  if (m->version == BCIR_Q8_VERSION) {
+    allowed_flags = BCIR_Q8_FLAG_TIED_EMBEDDINGS;
+  } else if (m->version == BCIR_Q8_VERSION_V2) {
+    allowed_flags = BCIR_Q8_FLAG_TIED_EMBEDDINGS | BCIR_Q8_FLAG_HYBRID_LUT4_MLP;
+    if (!(m->flags & BCIR_Q8_FLAG_HYBRID_LUT4_MLP)) return 0;
+  } else {
+    return 0;
+  }
+  if (m->flags & ~allowed_flags) return 0;
   if ((m->bos_token_id != -1 &&
        (m->bos_token_id < 0 || (uint32_t)m->bos_token_id >= m->vocab_size)) ||
       (m->eos_token_id != -1 &&
@@ -98,8 +142,14 @@ int bcir_llama_model_ready(const bcir_q8_model *m) {
        !tensor_ready(m,BCIR_Q8_TENSOR_W_DOWN,li,2,m->d_ff,d)) return 0;
   }
   if(!tensor_ready(m,BCIR_Q8_TENSOR_G_FINAL,-1,1,d,1)) return 0;
-  return (m->flags&BCIR_Q8_FLAG_TIED_EMBEDDINGS)||
-         tensor_ready(m,BCIR_Q8_TENSOR_LM_HEAD,-1,2,m->vocab_size,d);
+  if(!(m->flags&BCIR_Q8_FLAG_TIED_EMBEDDINGS)&&
+     !tensor_ready(m,BCIR_Q8_TENSOR_LM_HEAD,-1,2,m->vocab_size,d)) return 0;
+  if (m->version == BCIR_Q8_VERSION_V2) {
+    for (idx = 0u; idx < m->tensor_count; ++idx)
+      if (m->tensors[idx].encoding == BCIR_Q8_TENSOR_ENC_LUT4_1B) lut4_seen++;
+    if (lut4_seen == 0u) return 0;
+  }
+  return 1;
 }
 
 int bcir_llama_ws_init(workspace *w, const bcir_q8_model *m, size_t capacity,
@@ -187,6 +237,15 @@ static int split_run(const workspace *w, split_job *job, bcir_llama_task_fn part
   return status;
 }
 
+static void lut4_matvec_part(void *ctx, size_t part) {
+  split_job *job = (split_job *)ctx;
+  size_t col0 = part * job->chunk;
+  size_t col1 = (job->out - col0 > job->chunk) ? (col0 + job->chunk) : job->out;
+  job->status[part] = bcir_ai_lut4_matvec_f64_columns(
+      job->x, job->in, job->weight->lut4_paths, job->weight->lut4_path_count,
+      job->out, col0, col1, job->y);
+}
+
 static void matvec_part(void *ctx, size_t part) {
   split_job *job = (split_job *)ctx;
   size_t k0 = part * job->chunk, k1 = job->out - k0 > job->chunk ? k0 + job->chunk : job->out;
@@ -201,7 +260,18 @@ static void matvec_part(void *ctx, size_t part) {
 static int matvec(const bcir_q8_model *m, const workspace *w, const double *x,
                   const bcir_q8_tensor *weight, uint32_t in, uint32_t out,
                   double *result) {
-  size_t parts = split_parts(w, (size_t)in * out, w != NULL ? w->runner.split_min : 0u, out, 8u);
+  size_t parts;
+  if (weight == NULL) return BCIR_AI_INVALID_ARGUMENT;
+  parts = split_parts(w, (size_t)in * out, w != NULL ? w->runner.split_min : 0u, out, 8u);
+  if (weight->encoding == BCIR_Q8_TENSOR_ENC_LUT4_1B) {
+    if (parts > 1u) {
+      split_job job;
+      job.m = m; job.x = x; job.weight = weight; job.in = in; job.out = out; job.y = result;
+      return split_run(w, &job, lut4_matvec_part, parts, 8u);
+    }
+    return bcir_ai_lut4_matvec_f64_prevalidated(
+        x, in, weight->lut4_paths, weight->lut4_path_count, out, result);
+  }
   if (parts > 1u) {
     split_job job;
     job.m = m; job.x = x; job.weight = weight; job.in = in; job.out = out; job.y = result;

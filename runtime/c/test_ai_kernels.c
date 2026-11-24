@@ -909,11 +909,257 @@ static int q4_group_test(void) {
   return 0;
 }
 
+#ifdef BCIR_AI_INSTANCE_PROBE
+int bcir_ai_lut4_instance_probe(void);
+#endif
+
+static uint16_t test_f32_to_fp16(float value) {
+  uint32_t bits, sign, exp, mant;
+  memcpy(&bits, &value, sizeof bits);
+  sign = (bits >> 16) & 0x8000u;
+  exp = (bits >> 23) & 0xFFu;
+  mant = bits & 0x7FFFFFu;
+  if (exp == 0xFFu) return (uint16_t)(sign | 0x7C00u | (mant ? 0x0200u : 0u));
+  if (exp < 103u) return (uint16_t)sign;
+  if (exp < 113u) {
+    uint32_t shift = 113u - exp;
+    uint32_t sig = (0x800000u | mant) >> (shift + 13u);
+    return (uint16_t)(sign | sig);
+  }
+  if (exp > 142u) return (uint16_t)(sign | 0x7BFFu);
+  return (uint16_t)(sign | ((exp - 112u) << 10) | (mant >> 13));
+}
+
+static void test_write_fp16(uint8_t *dst, size_t idx, float value) {
+  uint16_t h = test_f32_to_fp16(value);
+  dst[2u * idx] = (uint8_t)h;
+  dst[2u * idx + 1u] = (uint8_t)(h >> 8);
+}
+
+static double test_fp16_to_f64(const uint8_t *src, size_t idx) {
+  uint16_t raw = (uint16_t)((uint16_t)src[2u * idx] | ((uint16_t)src[2u * idx + 1u] << 8));
+  uint32_t sign = (uint32_t)(raw >> 15) & 1u;
+  uint32_t exp = (uint32_t)(raw >> 10) & 0x1Fu;
+  uint32_t mant = (uint32_t)(raw & 0x3FFu);
+  if (exp == 0u) return sign ? -ldexp((double)mant, -24) : ldexp((double)mant, -24);
+  {
+    uint32_t f32 = (sign << 31) | ((exp + 112u) << 23) | (mant << 13);
+    float f;
+    memcpy(&f, &f32, sizeof f);
+    return (double)f;
+  }
+}
+
+static int lut4_lanes_test(void) {
+  static const size_t shapes[][4] = {
+      {1, 1, 1, 1},     {7, 9, 3, 2},     {17, 33, 5, 2},   {32, 32, 8, 1},
+      {64, 64, 16, 2},  {130, 258, 13, 2}, {512, 1536, 48, 2}};
+  int instances = bcir_ai_lut4_instances();
+  int widest = instances & 4 ? 4 : instances & 2 ? 2 : 1;
+  int inst, checked = 0;
+  size_t q;
+  CHECK(instances == bcir_ai_q8_instances());
+  CHECK((instances & 1) && !(instances & ~7));
+
+  /* Packing & validation refusal tests: bad sign, non-zero row/col padding, non-finite FP16. */
+  {
+    int8_t bad_signs[6] = {1, -1, 0, 1, -1, 1};
+    int8_t good_signs[6] = {1, -1, 1, -1, -1, 1};
+    uint8_t packed[16];
+    size_t pbytes = 0u;
+    CHECK(bcir_ai_lut4_packed_bytes(2u, 3u, &pbytes) == BCIR_AI_OK && pbytes == 16u);
+    memset(packed, 0x5A, sizeof packed);
+    CHECK(bcir_ai_lut4_pack_signs(bad_signs, 2u, 3u, packed, sizeof packed) == BCIR_AI_INVALID_NUMBER);
+    CHECK(packed[0] == 0x5Au && packed[15] == 0x5Au);
+    CHECK(bcir_ai_lut4_pack_signs(good_signs, 2u, 3u, packed, sizeof packed) == BCIR_AI_OK);
+    CHECK(bcir_ai_lut4_validate_packed(packed, pbytes, 2u, 3u) == BCIR_AI_OK);
+    /* Non-zero padding row nibble (row 2 -> byte 2 low nibble). */
+    packed[2] = 0x01u;
+    CHECK(bcir_ai_lut4_validate_packed(packed, pbytes, 2u, 3u) == BCIR_AI_INVALID_NUMBER);
+    packed[2] = 0x00u;
+    /* Non-zero padding column bit (col 3 -> bit 3 of row 0). */
+    packed[0] = (uint8_t)(packed[0] | 0x08u);
+    CHECK(bcir_ai_lut4_validate_packed(packed, pbytes, 2u, 3u) == BCIR_AI_INVALID_NUMBER);
+    packed[0] = (uint8_t)(packed[0] & ~0x08u);
+    CHECK(bcir_ai_lut4_validate_packed(packed, pbytes, 2u, 3u) == BCIR_AI_OK);
+  }
+
+  for (q = 0u; q < sizeof shapes / sizeof *shapes; ++q) {
+    size_t in = shapes[q][0], out = shapes[q][1], rank = shapes[q][2], npaths = shapes[q][3];
+    size_t vbytes = 0u, ubytes = 0u, p, i, j, k;
+    int8_t *v_s[2] = {NULL, NULL}, *u_s[2] = {NULL, NULL};
+    uint8_t *v_p[2] = {NULL, NULL}, *u_p[2] = {NULL, NULL};
+    uint8_t *g_h[2] = {NULL, NULL}, *l_h[2] = {NULL, NULL}, *h_h[2] = {NULL, NULL};
+    bcir_ai_lut4_path paths[2];
+    double *x64 = malloc(in * sizeof *x64), *ref64 = malloc(out * sizeof *ref64);
+    double *got64 = malloc(out * sizeof *got64), *math64 = malloc(out * sizeof *math64);
+    float *x32 = malloc(in * sizeof *x32), *ref32 = malloc(out * sizeof *ref32);
+    float *got32 = malloc(out * sizeof *got32);
+    CHECK(bcir_ai_lut4_packed_bytes(rank, in, &vbytes) == BCIR_AI_OK);
+    CHECK(bcir_ai_lut4_packed_bytes(out, rank, &ubytes) == BCIR_AI_OK);
+    CHECK(x64 && ref64 && got64 && math64 && x32 && ref32 && got32);
+    for (i = 0u; i < in; ++i) {
+      double val = ((int)(lanes_next() % 4001u) - 2000) * 3.1e-4;
+      x64[i] = val;
+      x32[i] = (float)val;
+    }
+    for (p = 0u; p < npaths; ++p) {
+      v_s[p] = malloc(rank * in); u_s[p] = malloc(out * rank);
+      v_p[p] = malloc(vbytes);    u_p[p] = malloc(ubytes);
+      g_h[p] = malloc(2u * in);   l_h[p] = malloc(2u * rank); h_h[p] = malloc(2u * out);
+      CHECK(v_s[p] && u_s[p] && v_p[p] && u_p[p] && g_h[p] && l_h[p] && h_h[p]);
+      for (i = 0u; i < rank * in; ++i) v_s[p][i] = (lanes_next() & 1u) ? -1 : 1;
+      for (i = 0u; i < out * rank; ++i) u_s[p][i] = (lanes_next() & 1u) ? -1 : 1;
+      CHECK(bcir_ai_lut4_pack_signs(v_s[p], rank, in, v_p[p], vbytes) == BCIR_AI_OK);
+      CHECK(bcir_ai_lut4_pack_signs(u_s[p], out, rank, u_p[p], ubytes) == BCIR_AI_OK);
+      for (i = 0u; i < in; ++i) test_write_fp16(g_h[p], i, (float)(((int)(lanes_next() % 2001u) - 1000) * 1.1e-3));
+      for (i = 0u; i < rank; ++i) test_write_fp16(l_h[p], i, (float)(((int)(lanes_next() % 2001u) - 1000) * 1.3e-3));
+      for (i = 0u; i < out; ++i) test_write_fp16(h_h[p], i, (float)(((int)(lanes_next() % 2001u) - 1000) * 1.2e-3));
+      paths[p].rank = rank;
+      paths[p].v_packed = v_p[p]; paths[p].v_packed_bytes = vbytes;
+      paths[p].u_packed = u_p[p]; paths[p].u_packed_bytes = ubytes;
+      paths[p].g_fp16_le = g_h[p]; paths[p].l_fp16_le = l_h[p]; paths[p].h_fp16_le = h_h[p];
+    }
+    CHECK(bcir_ai_lut4_paths_validate(in, out, paths, npaths) == BCIR_AI_OK);
+
+    /* Independent scalar factorized reference in f64 (checks mathematical formula, not just self-consistency). */
+    for (j = 0u; j < out; ++j) math64[j] = 0.0;
+    for (p = 0u; p < npaths; ++p) {
+      double *z = calloc(rank, sizeof *z);
+      CHECK(z != NULL);
+      for (k = 0u; k < rank; ++k) {
+        double acc = 0.0;
+        for (i = 0u; i < in; ++i) acc += (double)v_s[p][k * in + i] * (x64[i] * test_fp16_to_f64(g_h[p], i));
+        z[k] = acc * test_fp16_to_f64(l_h[p], k);
+      }
+      for (j = 0u; j < out; ++j) {
+        double acc = 0.0;
+        for (k = 0u; k < rank; ++k) acc += (double)u_s[p][j * rank + k] * z[k];
+        math64[j] += acc * test_fp16_to_f64(h_h[p], j);
+      }
+      free(z);
+    }
+
+    CHECK(bcir_ai_lut4_matvec_f64_instance(1, x64, in, paths, npaths, out, ref64) == BCIR_AI_OK);
+    CHECK(bcir_ai_lut4_matvec_f32_instance(1, x32, in, paths, npaths, out, ref32) == BCIR_AI_OK);
+    for (j = 0u; j < out; ++j) {
+      CHECK(fabs(ref64[j] - math64[j]) <= 1e-11 * (1.0 + fabs(math64[j])));
+      CHECK(fabs((double)ref32[j] - math64[j]) <= 1e-4 * (1.0 + fabs(math64[j])));
+    }
+
+    /* 0 bit drift across all admitted instances (portable=1, AVX2=2, AVX-512=4, widest=0). */
+    for (inst = 0; inst <= 4; inst = inst ? inst * 2 : 1) {
+      if (inst && !(instances & inst)) continue;
+      memset(got64, 0x5A, out * sizeof *got64);
+      CHECK(bcir_ai_lut4_matvec_f64_instance(inst, x64, in, paths, npaths, out, got64) == BCIR_AI_OK);
+      CHECK(memcmp(ref64, got64, out * sizeof *ref64) == 0);
+#ifdef BCIR_AI_INSTANCE_PROBE
+      CHECK(bcir_ai_lut4_instance_probe() == (inst ? inst : widest));
+#endif
+      memset(got32, 0x5A, out * sizeof *got32);
+      CHECK(bcir_ai_lut4_matvec_f32_instance(inst, x32, in, paths, npaths, out, got32) == BCIR_AI_OK);
+      CHECK(memcmp(ref32, got32, out * sizeof *ref32) == 0);
+#ifdef BCIR_AI_INSTANCE_PROBE
+      CHECK(bcir_ai_lut4_instance_probe() == (inst ? inst : widest));
+#endif
+      ++checked;
+    }
+
+    /* DECODE-THREADS column slicing: unaligned & aligned ranges, 0 bit drift, outside untouched. */
+    {
+      size_t slices[4][2], ns = 0u, s;
+      slices[ns][0] = 0u; slices[ns++][1] = 1u;
+      slices[ns][0] = out - 1u; slices[ns++][1] = out;
+      if (out >= 5u) { slices[ns][0] = 1u; slices[ns++][1] = out - 2u; }
+      if (out >= 40u) { slices[ns][0] = 32u; slices[ns++][1] = out - 3u; }
+      for (s = 0u; s < ns; ++s) {
+        size_t k0 = slices[s][0], k1 = slices[s][1];
+        for (inst = 1; inst <= 4; inst *= 2) {
+          if (!(instances & inst)) continue;
+          memset(got64, 0x5A, out * sizeof *got64);
+          CHECK(bcir_ai_lut4_matvec_f64_columns_instance(inst, x64, in, paths, npaths, out, k0, k1, got64) ==
+                BCIR_AI_OK);
+          CHECK(memcmp(got64 + k0, ref64 + k0, (k1 - k0) * sizeof *ref64) == 0);
+          CHECK(lanes_untouched(got64, k0) && lanes_untouched(got64 + k1, out - k1));
+          memset(got32, 0x5A, out * sizeof *got32);
+          CHECK(bcir_ai_lut4_matvec_f32_columns_instance(inst, x32, in, paths, npaths, out, k0, k1, got32) ==
+                BCIR_AI_OK);
+          CHECK(memcmp(got32 + k0, ref32 + k0, (k1 - k0) * sizeof *ref32) == 0);
+        }
+      }
+    }
+
+    /* mb4 micro-batched prefill: token_count = 7 (1 full mb4 + 3 tail), 0 bit drift vs N x single-token. */
+    if (out <= 258u) {
+      enum { NTOK = 7 };
+      double *bx64 = malloc(NTOK * in * sizeof *bx64), *by64 = malloc(NTOK * out * sizeof *by64);
+      double *bref64 = malloc(NTOK * out * sizeof *bref64);
+      float *bx32 = malloc(NTOK * in * sizeof *bx32), *by32 = malloc(NTOK * out * sizeof *by32);
+      float *bref32 = malloc(NTOK * out * sizeof *bref32);
+      size_t tok;
+      CHECK(bx64 && by64 && bref64 && bx32 && by32 && bref32);
+      for (i = 0u; i < NTOK * in; ++i) {
+        double v = ((int)(lanes_next() % 4001u) - 2000) * 2.7e-4;
+        bx64[i] = v;
+        bx32[i] = (float)v;
+      }
+      for (tok = 0u; tok < NTOK; ++tok) {
+        CHECK(bcir_ai_lut4_matvec_f64_instance(1, bx64 + tok * in, in, paths, npaths, out,
+                                               bref64 + tok * out) == BCIR_AI_OK);
+        CHECK(bcir_ai_lut4_matvec_f32_instance(1, bx32 + tok * in, in, paths, npaths, out,
+                                               bref32 + tok * out) == BCIR_AI_OK);
+      }
+      for (inst = 0; inst <= 4; inst = inst ? inst * 2 : 1) {
+        if (inst && !(instances & inst)) continue;
+        memset(by64, 0x5A, NTOK * out * sizeof *by64);
+        CHECK(bcir_ai_lut4_matmul_mb4_f64_instance(inst, bx64, NTOK, in, paths, npaths, out, by64) ==
+              BCIR_AI_OK);
+        CHECK(memcmp(bref64, by64, NTOK * out * sizeof *bref64) == 0);
+        memset(by32, 0x5A, NTOK * out * sizeof *by32);
+        CHECK(bcir_ai_lut4_matmul_mb4_f32_instance(inst, bx32, NTOK, in, paths, npaths, out, by32) ==
+              BCIR_AI_OK);
+        CHECK(memcmp(bref32, by32, NTOK * out * sizeof *bref32) == 0);
+      }
+      free(bx64); free(by64); free(bref64); free(bx32); free(by32); free(bref32);
+    }
+
+    /* Non-finite FP16 scale refusal in g/l/h + non-finite input refusal + overflow zeroing. */
+    if (q == 2u) {
+      uint8_t saved0 = g_h[0][0], saved1 = g_h[0][1];
+      g_h[0][0] = 0x00u; g_h[0][1] = 0x7Cu; /* +Inf */
+      CHECK(bcir_ai_lut4_paths_validate(in, out, paths, npaths) == BCIR_AI_INVALID_NUMBER);
+      CHECK(bcir_ai_lut4_matvec_f64(x64, in, paths, npaths, out, got64) == BCIR_AI_INVALID_NUMBER);
+      g_h[0][0] = saved0; g_h[0][1] = saved1;
+
+      x64[0] = NAN;
+      memset(got64, 0x5A, out * sizeof *got64);
+      CHECK(bcir_ai_lut4_matvec_f64_instance(0, x64, in, paths, npaths, out, got64) == BCIR_AI_INVALID_ARGUMENT);
+      CHECK(lanes_untouched(got64, out));
+      x64[0] = DBL_MAX;
+      test_write_fp16(g_h[0], 0u, 8.0f);
+      CHECK(bcir_ai_lut4_matvec_f64_instance(0, x64, in, paths, npaths, out, got64) == BCIR_AI_INVALID_NUMBER);
+      for (j = 0u; j < out; ++j) CHECK(got64[j] == 0.0 && !signbit(got64[j]));
+    }
+
+    for (p = 0u; p < npaths; ++p) {
+      free(v_s[p]); free(u_s[p]); free(v_p[p]); free(u_p[p]);
+      free(g_h[p]); free(l_h[p]); free(h_h[p]);
+    }
+    free(x64); free(ref64); free(got64); free(math64);
+    free(x32); free(ref32); free(got32);
+  }
+  printf("LUT4-LANES: instances %d, %d f64/f32 comparisons bit-identical to portable (0 drift)\n",
+         instances, checked);
+  (void)widest;
+  return 0;
+}
+
 int main(void) {
   CHECK(bcir_ai_abi_version() == BCIR_AI_ABI_VERSION);
   CHECK(quantization_test() == 0);
   CHECK(q8_matrix_test() == 0);
   CHECK(q8_lanes_test() == 0);
+  CHECK(lut4_lanes_test() == 0);
   CHECK(q15_test() == 0);
   CHECK(q4_group_test() == 0);
   puts("native AI kernels: all gates passed");

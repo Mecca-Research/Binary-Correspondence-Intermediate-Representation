@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 MAGIC = b"BCIRQ8\0\0"
 VERSION = 1
+VERSION_V2 = 2
 HEADER_SIZE = 224
 DIRECTORY_ENTRY_SIZE = 48
 ENDIAN_MARKER = 0x01020304
@@ -42,6 +43,12 @@ DEFAULT_MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_DECODED_ELEMENTS = 8_000_000
 
 FLAG_TIED_EMBEDDINGS = 1 << 0
+FLAG_HYBRID_LUT4_MLP = 1 << 1
+
+TENSOR_ENC_Q8 = 0
+TENSOR_ENC_LUT4_1B = 1
+LUT4_MAX_PATHS = 2
+LUT4_MAX_RANK = 1024
 
 # Stable tensor ids.  Layer-local ids repeat with a distinct signed layer index.
 TENSOR_EMBEDDING = 1
@@ -57,10 +64,329 @@ TENSOR_W_DOWN = 18
 TENSOR_G_FINAL = 100
 TENSOR_LM_HEAD = 101
 
+# Container-level policy law: LUT4_1B is permitted ONLY on MLP projections.
+LUT4_ALLOWED_TENSOR_IDS = frozenset({TENSOR_W_GATE, TENSOR_W_UP, TENSOR_W_DOWN})
+
 _HEADER_PREFIX = struct.Struct("<8sHHIIHBB6I Iiii dd II QQQ II")
 _DIRECTORY = struct.Struct("<HhBBHIIIIIIQQ")
 assert _HEADER_PREFIX.size == 120
 assert _DIRECTORY.size == DIRECTORY_ENTRY_SIZE
+
+
+def lut4_packed_bytes(rows: int, cols: int) -> int:
+    """Exact byte length of a packed 1-bit LUT4 sign matrix [rows, cols].
+
+    Matches ``bcir_ai_lut4_packed_bytes`` bit-for-bit: 32-row blocks (two
+    nibbles per byte) over ``ceil(cols / 4)`` 4-column LUT groups.
+    """
+    if type(rows) is not int or type(cols) is not int or rows < 1 or cols < 1:
+        raise ValueError("LUT4 dimensions must be positive integers")
+    rows32 = (rows + 31) & ~31
+    bpg = rows32 >> 1
+    groups4 = (cols + 3) >> 2
+    return groups4 * bpg
+
+
+def pack_lut4_signs(signs, rows: int, cols: int) -> bytes:
+    """Pack row-major +1/-1 signs [rows, cols] into canonical LUT4 nibble layout."""
+    required = lut4_packed_bytes(rows, cols)
+    flat = tuple(int(v) for v in signs)
+    if len(flat) != rows * cols or any(v not in (-1, 1) for v in flat):
+        raise ValueError("LUT4 signs must contain rows*cols values in {-1, +1}")
+    out = bytearray(required)
+    bpg = ((rows + 31) & ~31) >> 1
+    for r in range(rows):
+        blk32 = r >> 5
+        lane = r & 15
+        is_hi = (r >> 4) & 1
+        row_base = r * cols
+        slot = (blk32 << 4) + lane
+        for c in range(cols):
+            if flat[row_base + c] < 0:
+                bit = 1 << (c & 3)
+                off = (c >> 2) * bpg + slot
+                out[off] |= (bit << 4) if is_hi else bit
+    return bytes(out)
+
+
+def validate_lut4_packed(packed: bytes, rows: int, cols: int) -> None:
+    """Verify exact byte length and canonical zero padding bits for a packed LUT4 matrix."""
+    required = lut4_packed_bytes(rows, cols)
+    if not isinstance(packed, (bytes, bytearray, memoryview)) or len(packed) != required:
+        raise ValueError(f"LUT4 packed buffer length {len(packed)} != required {required}")
+    raw = memoryview(packed)
+    rows32 = (rows + 31) & ~31
+    bpg = rows32 >> 1
+    groups4 = (cols + 3) >> 2
+    if rows < rows32:
+        for g in range(groups4):
+            base = g * bpg
+            for r in range(rows, rows32):
+                blk32 = r >> 5
+                lane = r & 15
+                byte = raw[base + (blk32 << 4) + lane]
+                nib = (byte >> 4) if ((r >> 4) & 1) else (byte & 0x0F)
+                if nib != 0:
+                    raise ValueError("LUT4 packed buffer has nonzero padding row bits")
+    tail = cols & 3
+    if tail:
+        pad_mask = 0x0F & ~((1 << tail) - 1)
+        base = (groups4 - 1) * bpg
+        for idx in range(bpg):
+            byte = raw[base + idx]
+            if ((byte & 0x0F) & pad_mask) or (((byte >> 4) & 0x0F) & pad_mask):
+                raise ValueError("LUT4 packed buffer has nonzero trailing column bits")
+
+
+def unpack_lut4_signs(packed: bytes, rows: int, cols: int) -> tuple[int, ...]:
+    """Unpack canonical LUT4 bytes into row-major +1/-1 signs [rows, cols]."""
+    validate_lut4_packed(packed, rows, cols)
+    raw = memoryview(packed)
+    bpg = ((rows + 31) & ~31) >> 1
+    out = [1] * (rows * cols)
+    for r in range(rows):
+        blk32 = r >> 5
+        lane = r & 15
+        is_hi = (r >> 4) & 1
+        slot = (blk32 << 4) + lane
+        row_base = r * cols
+        for c in range(cols):
+            byte = raw[(c >> 2) * bpg + slot]
+            nib = (byte >> 4) if is_hi else (byte & 0x0F)
+            if nib & (1 << (c & 3)):
+                out[row_base + c] = -1
+    return tuple(out)
+
+
+def encode_fp16_le(values) -> bytes:
+    """Pack finite numeric values into little-endian IEEE-754 binary16 bytes."""
+    buf = bytearray()
+    for val in values:
+        fval = float(val)
+        if not math.isfinite(fval):
+            raise ValueError("LUT4 binary16 scale must be finite")
+        try:
+            packed = struct.pack("<e", fval)
+        except OverflowError as exc:
+            raise ValueError(f"LUT4 scale {fval!r} overflows IEEE-754 binary16") from exc
+        if not math.isfinite(struct.unpack("<e", packed)[0]):
+            raise ValueError(f"LUT4 scale {fval!r} rounded to non-finite binary16")
+        buf.extend(packed)
+    return bytes(buf)
+
+
+def decode_fp16_le(raw: bytes) -> tuple[float, ...]:
+    """Decode little-endian IEEE-754 binary16 bytes, rejecting NaN/Inf."""
+    if not isinstance(raw, (bytes, bytearray, memoryview)) or len(raw) % 2:
+        raise ValueError("LUT4 binary16 buffer must have even byte length")
+    values = tuple(val for (val,) in struct.iter_unpack("<e", raw))
+    if any(not math.isfinite(val) for val in values):
+        raise ValueError("LUT4 binary16 scales contain non-finite NaN or Inf")
+    return values
+
+
+@dataclass(frozen=True)
+class Lut4Path:
+    """One packed-1-bit factorized path: W_p = diag(h) @ U @ diag(l) @ V @ diag(g)."""
+
+    rank: int
+    v_packed: bytes  # [rank, in_dim]
+    u_packed: bytes  # [out_dim, rank]
+    g_fp16_le: bytes  # in_dim * 2 bytes
+    l_fp16_le: bytes  # rank * 2 bytes
+    h_fp16_le: bytes  # out_dim * 2 bytes
+
+    def validate(self, in_dim: int, out_dim: int) -> None:
+        if (
+            type(self.rank) is not int
+            or self.rank < 1
+            or self.rank > LUT4_MAX_RANK
+            or self.rank > min(in_dim, out_dim)
+        ):
+            raise ValueError(
+                f"LUT4 rank {self.rank} must be in [1, min({in_dim}, {out_dim}, {LUT4_MAX_RANK})]"
+            )
+        validate_lut4_packed(self.v_packed, self.rank, in_dim)
+        validate_lut4_packed(self.u_packed, out_dim, self.rank)
+        if (
+            len(self.g_fp16_le) != in_dim * 2
+            or len(self.l_fp16_le) != self.rank * 2
+            or len(self.h_fp16_le) != out_dim * 2
+        ):
+            raise ValueError("LUT4 binary16 scale byte lengths do not match dimensions")
+        decode_fp16_le(self.g_fp16_le)
+        decode_fp16_le(self.l_fp16_le)
+        decode_fp16_le(self.h_fp16_le)
+
+    @property
+    def scales_blob(self) -> bytes:
+        return self.g_fp16_le + self.l_fp16_le + self.h_fp16_le
+
+    @property
+    def packed_blob(self) -> bytes:
+        return self.v_packed + self.u_packed
+
+
+@dataclass(frozen=True)
+class Lut4Tensor:
+    """One container-validated MLP projection encoded in BCIRQ8 v2 LUT4_1B."""
+
+    tensor_id: int
+    layer: int
+    in_dim: int
+    out_dim: int
+    paths: tuple[Lut4Path, ...]
+
+    def __post_init__(self) -> None:
+        if self.tensor_id not in LUT4_ALLOWED_TENSOR_IDS:
+            raise ValueError(
+                f"LUT4_1B is permitted only on MLP tensors {sorted(LUT4_ALLOWED_TENSOR_IDS)}; "
+                f"refused tensor_id={self.tensor_id}"
+            )
+        if type(self.layer) is not int or not 0 <= self.layer <= 0x7FFF:
+            raise ValueError("LUT4_1B tensor layer must be in [0, 32767]")
+        if (
+            type(self.in_dim) is not int
+            or self.in_dim < 1
+            or type(self.out_dim) is not int
+            or self.out_dim < 1
+        ):
+            raise ValueError("LUT4_1B dimensions must be positive integers")
+        if not isinstance(self.paths, tuple) or not 1 <= len(self.paths) <= LUT4_MAX_PATHS:
+            raise ValueError(f"LUT4_1B requires 1..{LUT4_MAX_PATHS} Lut4Path entries")
+        for path in self.paths:
+            if not isinstance(path, Lut4Path):
+                raise ValueError("LUT4_1B paths must be Lut4Path instances")
+            path.validate(self.in_dim, self.out_dim)
+
+    @property
+    def scales_blob(self) -> bytes:
+        return b"".join(p.scales_blob for p in self.paths)
+
+    @property
+    def packed_blob(self) -> bytes:
+        return b"".join(p.packed_blob for p in self.paths)
+
+    @property
+    def scales_bytes(self) -> int:
+        return sum(2 * (self.in_dim + p.rank + self.out_dim) for p in self.paths)
+
+    @property
+    def packed_bytes(self) -> int:
+        return sum(len(p.v_packed) + len(p.u_packed) for p in self.paths)
+
+    @property
+    def total_bytes(self) -> int:
+        return self.scales_bytes + self.packed_bytes
+
+    @property
+    def packed_ranks_u32(self) -> int:
+        r0 = self.paths[0].rank
+        r1 = self.paths[1].rank if len(self.paths) > 1 else 0
+        return r0 | (r1 << 16)
+
+
+def _lut4_build_table(x0: float, x1: float, x2: float, x3: float) -> tuple[float, ...]:
+    s01_pp = x0 + x1
+    s01_mp = -x0 + x1
+    s01_pm = x0 - x1
+    s01_mm = -x0 - x1
+    s23_pp = x2 + x3
+    s23_mp = -x2 + x3
+    s23_pm = x2 - x3
+    s23_mm = -x2 - x3
+    return (
+        s01_pp + s23_pp,
+        s01_mp + s23_pp,
+        s01_pm + s23_pp,
+        s01_mm + s23_pp,
+        s01_pp + s23_mp,
+        s01_mp + s23_mp,
+        s01_pm + s23_mp,
+        s01_mm + s23_mp,
+        s01_pp + s23_pm,
+        s01_mp + s23_pm,
+        s01_pm + s23_pm,
+        s01_mm + s23_pm,
+        s01_pp + s23_mm,
+        s01_mp + s23_mm,
+        s01_pm + s23_mm,
+        s01_mm + s23_mm,
+    )
+
+
+def _lut4_gemv_ref(packed: bytes, rows: int, cols: int, x: list[float]) -> list[float]:
+    groups4 = (cols + 3) >> 2
+    bpg = ((rows + 31) & ~31) >> 1
+    luts = []
+    for g in range(groups4):
+        c0 = g * 4
+        x0 = x[c0] if c0 < cols else 0.0
+        x1 = x[c0 + 1] if c0 + 1 < cols else 0.0
+        x2 = x[c0 + 2] if c0 + 2 < cols else 0.0
+        x3 = x[c0 + 3] if c0 + 3 < cols else 0.0
+        luts.append(_lut4_build_table(x0, x1, x2, x3))
+    out = [0.0] * rows
+    for r in range(rows):
+        blk32 = r >> 5
+        lane = r & 15
+        is_hi = (r >> 4) & 1
+        slot = (blk32 << 4) + lane
+        acc = 0.0
+        for g in range(groups4):
+            byte = packed[g * bpg + slot]
+            nib = (byte >> 4) if is_hi else (byte & 0x0F)
+            acc += luts[g][nib]
+        out[r] = acc
+    return out
+
+
+def lut4_matvec_reference(
+    input_values, in_dim: int, out_dim: int, paths: tuple[Lut4Path, ...]
+) -> tuple[float, ...]:
+    """Deterministic Python oracle matching ``bcir_ai_lut4_matvec_f64`` bit-for-bit."""
+    x = [float(v) for v in input_values]
+    if len(x) != in_dim or any(not math.isfinite(v) for v in x):
+        raise ValueError("LUT4 matvec input must have in_dim finite floats")
+    out = [0.0] * out_dim
+    for path in paths:
+        g = decode_fp16_le(path.g_fp16_le)
+        lam = decode_fp16_le(path.l_fp16_le)
+        h = decode_fp16_le(path.h_fp16_le)
+        scaled = [x[i] * g[i] for i in range(in_dim)]
+        latent = _lut4_gemv_ref(path.v_packed, path.rank, in_dim, scaled)
+        for r in range(path.rank):
+            latent[r] *= lam[r]
+        proj = _lut4_gemv_ref(path.u_packed, out_dim, path.rank, latent)
+        for j in range(out_dim):
+            val = out[j] + proj[j] * h[j]
+            if not math.isfinite(val):
+                raise ValueError("LUT4 matvec produced non-finite output")
+            out[j] = val
+    return tuple(out)
+
+
+def reconstruct_lut4_matrix(tensor: Lut4Tensor) -> tuple[float, ...]:
+    """Reconstruct dense row-major [in_dim, out_dim] matrix for a Lut4Tensor."""
+    in_dim, out_dim = tensor.in_dim, tensor.out_dim
+    mat = [0.0] * (in_dim * out_dim)
+    for path in tensor.paths:
+        g = decode_fp16_le(path.g_fp16_le)
+        lam = decode_fp16_le(path.l_fp16_le)
+        h = decode_fp16_le(path.h_fp16_le)
+        v = unpack_lut4_signs(path.v_packed, path.rank, in_dim)
+        u = unpack_lut4_signs(path.u_packed, out_dim, path.rank)
+        for i in range(in_dim):
+            gi = g[i]
+            row_off = i * out_dim
+            v_col = [v[r * in_dim + i] * lam[r] * gi for r in range(path.rank)]
+            for j in range(out_dim):
+                u_off = j * path.rank
+                acc = 0.0
+                for r in range(path.rank):
+                    acc += v_col[r] * u[u_off + r]
+                mat[row_off + j] += acc * h[j]
+    return tuple(mat)
 
 
 @dataclass(frozen=True)
@@ -80,6 +406,7 @@ class Q8ArtifactMetadata:
     bos_token_id: int
     eos_token_id: int
     pad_token_id: int
+    lut4_tensor_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -97,6 +424,7 @@ class _DirectoryEntry:
     layer: int
     rank: int
     flags: int
+    reserved: int
     dims: tuple[int, int]
     element_count: int
     group_count: int
@@ -199,18 +527,16 @@ def write_q8_decoder(
     max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
     max_elements: int = DEFAULT_MAX_DECODED_ELEMENTS,
     native_kernels: NativeAIKernels | None = None,
+    lut4_tensors: Mapping[tuple[int, int], Lut4Tensor] | None = None,
 ) -> Q8ArtifactMetadata:
-    """Write one atomic, deterministic ``BCIRQ8 v1`` artifact.
+    """Write one atomic, deterministic ``BCIRQ8 v1`` or ``BCIRQ8 v2`` artifact.
 
-    ``source_hashes`` accepts ``model``, ``config`` and ``tokenizer`` SHA-256
-    values.  ``tokenizer_ids`` accepts ``bos``/``eos``/``pad`` (or the HF
-    ``*_token_id`` spellings).  ``context_length`` may be supplied explicitly;
-    otherwise ``tokenizer_ids['context_length']`` or ``spec.context_length`` is
-    used, falling back to zero for synthetic fixtures. ``max_bytes`` and
-    ``max_elements`` bound the in-memory export before any tensor is copied or
-    quantized; callers must explicitly opt into larger artifacts. Supplying a
-    typed ``NativeAIKernels`` instance moves group quantization into the checked
-    C data plane; omission retains the independent Python oracle.
+    When ``lut4_tensors`` is ``None`` (the default), writes an exact ``BCIRQ8 v1``
+    per-group symmetric Q8 artifact bit-for-bit identically to earlier versions.
+    When ``lut4_tensors`` is supplied, writes a ``BCIRQ8 v2`` hybrid container
+    with ``FLAG_HYBRID_LUT4_MLP`` set, encoding only validated MLP tensors
+    (``W_GATE``, ``W_UP``, ``W_DOWN``) in ``LUT4_1B`` while keeping Attention,
+    embeddings, RMSNorms, and LM head in deterministic per-group Q8.
     """
     if not isinstance(spec, DecoderSpec):
         raise ValueError("spec must be a DecoderSpec")
@@ -241,21 +567,70 @@ def write_q8_decoder(
     if spec.n_layers > 0x7FFF:
         raise ValueError("n_layers must fit the BCIRQ8 signed i16 layer field")
     d, f, kvd = spec.d_model, spec.d_ff, spec.kv_dim
-    tensor_counts = [spec.vocab_size * d]
-    for _ in range(spec.n_layers):
-        tensor_counts.extend((d, d * d, d * kvd, d * kvd, d * d, d, d * f, d * f, f * d))
-    tensor_counts.append(d)
+    tensor_inventory: list[tuple[int, int, tuple[int, int], int]] = [
+        (TENSOR_EMBEDDING, -1, (spec.vocab_size, d), spec.vocab_size * d)
+    ]
+    for layer in range(spec.n_layers):
+        tensor_inventory.extend(
+            (
+                (TENSOR_G_ATTN, layer, (d, 1), d),
+                (TENSOR_W_Q, layer, (d, d), d * d),
+                (TENSOR_W_K, layer, (d, kvd), d * kvd),
+                (TENSOR_W_V, layer, (d, kvd), d * kvd),
+                (TENSOR_W_O, layer, (d, d), d * d),
+                (TENSOR_G_FF, layer, (d, 1), d),
+                (TENSOR_W_GATE, layer, (d, f), d * f),
+                (TENSOR_W_UP, layer, (d, f), d * f),
+                (TENSOR_W_DOWN, layer, (f, d), f * d),
+            )
+        )
+    tensor_inventory.append((TENSOR_G_FINAL, -1, (d, 1), d))
     if not spec.tied_embeddings:
-        tensor_counts.append(spec.vocab_size * d)
-    element_count = sum(tensor_counts)
+        tensor_inventory.append((TENSOR_LM_HEAD, -1, (spec.vocab_size, d), spec.vocab_size * d))
+
+    lut4_map: dict[tuple[int, int], Lut4Tensor] = {}
+    if lut4_tensors is not None:
+        if not isinstance(lut4_tensors, Mapping) or len(lut4_tensors) == 0:
+            raise ValueError(
+                "lut4_tensors must be a non-empty mapping for BCIRQ8 v2, or None for BCIRQ8 v1"
+            )
+        valid_dims = {(tid, lyr): dims for tid, lyr, dims, _ in tensor_inventory}
+        for key, lt in lut4_tensors.items():
+            if not isinstance(lt, Lut4Tensor):
+                raise ValueError(f"lut4_tensors[{key!r}] must be a Lut4Tensor")
+            if key != (lt.tensor_id, lt.layer):
+                raise ValueError(
+                    f"lut4_tensors key {key!r} disagrees with Lut4Tensor {(lt.tensor_id, lt.layer)}"
+                )
+            if lt.tensor_id not in LUT4_ALLOWED_TENSOR_IDS:
+                raise ValueError(
+                    f"LUT4_1B is permitted only on MLP tensors; refused tensor_id={lt.tensor_id}"
+                )
+            if key not in valid_dims:
+                raise ValueError(f"lut4_tensors key {key!r} is outside model layer inventory")
+            if (lt.in_dim, lt.out_dim) != valid_dims[key]:
+                raise ValueError(
+                    f"lut4_tensors[{key!r}] shape {(lt.in_dim, lt.out_dim)} != {valid_dims[key]}"
+                )
+            lut4_map[key] = lt
+
+    element_count = sum(count for _, _, _, count in tensor_inventory)
     if element_count > max_elements:
         raise ValueError(f"BCIRQ8 export has {element_count} elements; limit is {max_elements}")
-    predicted_size = _align8(HEADER_SIZE + len(tensor_counts) * DIRECTORY_ENTRY_SIZE)
-    for count in tensor_counts:
-        predicted_size = _align8(predicted_size)
-        predicted_size += 2 * ((count + group_size - 1) // group_size)
-        predicted_size = _align8(predicted_size)
-        predicted_size += count
+    predicted_size = _align8(HEADER_SIZE + len(tensor_inventory) * DIRECTORY_ENTRY_SIZE)
+    for tid, lyr, _, count in tensor_inventory:
+        key = (tid, lyr)
+        if key in lut4_map:
+            lt = lut4_map[key]
+            predicted_size = _align8(predicted_size)
+            predicted_size += lt.scales_bytes
+            predicted_size = _align8(predicted_size)
+            predicted_size += lt.packed_bytes
+        else:
+            predicted_size = _align8(predicted_size)
+            predicted_size += 2 * ((count + group_size - 1) // group_size)
+            predicted_size = _align8(predicted_size)
+            predicted_size += count
     if predicted_size > max_bytes:
         raise ValueError(f"BCIRQ8 export is {predicted_size} bytes; limit is {max_bytes}")
     if context_length is None:
@@ -292,17 +667,28 @@ def write_q8_decoder(
         )
 
     for tensor in tensors:
-        if native_kernels is None:
-            groups = quantize_per_group(tensor.values, group_size, BITS)
-            exponent_bytes = struct.pack(f"<{len(groups)}h", *(g.scale_exp for g in groups))
-            code_values = [code for group in groups for code in group.codes]
-            code_bytes = struct.pack(f"<{len(code_values)}b", *code_values)
-            group_count = len(groups)
+        key = (tensor.tensor_id, tensor.layer)
+        if key in lut4_map:
+            lt = lut4_map[key]
+            exponent_bytes = lt.scales_blob
+            code_bytes = lt.packed_blob
+            entry_flags = TENSOR_ENC_LUT4_1B
+            entry_reserved = len(lt.paths)
+            group_field = lt.packed_ranks_u32
         else:
-            native = native_kernels.quantize(tensor.values, group_size=group_size, bits=BITS)
-            exponent_bytes = native.exponent_bytes_le
-            code_bytes = native.codes
-            group_count = len(native.exponents)
+            if native_kernels is None:
+                groups = quantize_per_group(tensor.values, group_size, BITS)
+                exponent_bytes = struct.pack(f"<{len(groups)}h", *(g.scale_exp for g in groups))
+                code_values = [code for group in groups for code in group.codes]
+                code_bytes = struct.pack(f"<{len(code_values)}b", *code_values)
+                group_field = len(groups)
+            else:
+                native = native_kernels.quantize(tensor.values, group_size=group_size, bits=BITS)
+                exponent_bytes = native.exponent_bytes_le
+                code_bytes = native.codes
+                group_field = len(native.exponents)
+            entry_flags = TENSOR_ENC_Q8
+            entry_reserved = 0
         pad_payload()
         exponent_offset = payload_offset + len(payload)
         payload.extend(exponent_bytes)
@@ -316,10 +702,11 @@ def write_q8_decoder(
                 tensor.tensor_id,
                 tensor.layer,
                 tensor.rank,
-                0,
+                entry_flags,
+                entry_reserved,
                 tensor.dims,
                 len(tensor.values),
-                group_count,
+                group_field,
                 crc,
                 exponent_offset,
                 code_offset,
@@ -335,7 +722,7 @@ def write_q8_decoder(
                 entry.layer,
                 entry.rank,
                 entry.flags,
-                0,
+                entry.reserved,
                 entry.dims[0],
                 entry.dims[1],
                 entry.element_count,
@@ -349,10 +736,13 @@ def write_q8_decoder(
     directory.extend(b"\0" * (payload_offset - directory_offset - len(directory)))
     body = bytes(directory) + bytes(payload)
     body_crc = zlib.crc32(body) & 0xFFFFFFFF
+    version_out = VERSION_V2 if lut4_map else VERSION
     flags = FLAG_TIED_EMBEDDINGS if spec.tied_embeddings else 0
+    if lut4_map:
+        flags |= FLAG_HYBRID_LUT4_MLP
     prefix = _HEADER_PREFIX.pack(
         MAGIC,
-        VERSION,
+        version_out,
         HEADER_SIZE,
         ENDIAN_MARKER,
         flags,
@@ -409,7 +799,7 @@ def write_q8_decoder(
         raise
 
     return Q8ArtifactMetadata(
-        VERSION,
+        version_out,
         group_size,
         BITS,
         len(entries),
@@ -424,6 +814,7 @@ def write_q8_decoder(
         bos,
         eos,
         pad,
+        len(lut4_map),
     )
 
 
@@ -437,11 +828,20 @@ def _checked_span(
 
 
 def _read_directory(
-    raw: bytes, *, tensor_count: int, directory_offset: int, payload_offset: int, group_size: int
-) -> list[_DirectoryEntry]:
+    raw: bytes,
+    *,
+    version: int,
+    header_flags: int,
+    tensor_count: int,
+    directory_offset: int,
+    payload_offset: int,
+    group_size: int,
+) -> tuple[list[_DirectoryEntry], dict[tuple[int, int], Lut4Tensor]]:
     entries: list[_DirectoryEntry] = []
+    lut4_tensors: dict[tuple[int, int], Lut4Tensor] = {}
     spans: list[tuple[int, int, str]] = []
     keys: set[tuple[int, int]] = set()
+    view = memoryview(raw)
     for index in range(tensor_count):
         off = directory_offset + index * DIRECTORY_ENTRY_SIZE
         fields = _DIRECTORY.unpack_from(raw, off)
@@ -449,7 +849,7 @@ def _read_directory(
             tensor_id,
             layer,
             rank,
-            flags,
+            eflags,
             reserved,
             dim0,
             dim1,
@@ -460,7 +860,7 @@ def _read_directory(
             exponent_offset,
             code_offset,
         ) = fields
-        if reserved or reserved2 or flags:
+        if reserved2:
             raise ValueError(f"tensor directory entry {index} has nonzero reserved fields")
         if rank not in (1, 2) or dim0 < 1 or dim1 < 1:
             raise ValueError(f"tensor directory entry {index} has invalid rank/dimensions")
@@ -469,35 +869,102 @@ def _read_directory(
             raise ValueError(
                 f"tensor directory entry {index} element count does not match dimensions"
             )
-        expected_groups = (count + group_size - 1) // group_size
-        if groups != expected_groups:
-            raise ValueError(f"tensor directory entry {index} group count is invalid")
-        e_span = _checked_span(
-            len(raw),
-            exponent_offset,
-            groups * 2,
-            f"tensor {index} exponents",
-            lower_bound=payload_offset,
-        )
-        c_span = _checked_span(
-            len(raw), code_offset, count, f"tensor {index} codes", lower_bound=payload_offset
-        )
         if exponent_offset % 8 or code_offset % 8:
             raise ValueError(f"tensor directory entry {index} payload is not 8-byte aligned")
-        exponent_view = memoryview(raw)[exponent_offset : exponent_offset + groups * 2]
-        if any(
-            exponent < -300 or exponent > 300
-            for (exponent,) in struct.iter_unpack("<h", exponent_view)
-        ):
-            raise ValueError(f"tensor directory entry {index} has an invalid Q8 exponent")
-        if raw.find(b"\x80", code_offset, code_offset + count) >= 0:
-            raise ValueError(f"tensor directory entry {index} uses the non-canonical -128 code")
+        if eflags == TENSOR_ENC_LUT4_1B:
+            if version != VERSION_V2 or not (header_flags & FLAG_HYBRID_LUT4_MLP):
+                raise ValueError(
+                    f"tensor directory entry {index} uses LUT4_1B outside BCIRQ8 v2 hybrid format"
+                )
+            if tensor_id not in LUT4_ALLOWED_TENSOR_IDS or rank != 2 or layer < 0:
+                raise ValueError(
+                    f"LUT4_1B is permitted only on MLP tensors; refused tensor_id={tensor_id}"
+                )
+            path_count = reserved
+            if not 1 <= path_count <= LUT4_MAX_PATHS:
+                raise ValueError(
+                    f"tensor directory entry {index} has invalid LUT4 path count {path_count}"
+                )
+            r0 = groups & 0xFFFF
+            r1 = (groups >> 16) & 0xFFFF
+            ranks = [r0] if path_count == 1 else [r0, r1]
+            if path_count == 1 and r1 != 0:
+                raise ValueError(
+                    f"tensor directory entry {index} has nonzero residual rank on 1-path LUT4"
+                )
+            max_r = min(dim0, dim1, LUT4_MAX_RANK)
+            if any(not 1 <= r <= max_r for r in ranks):
+                raise ValueError(
+                    f"tensor directory entry {index} has out-of-range LUT4 ranks {ranks}"
+                )
+            scales_len = sum(2 * (dim0 + r + dim1) for r in ranks)
+            packed_len = sum(lut4_packed_bytes(r, dim0) + lut4_packed_bytes(dim1, r) for r in ranks)
+            e_span = _checked_span(
+                len(raw),
+                exponent_offset,
+                scales_len,
+                f"tensor {index} lut4 scales",
+                lower_bound=payload_offset,
+            )
+            c_span = _checked_span(
+                len(raw),
+                code_offset,
+                packed_len,
+                f"tensor {index} lut4 packed",
+                lower_bound=payload_offset,
+            )
+            s_cur = e_span[0]
+            p_cur = c_span[0]
+            parsed_paths: list[Lut4Path] = []
+            for r in ranks:
+                g_b = bytes(view[s_cur : s_cur + dim0 * 2])
+                s_cur += dim0 * 2
+                l_b = bytes(view[s_cur : s_cur + r * 2])
+                s_cur += r * 2
+                h_b = bytes(view[s_cur : s_cur + dim1 * 2])
+                s_cur += dim1 * 2
+                v_len = lut4_packed_bytes(r, dim0)
+                u_len = lut4_packed_bytes(dim1, r)
+                v_b = bytes(view[p_cur : p_cur + v_len])
+                p_cur += v_len
+                u_b = bytes(view[p_cur : p_cur + u_len])
+                p_cur += u_len
+                parsed_paths.append(Lut4Path(r, v_b, u_b, g_b, l_b, h_b))
+            lt = Lut4Tensor(tensor_id, layer, dim0, dim1, tuple(parsed_paths))
+            lut4_tensors[(tensor_id, layer)] = lt
+        elif eflags == TENSOR_ENC_Q8:
+            if reserved:
+                raise ValueError(f"tensor directory entry {index} has nonzero reserved fields")
+            expected_groups = (count + group_size - 1) // group_size
+            if groups != expected_groups:
+                raise ValueError(f"tensor directory entry {index} group count is invalid")
+            e_span = _checked_span(
+                len(raw),
+                exponent_offset,
+                groups * 2,
+                f"tensor {index} exponents",
+                lower_bound=payload_offset,
+            )
+            c_span = _checked_span(
+                len(raw), code_offset, count, f"tensor {index} codes", lower_bound=payload_offset
+            )
+            exponent_view = view[exponent_offset : exponent_offset + groups * 2]
+            if any(
+                exponent < -300 or exponent > 300
+                for (exponent,) in struct.iter_unpack("<h", exponent_view)
+            ):
+                raise ValueError(f"tensor directory entry {index} has an invalid Q8 exponent")
+            if raw.find(b"\x80", code_offset, code_offset + count) >= 0:
+                raise ValueError(f"tensor directory entry {index} uses the non-canonical -128 code")
+        else:
+            raise ValueError(
+                f"tensor directory entry {index} has unsupported encoding flag {eflags}"
+            )
         spans.extend(((*e_span, f"tensor {index} exponents"), (*c_span, f"tensor {index} codes")))
         key = (tensor_id, layer)
         if key in keys:
             raise ValueError(f"duplicate tensor id/layer {key}")
         keys.add(key)
-        view = memoryview(raw)
         actual = zlib.crc32(view[e_span[0] : e_span[1]])
         actual = zlib.crc32(view[c_span[0] : c_span[1]], actual) & 0xFFFFFFFF
         if actual != crc:
@@ -507,7 +974,8 @@ def _read_directory(
                 tensor_id,
                 layer,
                 rank,
-                flags,
+                eflags,
+                reserved,
                 (dim0, dim1),
                 count,
                 groups,
@@ -516,11 +984,13 @@ def _read_directory(
                 code_offset,
             )
         )
+    if version == VERSION_V2 and not lut4_tensors:
+        raise ValueError("BCIRQ8 v2 artifact must contain at least one LUT4_1B MLP tensor")
     spans.sort()
     for left, right in zip(spans, spans[1:]):
         if left[1] > right[0]:
             raise ValueError(f"overlapping tensor payloads: {left[2]} and {right[2]}")
-    return entries
+    return entries, lut4_tensors
 
 
 def _decode_values(raw: bytes, entry: _DirectoryEntry, group_size: int) -> tuple[float, ...]:
@@ -553,18 +1023,21 @@ def _expect(
     return entry
 
 
-def read_q8_decoder(
+def read_q8_decoder_v2(
     path: os.PathLike | str,
     *,
     max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
     max_elements: int = DEFAULT_MAX_DECODED_ELEMENTS,
-) -> tuple[DecoderSpec, DecoderWeights, Q8ArtifactMetadata]:
-    """Validate and read a ``BCIRQ8 v1`` artifact.
+    reconstruct_lut4: bool = True,
+) -> tuple[DecoderSpec, DecoderWeights, dict[tuple[int, int], Lut4Tensor], Q8ArtifactMetadata]:
+    """Validate and read a ``BCIRQ8 v1`` or ``BCIRQ8 v2`` artifact.
 
-    Unknown, missing, duplicated, overlapping, truncated, or corrupt tensors are
-    rejected before a decoder object is constructed. The default byte and decoded-
-    element ceilings are safe reference limits; larger trusted models require an
-    explicit opt-in through ``max_bytes`` and ``max_elements``.
+    Returns ``(spec, weights, lut4_tensors, metadata)``.  For ``BCIRQ8 v1``
+    artifacts, ``lut4_tensors`` is empty.  For ``BCIRQ8 v2`` hybrid artifacts,
+    ``lut4_tensors`` maps ``(tensor_id, layer)`` to validated :class:`Lut4Tensor`
+    instances, and when ``reconstruct_lut4`` is True the corresponding dense
+    weights are reconstructed in ``weights`` (otherwise zeros fill those MLP
+    slots while Attention/embeddings/norms/LM head are decoded normally).
     """
     if type(max_bytes) is not int or max_bytes < HEADER_SIZE:
         raise ValueError(f"max_bytes must be an integer >= {HEADER_SIZE}")
@@ -613,12 +1086,19 @@ def read_q8_decoder(
     ) = fields
     if magic != MAGIC:
         raise ValueError("bad BCIRQ8 magic")
-    if version != VERSION or header_size != HEADER_SIZE:
+    if version not in (VERSION, VERSION_V2) or header_size != HEADER_SIZE:
         raise ValueError(f"unsupported BCIRQ8 version/header {version}/{header_size}")
     if endian != ENDIAN_MARKER or bits != BITS or reserved:
         raise ValueError("unsupported BCIRQ8 endian/bits/reserved fields")
-    if flags & ~FLAG_TIED_EMBEDDINGS:
+    allowed_flags = (
+        FLAG_TIED_EMBEDDINGS
+        if version == VERSION
+        else (FLAG_TIED_EMBEDDINGS | FLAG_HYBRID_LUT4_MLP)
+    )
+    if flags & ~allowed_flags:
         raise ValueError("BCIRQ8 header has unknown flags")
+    if version == VERSION_V2 and not (flags & FLAG_HYBRID_LUT4_MLP):
+        raise ValueError("BCIRQ8 v2 header requires FLAG_HYBRID_LUT4_MLP")
     if any(raw[216:HEADER_SIZE]):
         raise ValueError("BCIRQ8 header has nonzero reserved bytes")
     if group_size < 1 or directory_entry_size != DIRECTORY_ENTRY_SIZE:
@@ -658,8 +1138,10 @@ def read_q8_decoder(
         if value != -1 and not 0 <= value < vocab:
             raise ValueError(f"BCIRQ8 {name}_token_id is outside the vocabulary")
 
-    parsed = _read_directory(
+    parsed, lut4_tensors = _read_directory(
         raw,
+        version=version,
+        header_flags=flags,
         tensor_count=tensor_count,
         directory_offset=directory_offset,
         payload_offset=payload_offset,
@@ -696,7 +1178,13 @@ def read_q8_decoder(
     kv_dim = kv_heads * (d_model // n_heads)
 
     def values(tid: int, layer: int, dims: tuple[int, int], rank: int) -> tuple[float, ...]:
-        return _decode_values(raw, _expect(by_key, tid, layer, dims, rank), group_size)
+        entry = _expect(by_key, tid, layer, dims, rank)
+        key = (tid, layer)
+        if entry.flags == TENSOR_ENC_LUT4_1B:
+            if reconstruct_lut4:
+                return reconstruct_lut4_matrix(lut4_tensors[key])
+            return (0.0,) * entry.element_count
+        return _decode_values(raw, entry, group_size)
 
     embedding_values = values(TENSOR_EMBEDDING, -1, (vocab, d_model), 2)
     layers = []
@@ -760,19 +1248,64 @@ def read_q8_decoder(
         bos,
         eos,
         pad,
+        len(lut4_tensors),
+    )
+    return spec, weights, lut4_tensors, metadata
+
+
+def read_q8_decoder(
+    path: os.PathLike | str,
+    *,
+    max_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+    max_elements: int = DEFAULT_MAX_DECODED_ELEMENTS,
+) -> tuple[DecoderSpec, DecoderWeights, Q8ArtifactMetadata]:
+    """Validate and read a ``BCIRQ8 v1`` or ``BCIRQ8 v2`` artifact."""
+    spec, weights, _lut4, metadata = read_q8_decoder_v2(
+        path, max_bytes=max_bytes, max_elements=max_elements, reconstruct_lut4=True
     )
     return spec, weights, metadata
 
 
 __all__ = [
     "BITS",
-    "DIRECTORY_ENTRY_SIZE",
-    "HEADER_SIZE",
-    "MAGIC",
-    "VERSION",
     "DEFAULT_MAX_ARTIFACT_BYTES",
     "DEFAULT_MAX_DECODED_ELEMENTS",
+    "DIRECTORY_ENTRY_SIZE",
+    "FLAG_HYBRID_LUT4_MLP",
+    "FLAG_TIED_EMBEDDINGS",
+    "HEADER_SIZE",
+    "LUT4_ALLOWED_TENSOR_IDS",
+    "LUT4_MAX_PATHS",
+    "LUT4_MAX_RANK",
+    "MAGIC",
+    "TENSOR_EMBEDDING",
+    "TENSOR_ENC_LUT4_1B",
+    "TENSOR_ENC_Q8",
+    "TENSOR_G_ATTN",
+    "TENSOR_G_FF",
+    "TENSOR_G_FINAL",
+    "TENSOR_LM_HEAD",
+    "TENSOR_W_DOWN",
+    "TENSOR_W_GATE",
+    "TENSOR_W_K",
+    "TENSOR_W_O",
+    "TENSOR_W_Q",
+    "TENSOR_W_UP",
+    "TENSOR_W_V",
+    "VERSION",
+    "VERSION_V2",
+    "Lut4Path",
+    "Lut4Tensor",
     "Q8ArtifactMetadata",
+    "decode_fp16_le",
+    "encode_fp16_le",
+    "lut4_matvec_reference",
+    "lut4_packed_bytes",
+    "pack_lut4_signs",
     "read_q8_decoder",
+    "read_q8_decoder_v2",
+    "reconstruct_lut4_matrix",
+    "unpack_lut4_signs",
+    "validate_lut4_packed",
     "write_q8_decoder",
 ]

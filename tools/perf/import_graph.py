@@ -75,7 +75,13 @@ _COLD_HOSTED_TRAINING = (
     "byte_latent",
     "sequence_interfaces",
 )
-_COLD_MODEL_ASSESS = ("assessment", "execution_plan", "model_microbench", "assess_tool")
+_COLD_MODEL_ASSESS = (
+    "assessment",
+    "execution_plan",
+    "model_microbench",
+    "assess_tool",
+    "deploy_policy",
+)
 # The X.690 codec is an interop rail, not part of planning or emission: the simple path
 # (plan a program, emit a kernel) never touches ASN.1, so loading it eagerly would put
 # the whole clause-8 type surface on every `import bcir`.

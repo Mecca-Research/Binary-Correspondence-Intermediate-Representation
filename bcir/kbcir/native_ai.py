@@ -50,6 +50,19 @@ class _CMatch(ctypes.Structure):
     _fields_ = [("index", ctypes.c_uint32), ("squared_distance", ctypes.c_uint64)]
 
 
+class _CLut4Path(ctypes.Structure):
+    _fields_ = [
+        ("rank", ctypes.c_size_t),
+        ("v_packed", ctypes.POINTER(ctypes.c_uint8)),
+        ("v_packed_bytes", ctypes.c_size_t),
+        ("u_packed", ctypes.POINTER(ctypes.c_uint8)),
+        ("u_packed_bytes", ctypes.c_size_t),
+        ("g_fp16_le", ctypes.POINTER(ctypes.c_uint8)),
+        ("l_fp16_le", ctypes.POINTER(ctypes.c_uint8)),
+        ("h_fp16_le", ctypes.POINTER(ctypes.c_uint8)),
+    ]
+
+
 @dataclass(frozen=True)
 class NativeQuantizedTensor:
     bits: int
@@ -462,6 +475,112 @@ class NativeAIKernels:
             sizep,
         ]
         self._library.bcir_ai_q15_topk.restype = ctypes.c_int
+        # LUT4-LANES: packed 1-bit factorized matvec/mb4 kernels (f64 & f32)
+        f32p = ctypes.POINTER(ctypes.c_float)
+        lut4p = ctypes.POINTER(_CLut4Path)
+        self._library.bcir_ai_lut4_instances.argtypes = []
+        self._library.bcir_ai_lut4_instances.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_packed_bytes.argtypes = [
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            sizep,
+        ]
+        self._library.bcir_ai_lut4_packed_bytes.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_pack_signs.argtypes = [
+            i8p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            u8p,
+            ctypes.c_size_t,
+        ]
+        self._library.bcir_ai_lut4_pack_signs.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_validate_packed.argtypes = [
+            u8p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+        ]
+        self._library.bcir_ai_lut4_validate_packed.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_paths_validate.argtypes = [
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            lut4p,
+            ctypes.c_size_t,
+        ]
+        self._library.bcir_ai_lut4_paths_validate.restype = ctypes.c_int
+        lut4_f64_args = [
+            f64p,
+            ctypes.c_size_t,
+            lut4p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            f64p,
+        ]
+        self._library.bcir_ai_lut4_matvec_f64.argtypes = lut4_f64_args
+        self._library.bcir_ai_lut4_matvec_f64.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_matvec_f64_instance.argtypes = [ctypes.c_int, *lut4_f64_args]
+        self._library.bcir_ai_lut4_matvec_f64_instance.restype = ctypes.c_int
+        lut4_f64_col_args = [
+            f64p,
+            ctypes.c_size_t,
+            lut4p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            f64p,
+        ]
+        self._library.bcir_ai_lut4_matvec_f64_columns.argtypes = lut4_f64_col_args
+        self._library.bcir_ai_lut4_matvec_f64_columns.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_matvec_f64_columns_instance.argtypes = [
+            ctypes.c_int,
+            *lut4_f64_col_args,
+        ]
+        self._library.bcir_ai_lut4_matvec_f64_columns_instance.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_matmul_mb4_f64_instance.argtypes = [
+            ctypes.c_int,
+            f64p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            lut4p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            f64p,
+        ]
+        self._library.bcir_ai_lut4_matmul_mb4_f64_instance.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_matvec_f32_instance.argtypes = [
+            ctypes.c_int,
+            f32p,
+            ctypes.c_size_t,
+            lut4p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            f32p,
+        ]
+        self._library.bcir_ai_lut4_matvec_f32_instance.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_matvec_f32_columns_instance.argtypes = [
+            ctypes.c_int,
+            f32p,
+            ctypes.c_size_t,
+            lut4p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            f32p,
+        ]
+        self._library.bcir_ai_lut4_matvec_f32_columns_instance.restype = ctypes.c_int
+        self._library.bcir_ai_lut4_matmul_mb4_f32_instance.argtypes = [
+            ctypes.c_int,
+            f32p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            lut4p,
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            f32p,
+        ]
+        self._library.bcir_ai_lut4_matmul_mb4_f32_instance.restype = ctypes.c_int
 
     @staticmethod
     def _finite_values(values) -> tuple[float, ...]:
@@ -780,6 +899,277 @@ class NativeAIKernels:
             output_count=output_count,
             group_size=group_size,
             instance=instance,
+        )
+
+    def lut4_instances(self) -> int:
+        """LUT4-LANES instances this host admits: 1 portable, 2 AVX2, 4 AVX-512 (0 bit drift)."""
+        return int(self._library.bcir_ai_lut4_instances())
+
+    def lut4_packed_bytes(self, rows: int, cols: int) -> int:
+        if type(rows) is not int or type(cols) is not int or rows < 1 or cols < 1:
+            raise ValueError("LUT4 dimensions must be positive integers")
+        out_size = ctypes.c_size_t()
+        status = self._library.bcir_ai_lut4_packed_bytes(rows, cols, ctypes.byref(out_size))
+        if status:
+            raise ValueError(f"LUT4 packed size query failed with status {status}")
+        return int(out_size.value)
+
+    def lut4_pack_signs(self, signs, *, rows: int, cols: int) -> bytes:
+        packed_len = self.lut4_packed_bytes(rows, cols)
+        try:
+            flat = tuple(int(v) for v in signs)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("LUT4 signs must be an integer sequence of +1/-1") from exc
+        if len(flat) != rows * cols or any(v not in (-1, 1) for v in flat):
+            raise ValueError("LUT4 signs must contain rows*cols entries in {-1, +1}")
+        sign_arr = (ctypes.c_int8 * len(flat))(*flat)
+        out_arr = (ctypes.c_uint8 * packed_len)()
+        status = self._library.bcir_ai_lut4_pack_signs(sign_arr, rows, cols, out_arr, packed_len)
+        if status:
+            raise RuntimeError(f"native LUT4 sign packing failed with status {status}")
+        return bytes(out_arr)
+
+    def lut4_validate_packed(self, packed, *, rows: int, cols: int) -> bool:
+        if (
+            type(rows) is not int
+            or type(cols) is not int
+            or rows < 1
+            or cols < 1
+            or not isinstance(packed, (bytes, bytearray, memoryview))
+        ):
+            return False
+        raw = bytes(packed)
+        arr = (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw)
+        return self._library.bcir_ai_lut4_validate_packed(arr, len(raw), rows, cols) == 0
+
+    def _build_lut4_paths(self, paths, input_count: int, output_count: int):
+        path_list = tuple(paths)
+        if not 1 <= len(path_list) <= 2:
+            raise ValueError("LUT4 matvec requires 1 or 2 factorized paths")
+        c_paths = (_CLut4Path * len(path_list))()
+        keepalive: list[object] = []
+        for idx, item in enumerate(path_list):
+            if isinstance(item, dict):
+                rank = item["rank"]
+                v_raw = bytes(item["v_packed"])
+                u_raw = bytes(item["u_packed"])
+                g_raw = bytes(item["g_fp16_le"])
+                l_raw = bytes(item["l_fp16_le"])
+                h_raw = bytes(item["h_fp16_le"])
+            else:
+                rank = item.rank
+                v_raw = bytes(item.v_packed)
+                u_raw = bytes(item.u_packed)
+                g_raw = bytes(item.g_fp16_le)
+                l_raw = bytes(item.l_fp16_le)
+                h_raw = bytes(item.h_fp16_le)
+            if type(rank) is not int or not 1 <= rank <= 1024:
+                raise ValueError("LUT4 path rank must be an integer in [1, 1024]")
+            if (
+                len(g_raw) != input_count * 2
+                or len(l_raw) != rank * 2
+                or len(h_raw) != output_count * 2
+            ):
+                raise ValueError("LUT4 path binary16 scale length mismatch")
+            v_arr = (ctypes.c_uint8 * len(v_raw)).from_buffer_copy(v_raw)
+            u_arr = (ctypes.c_uint8 * len(u_raw)).from_buffer_copy(u_raw)
+            g_arr = (ctypes.c_uint8 * len(g_raw)).from_buffer_copy(g_raw)
+            l_arr = (ctypes.c_uint8 * len(l_raw)).from_buffer_copy(l_raw)
+            h_arr = (ctypes.c_uint8 * len(h_raw)).from_buffer_copy(h_raw)
+            keepalive.extend((v_arr, u_arr, g_arr, l_arr, h_arr))
+            c_paths[idx] = _CLut4Path(
+                rank=rank,
+                v_packed=v_arr,
+                v_packed_bytes=len(v_raw),
+                u_packed=u_arr,
+                u_packed_bytes=len(u_raw),
+                g_fp16_le=g_arr,
+                l_fp16_le=l_arr,
+                h_fp16_le=h_arr,
+            )
+        status = self._library.bcir_ai_lut4_paths_validate(
+            input_count, output_count, c_paths, len(path_list)
+        )
+        if status:
+            raise ValueError(f"native LUT4 path validation failed with status {status}")
+        return c_paths, len(path_list), keepalive
+
+    def lut4_matvec(
+        self,
+        input_values,
+        paths,
+        *,
+        output_count: int,
+        instance: int | None = None,
+        columns: tuple[int, int] | None = None,
+    ) -> tuple[float, ...]:
+        """Deterministic FP64 LUT4-LANES matvec with optional instance and column slice."""
+        values = self._finite_values(input_values)
+        if not values or type(output_count) is not int or output_count < 1:
+            raise ValueError("native LUT4 matvec arguments are malformed")
+        if instance is not None and (type(instance) is not int or instance not in (0, 1, 2, 4)):
+            raise ValueError("native LUT4 instance must be 0, 1, 2 or 4")
+        c_paths, n_paths, _keepalive = self._build_lut4_paths(paths, len(values), output_count)
+        in_arr = (ctypes.c_double * len(values))(*values)
+        out_buf = (ctypes.c_double * output_count)()
+        if columns is not None:
+            if type(columns) is not tuple or len(columns) != 2:
+                raise ValueError("native LUT4 columns must be a 2-tuple (begin, end)")
+            col_begin, col_end = columns
+            if (
+                type(col_begin) is not int
+                or type(col_end) is not int
+                or col_begin < 0
+                or col_begin >= col_end
+                or col_end > output_count
+            ):
+                raise ValueError(
+                    "native LUT4 columns must satisfy 0 <= begin < end <= output_count"
+                )
+            if instance is None:
+                status = self._library.bcir_ai_lut4_matvec_f64_columns(
+                    in_arr, len(values), c_paths, n_paths, output_count, col_begin, col_end, out_buf
+                )
+            else:
+                status = self._library.bcir_ai_lut4_matvec_f64_columns_instance(
+                    instance,
+                    in_arr,
+                    len(values),
+                    c_paths,
+                    n_paths,
+                    output_count,
+                    col_begin,
+                    col_end,
+                    out_buf,
+                )
+            if status:
+                raise RuntimeError(f"native LUT4 matvec failed with status {status}")
+            return tuple(float(v) for v in out_buf[col_begin:col_end])
+        if instance is None:
+            status = self._library.bcir_ai_lut4_matvec_f64(
+                in_arr, len(values), c_paths, n_paths, output_count, out_buf
+            )
+        else:
+            status = self._library.bcir_ai_lut4_matvec_f64_instance(
+                instance, in_arr, len(values), c_paths, n_paths, output_count, out_buf
+            )
+        if status:
+            raise RuntimeError(f"native LUT4 matvec failed with status {status}")
+        return tuple(float(v) for v in out_buf)
+
+    def lut4_matmul_mb4(
+        self,
+        inputs,
+        paths,
+        *,
+        output_count: int,
+        instance: int = 0,
+    ) -> tuple[tuple[float, ...], ...]:
+        """Micro-batched (mb4) FP64 LUT4-LANES prefill, bit-identical to single-token matvec."""
+        rows = tuple(self._finite_values(row) for row in inputs)
+        if not rows or not rows[0] or type(output_count) is not int or output_count < 1:
+            raise ValueError("native LUT4 mb4 arguments are malformed")
+        input_count = len(rows[0])
+        if any(len(row) != input_count for row in rows):
+            raise ValueError("native LUT4 mb4 input rows must have equal length")
+        if type(instance) is not int or instance not in (0, 1, 2, 4):
+            raise ValueError("native LUT4 instance must be 0, 1, 2 or 4")
+        c_paths, n_paths, _keepalive = self._build_lut4_paths(paths, input_count, output_count)
+        flat = [v for row in rows for v in row]
+        in_arr = (ctypes.c_double * len(flat))(*flat)
+        out_buf = (ctypes.c_double * (len(rows) * output_count))()
+        status = self._library.bcir_ai_lut4_matmul_mb4_f64_instance(
+            instance, in_arr, len(rows), input_count, c_paths, n_paths, output_count, out_buf
+        )
+        if status:
+            raise RuntimeError(f"native LUT4 mb4 matmul failed with status {status}")
+        return tuple(
+            tuple(float(out_buf[t * output_count + j]) for j in range(output_count))
+            for t in range(len(rows))
+        )
+
+    def lut4_matvec_f32(
+        self,
+        input_values,
+        paths,
+        *,
+        output_count: int,
+        instance: int = 0,
+        columns: tuple[int, int] | None = None,
+    ) -> tuple[float, ...]:
+        """Deterministic FP32 LUT4-LANES matvec (portable / AVX2 VPERMPS / AVX-512 PERMUTEXVAR)."""
+        values = self._finite_values(input_values)
+        if not values or type(output_count) is not int or output_count < 1:
+            raise ValueError("native LUT4 f32 matvec arguments are malformed")
+        if type(instance) is not int or instance not in (0, 1, 2, 4):
+            raise ValueError("native LUT4 instance must be 0, 1, 2 or 4")
+        c_paths, n_paths, _keepalive = self._build_lut4_paths(paths, len(values), output_count)
+        in_arr = (ctypes.c_float * len(values))(*values)
+        out_buf = (ctypes.c_float * output_count)()
+        if columns is not None:
+            if type(columns) is not tuple or len(columns) != 2:
+                raise ValueError("native LUT4 columns must be a 2-tuple (begin, end)")
+            col_begin, col_end = columns
+            if (
+                type(col_begin) is not int
+                or type(col_end) is not int
+                or col_begin < 0
+                or col_begin >= col_end
+                or col_end > output_count
+            ):
+                raise ValueError(
+                    "native LUT4 columns must satisfy 0 <= begin < end <= output_count"
+                )
+            status = self._library.bcir_ai_lut4_matvec_f32_columns_instance(
+                instance,
+                in_arr,
+                len(values),
+                c_paths,
+                n_paths,
+                output_count,
+                col_begin,
+                col_end,
+                out_buf,
+            )
+            if status:
+                raise RuntimeError(f"native LUT4 f32 matvec failed with status {status}")
+            return tuple(float(v) for v in out_buf[col_begin:col_end])
+        status = self._library.bcir_ai_lut4_matvec_f32_instance(
+            instance, in_arr, len(values), c_paths, n_paths, output_count, out_buf
+        )
+        if status:
+            raise RuntimeError(f"native LUT4 f32 matvec failed with status {status}")
+        return tuple(float(v) for v in out_buf)
+
+    def lut4_matmul_mb4_f32(
+        self,
+        inputs,
+        paths,
+        *,
+        output_count: int,
+        instance: int = 0,
+    ) -> tuple[tuple[float, ...], ...]:
+        """Micro-batched (mb4) FP32 LUT4-LANES prefill, bit-identical to single-token matvec."""
+        rows = tuple(self._finite_values(row) for row in inputs)
+        if not rows or not rows[0] or type(output_count) is not int or output_count < 1:
+            raise ValueError("native LUT4 mb4 f32 arguments are malformed")
+        input_count = len(rows[0])
+        if any(len(row) != input_count for row in rows):
+            raise ValueError("native LUT4 mb4 f32 input rows must have equal length")
+        if type(instance) is not int or instance not in (0, 1, 2, 4):
+            raise ValueError("native LUT4 instance must be 0, 1, 2 or 4")
+        c_paths, n_paths, _keepalive = self._build_lut4_paths(paths, input_count, output_count)
+        flat = [v for row in rows for v in row]
+        in_arr = (ctypes.c_float * len(flat))(*flat)
+        out_buf = (ctypes.c_float * (len(rows) * output_count))()
+        status = self._library.bcir_ai_lut4_matmul_mb4_f32_instance(
+            instance, in_arr, len(rows), input_count, c_paths, n_paths, output_count, out_buf
+        )
+        if status:
+            raise RuntimeError(f"native LUT4 mb4 f32 matmul failed with status {status}")
+        return tuple(
+            tuple(float(out_buf[t * output_count + j]) for j in range(output_count))
+            for t in range(len(rows))
         )
 
     def _q15_topk(

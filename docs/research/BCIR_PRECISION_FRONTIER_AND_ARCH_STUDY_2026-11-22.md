@@ -1,8 +1,8 @@
 # BCIR Floating-Point Precision Frontier (50M), Region-Policy `COMP-1`, and `MIXER-EXT` Comparative Architecture Study
 
-**Date:** 2026-11-22  
-**Status:** Executed bare-metal C11 + Python ctypes empirical study; all raw logs, Gate 0 proofs, multi-seed curves, checkpoints (`<= 24 MiB`), SHA-256 provenance manifest, and 6-panel figures archived in [`Mecca-Research/Modular-AI` PR #228](https://github.com/Mecca-Research/Modular-AI/pull/228) under `BCIR Model Training/precision-arch-study/` (pinned commit `141974aefee854d005f074b264cd98a93c62bdeb`).  
-**Host & Toolchain Provenance (`P6`):** `Intel(R) Xeon(R) 6985P-C` (2 cores, `avx512f`, `avx512_bf16`, `avx512_fp16`, `avx512_vnni`, no AMX exposed), `clang 23.1.6` (`-O3 -std=c11 -march=native -ffp-contract=off -Wall -Wextra -Werror`), linked directly against unmodified BCIR `runtime/c/bcir_tensor.c` and `runtime/c/bcir_decoder_train.c` at commit `15c7287e93a968795cf27c31caa7ee5e79cd48f9`.  
+**Date:** 2026-11-22 (updated 2026-11-24 with production `COMP-1` / `P1–P6` implementation & Exp 5 baseline checkpoint)
+**Status:** Executed bare-metal C11 + Python ctypes empirical study; all raw logs, Gate 0 proofs, multi-seed curves, checkpoints (`<= 24 MiB`), SHA-256 provenance manifest, 6-panel figures, and permanent `bcir.deploy_baseline.v1` checkpoint archived in [`Mecca-Research/Modular-AI` PR #228](https://github.com/Mecca-Research/Modular-AI/pull/228) under `BCIR Model Training/precision-arch-study/` (Exp 1–4 pinned at `141974aefee854d005f074b264cd98a93c62bdeb`; Exp 5 production baseline checkpoint pinned at `b8a3bd15909cc1a66f98d429ab6a8d1357e0c7cd`).
+**Host & Toolchain Provenance (`P6`):** Exp 1–4: `Intel(R) Xeon(R) 6985P-C` (2 cores, `avx512f`, `avx512_bf16`, `avx512_fp16`, `avx512_vnni`, no AMX exposed), `clang 23.1.6` (`-O3 -std=c11 -march=native -ffp-contract=off -Wall -Wextra -Werror`), linked against BCIR `runtime/c/bcir_tensor.c` and `runtime/c/bcir_decoder_train.c` at commit `15c7287e93a968795cf27c31caa7ee5e79cd48f9`. Exp 5: `Intel(R) Xeon(R) CPU @ 2.30GHz` (2 cores, `avx2_fma`, no `avx512f`), `clang 23.1.6`, linked directly against production BCIR `BCIRQ8 v2` + `LUT4-LANES` runtime (`runtime/c/{bcir_q8_model,bcir_decode,bcir_ai_kernels,bcir_llama,bcir_tensor}.c`).
 **Related BCIR Roadmaps:**
 - [BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md](BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md) (`TRAIN-OPT-1..10`, Precision Policy v0.1 `P1–P6`)
 - [BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md](BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md) (`MIXER-EXT`, `Arch-1..6`, `COMP-1`)
@@ -220,4 +220,39 @@ python src/exp4_mixer_ext_architectures.py --part a && python src/exp4_mixer_ext
 python src/make_study_plots.py
 ```
 
-All 48 tracked artifacts (and the SHA-256 digest of the omitted 193 MiB deterministic `wide50m_fp32_120st.npz` teacher) are hashed in `results/MANIFEST.json`.
+All 48 Exp 1–4 artifacts (and the SHA-256 digest of the omitted 193 MiB deterministic `wide50m_fp32_120st.npz` teacher) plus the 3 Experiment 5 additions (`51` tracked files total) are hashed in `results/MANIFEST.json` at commit `b8a3bd15909cc1a66f98d429ab6a8d1357e0c7cd`.
+
+---
+
+## 7. Production BCIR Deployment Policy (`COMP-1` / `P1–P6`) Implementation & Permanent Baseline Checkpoint (`Exp 5`)
+
+The deployment policy validated by Experiments 1–4 is now implemented directly in BCIR and anchored by a permanent `P6` baseline checkpoint (`bcir.deploy_baseline.v1`) so upcoming floating-point approaches and native `MIXER-EXT` architectures can be compared against a reproducible production reference.
+
+### 7.1 Production BCIR Implementation Surface
+
+| Layer | Implemented Files | Contract & Enforced Invariants |
+|---|---|---|
+| Native C11 `LUT4-LANES` | `runtime/c/bcir_ai_kernels.{h,c}`, `runtime/c/test_ai_kernels.c`, `bcir/kbcir/native_ai.py` | Packed 1.0-bit 2-nibbles/byte factorized matvec (`portable=1`, `AVX2=2`, `AVX-512=4`, `0` bit drift, `-ffp-contract=off`, zero heap allocations, `DECODE-THREADS` column slicing, `mb4` micro-batched prefill, `f64` & `f32`) |
+| `BCIRQ8 v2` hybrid container | `runtime/c/bcir_q8_model.{h,c}`, `runtime/c/bcir_llama.c`, `runtime/c/bcir_decoder_gem.c`, `runtime/c/fuzz_q8_model.c`, `bcir/frontends/models/weights_io.py` | Preserves `BCIRQ8 v1` bit-for-bit; enforces at container level that `LUT4_1B` (`BCIR_Q8_TENSOR_ENC_LUT4_1B = 1`) is permitted **only** on MLP tensors (`W_GATE`, `W_UP`, `W_DOWN`) while keeping Attention (`W_Q/W_K/W_V/W_O`), embeddings, RMSNorms, and `lm_head` in deterministic lossy per-group Q8 (`\|w - q \cdot 2^e\| \le 2^{e-1}`), with 3-level CRC32, finite binary16 scale checks, canonical zero padding, and full `bcir-qualify` GEM parity |
+| Qualification Engine (`P1–P6`) | `bcir/frontends/models/deploy_policy.py`, `bcir/tests/test_deploy_policy.py` | Dep-free stdlib (+ lazy optional NumPy SVD fast path, cold-quarantined in `tools/perf/import_graph.py`): explicit `PrecisionContract` (`P1`), width gate (`min_lut4_dim=512`, `P2`), selective `P3` promotion / fail-closed refusal, two-stage Q8-Attention + hybrid qualification (`P4`), Q8 bounded-error verifier, Dual-SVID + Joint-ITQ factorizer, and strict `bcir.deploy_baseline.v1` JSON baseline loader/saver (`P6`) |
+
+### 7.2 Experiment 5 Verified Baseline Checkpoint (`b8a3bd15909cc1a66f98d429ab6a8d1357e0c7cd`)
+
+Executed via `src/exp5_deploy_policy_baseline.py` and `src/bcir_native_deploy_bench.c` (linked directly against BCIR's production `runtime/c/{bcir_q8_model,bcir_decode,bcir_ai_kernels,bcir_llama,bcir_tensor}.c`) on a 2-core `Intel(R) Xeon(R) CPU @ 2.30GHz` (`avx2_fma`, no `avx512f`, `clang 23.1.6`, `-ffp-contract=off`), saved and schema-validated in `results/deploy_policy_baseline_checkpoint.json`:
+
+| Model / Stage | Artifact Size | vs `BCIRQ8 v1` | Untouched Test CE (`Delta CE`) | Test PPL | `2T` Decode (`tok/s`) | `1T` vs `2T` Drift | `bcir-qualify` GEM | `P1–P6` Verdict |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| **`wide512`** (`6.16M`, `d=512, L=2`, 160st) `Default_FP32_Ref` | `23.51 MiB` (FP32) | — | `2.3542` (`+0.0000`) | `10.53` | — | — | — | Training ref (`16.00 B/p`, `183.3 ms/st`) |
+| `wide512` `Default_Adafactor` (`12.01 B/p`) | `23.51 MiB` (FP32) | — | `2.3525` (`-0.0017`) | `10.51` | — | — | — | Training Pareto (`189.5 ms/st`) |
+| `wide512` `Default_Q8_BF16Grad` (`8.05 B/p`) | `23.51 MiB` (FP32) | — | `2.3544` (`+0.0002`) | `10.53` | — | — | — | Memory-opt ref (`347.9 ms/st`) |
+| `wide512` `BCIRQ8 v1` (`Q8 g=32`, 0 bound viols) | `6.25 MiB` | `1.00×` | `2.3543` (`-0.0001`) | `10.53` | `542.4` | `0` bits | — | Stage-1 Q8 PASS (`max_norm_err=1.000`) |
+| `wide512` `BCIRQ8 v2 COMP-1` PTQ (`1.042` MLP bpw) | **`2.05 MiB`** | **`3.05×` smaller** | `2.4866` (`+0.1322`) | `12.02` | `337.2` | `0` bits | **PASS** (`114` claims) | `ADMITTED_HYBRID_V2` |
+| **`wide512` `BCIRQ8 v2 COMP-1` + 80st KD-QAT** (`28.0s`) | **`2.05 MiB`** | **`3.05×` smaller** | **`2.3746` (`+0.0202`)** | **`10.75`** | `338.8` | `0` bits | **PASS** (`114` claims) | **`ADMITTED_HYBRID_V2`** (`KL=0.0069`) |
+| **`wide50m`** (`50.54M`, `d=768, L=8`, 60st `Q8_BF16Grad`) | `387.9 MiB` train (`8.05 B/p`) | — | `2.6919` (`+0.0000`) | `14.76` | — | — | — | Training ref (`2834.9 ms/st`, `0` nonfinites) |
+| `wide50m` `BCIRQ8 v1` (`Q8 g=32`, 0 bound viols) | `51.22 MiB` | `1.00×` | `2.6917` (`-0.0001`) | `14.76` | `75.1` | `0` bits | — | Stage-1 Q8 PASS (`50.54M` elems verified) |
+| `wide50m` `BCIRQ8 v2 COMP-1` PTQ (zero-QAT) | **`17.65 MiB`** | **`2.90×` smaller** | `3.0187` (`+0.3268`) | `20.46` | `42.3` | `0` bits | — | **`PROMOTED_Q8_V1`** (`P4` catches `+0.3268 > 0.20`, `P3` promotes to `v1`) |
+| **`wedge128_kv4_strong`** (`0.53M`, `d=128 < 512`) | `547.0 KiB` (`v1`) | Width-gated | Exact match on 6/6 circuits (`kv_single 100.0%`) | — | `4,612.7` | `0` bits | **PASS** (`206` claims) | **`PROMOTED_Q8_V1`** (`W_Q` LUT4 refused) |
+
+**Production `LUT4-LANES` vs `Q8-LANES` Kernel Sweep (`Exp 5D`, 2-Core Haswell AVX2 VM, `0` Bit Drift Across All 16 Points):**
+- Across `wide512` (`512×1536`, `1536×512`) and `wide50m` (`768×2048`, `2048×768`) MLP shapes at `N ∈ {1, 4, 16, 64}` (`1.026–1.070` bpw, **`7.95×–8.28×` weight compression vs Q8**), production `LUT4-LANES` FP32 (`VPERMPS + VBLENDVPS`) achieves **`4.01×–4.77×` speedup** over `Q8-LANES` (`55.5` vs `247.4 us` on `wide512` up `N=1`; `104.2` vs `497.3 us` on `wide50m` up `N=1`).
+- Because `bcir_llama` accumulates in exact FP64 and AVX2 lacks an in-register 16-entry FP64 permute (`lut4_accum32_f64_avx2` falls back to `_mm256_i32gather_pd`), FP64 `LUT4-LANES` on Haswell AVX2 runs at `0.44×–0.46×` of `Q8-LANES` (accounting for the `338.8` vs `542.4 tok/s` `wide512` and `42.3` vs `75.1 tok/s` `wide50m` FP64 whole-model decode rates on this AVX2 VM), whereas AVX-512 hosts dispatch `_mm512_permutex2var_pd` with zero gathers (and `Exp 3` demonstrated `3.55×` whole-model `COMP-1` decode speedup over `BCIRQ8` on `Xeon 6985P-C` AVX-512). Future FP32/BF16 inference paths and native `MIXER-EXT` architectures can now be tested directly against this pinned `bcir.deploy_baseline.v1` checkpoint.

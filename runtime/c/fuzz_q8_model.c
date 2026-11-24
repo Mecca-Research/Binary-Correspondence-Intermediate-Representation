@@ -81,6 +81,22 @@ static void walk_model(const bcir_q8_model *m) {
     const bcir_q8_tensor *t = &m->tensors[i];
     const bcir_q8_tensor *looked = bcir_q8_model_tensor(m, t->tensor_id, t->layer);
     if (!looked) continue;
+    if (looked->encoding == BCIR_Q8_TENSOR_ENC_LUT4_1B) {
+      /* LUT4_1B tensors must fail closed on Q8 element accessors and pass LUT4 validation. */
+      double v = bcir_q8_tensor_value(m, looked, 0u);
+      if (v == v) abort();
+      if (bcir_q8_tensor_values(m, looked, 0u, 1u, out) == 0) abort();
+      if (bcir_ai_lut4_paths_validate(looked->dim0, looked->dim1, looked->lut4_paths,
+                                      looked->lut4_path_count) != BCIR_AI_OK)
+        abort();
+      if (looked->dim0 <= 64u && looked->dim1 <= 64u) {
+        double x[64], y[64];
+        for (uint32_t k = 0; k < looked->dim0; ++k) x[k] = 0.01 * (double)((int)(k % 7u) - 3);
+        (void)bcir_ai_lut4_matvec_f64_prevalidated(
+            x, looked->dim0, looked->lut4_paths, looked->lut4_path_count, looked->dim1, y);
+      }
+      continue;
+    }
     (void)bcir_q8_tensor_value(m, looked, 0u);
     if (t->element_count) {
       uint32_t n = t->element_count, w = n < 64u ? n : 64u;
@@ -129,6 +145,7 @@ static uint32_t crc32_of(const uint8_t *d, size_t n) {
   return s ^ 0xFFFFFFFFu;
 }
 
+static uint16_t ld16(const uint8_t *p) { return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8)); }
 static uint32_t ld32(const uint8_t *p) {
   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
@@ -151,17 +168,44 @@ static void repair_checksums(uint8_t *b, size_t size) {
       n_tensors <= (size - dir_off) / entry_size) {
     for (uint32_t i = 0; i < n_tensors; ++i) {
       uint8_t *e = b + dir_off + (uint64_t)i * entry_size;
+      uint8_t enc = e[5];
+      uint16_t paths = ld16(e + 6);
+      uint32_t d0 = ld32(e + 8), d1 = ld32(e + 12);
       uint32_t elems = ld32(e + 16), groups = ld32(e + 20);
       uint64_t exp_off = ld64(e + 32), code_off = ld64(e + 40);
-      uint64_t exp_len = (uint64_t)groups * 2u;
+      uint64_t exp_len = 0u, code_len = 0u;
+      if (enc == BCIR_Q8_TENSOR_ENC_LUT4_1B) {
+        if (paths < 1u || paths > BCIR_AI_LUT4_MAX_PATHS || !d0 || !d1) continue;
+        uint16_t r[BCIR_AI_LUT4_MAX_PATHS];
+        r[0] = (uint16_t)(groups & 0xFFFFu);
+        r[1] = (uint16_t)((groups >> 16) & 0xFFFFu);
+        int ok = 1;
+        for (uint16_t p = 0; p < paths; ++p) {
+          size_t vb = 0u, ub = 0u;
+          if (r[p] < 1u || r[p] > BCIR_AI_LUT4_MAX_RANK ||
+              bcir_ai_lut4_packed_bytes(r[p], d0, &vb) != BCIR_AI_OK ||
+              bcir_ai_lut4_packed_bytes(d1, r[p], &ub) != BCIR_AI_OK) {
+            ok = 0;
+            break;
+          }
+          exp_len += 2ull * ((uint64_t)d0 + (uint64_t)r[p] + (uint64_t)d1);
+          code_len += (uint64_t)vb + (uint64_t)ub;
+        }
+        if (!ok) continue;
+      } else if (enc == BCIR_Q8_TENSOR_ENC_Q8) {
+        exp_len = (uint64_t)groups * 2u;
+        code_len = elems;
+      } else {
+        continue;
+      }
       if (exp_off > size || exp_len > size - exp_off) continue;
-      if (code_off > size || elems > size - code_off) continue;
+      if (code_off > size || code_len > size - code_off) continue;
       uint32_t crc = 0xFFFFFFFFu;
       for (uint64_t k = 0; k < exp_len; ++k) {
         crc ^= b[exp_off + k];
         for (int t = 0; t < 8; ++t) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
       }
-      for (uint64_t k = 0; k < elems; ++k) {
+      for (uint64_t k = 0; k < code_len; ++k) {
         crc ^= b[code_off + k];
         for (int t = 0; t < 8; ++t) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
       }

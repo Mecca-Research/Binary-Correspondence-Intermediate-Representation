@@ -479,6 +479,14 @@ operational rules for BCIR training and deployment:
    padded KV batches (`max_loss_diff = 3.02e-7`); `TRAIN-OPT-4` cuts startup `5.4–20.8×` vs Python
    stdlib without `2×` peak-RSS doubling. *(Note: these initial `30.7k–76.8k`-token gates, as well as
    future `50M–100M`-token gates, remain pre-convergence research checks, not converged LLM runs.)*
+5. **Production `COMP-1` / `P1–P6` Deployment Policy implemented & baselined (`Exp 5`):** Native
+   `LUT4-LANES` (`runtime/c/bcir_ai_kernels.{h,c}`), MLP-only `BCIRQ8 v2` (`runtime/c/bcir_q8_model.{h,c}`,
+   `bcir_llama.c`, `bcir_decoder_gem.c`, `bcir/frontends/models/weights_io.py`), and the `P1–P6`
+   qualification engine (`bcir/frontends/models/deploy_policy.py`) are implemented and anchored by the
+   permanent `bcir.deploy_baseline.v1` checkpoint in `Modular-AI` PR #228 at commit
+   `b8a3bd15909cc1a66f98d429ab6a8d1357e0c7cd` (`wide512` KD-QAT `ADMITTED_HYBRID_V2` at `2.05 MiB` /
+   `3.05×` cut / `+0.0202` nats with `bcir-qualify` GEM parity; `wide50m` zero-QAT PTQ and narrow
+   `wedge128` automatically promoted via `P3`/`P4` to `PROMOTED_Q8_V1`).
 
 ---
 
@@ -492,4 +500,4 @@ operational rules for BCIR training and deployment:
 | **4** | `MIXER-EXT` + `Arch-1` (`BCIR-DeltaNet`) & `Arch-2` (`BCIR-Hybrid-SWA`) | Solve 4-pair KV binding (`>80%`) + `T2048` recall + byte LM simultaneously | ABI 6 + `TRAIN-OPT-1..2` |
 | **5** | `TRAIN-OPT-6` (`AVX512_BF16` `VDPBF16PS` contract) & `TRAIN-OPT-7` (Q8/Adafactor state) + Precision Frontier (`P1–P6`) | Qualify native BF16/FP8/Q8-state frontier at `10M`/`50M`; halve persistent state (`16 → 8 B/p`) | `bcir_tensor.c` / `bcir_decoder_train.c` |
 | **6** | `TRAIN-OPT-3` (Tier M/L 10M–50M token scaling) + `Arch-4/5/6` + `WSP-1..4` | True scaling laws (`>= 1` tok/param), `4×` byte-patch throughput, auditable patches | Priorities 1–5 + `Modular-AI` archive contract |
-| **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP & `LUT4-LANES`) | Whole-model & MLP decode speedup + `>= 3×` smaller edge artifacts ($d \ge 512$), gated by `P1–P6` | `bcir_q8_model.h`, `bcir_ai_kernels.h`, `wide10m/50m` |
+| **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP & `LUT4-LANES`) — **IMPLEMENTED** | Whole-model & MLP decode speedup + `>= 3×` smaller edge artifacts ($d \ge 512$), gated by `P1–P6` (`bcir/frontends/models/deploy_policy.py`) | `bcir_q8_model.h`, `bcir_ai_kernels.h`, Exp 5 baseline `b8a3bd15909cc1a66f98d429ab6a8d1357e0c7cd` |

@@ -473,6 +473,15 @@ exceeded; `<= 0.04` nat WikiText-2 CE drift — `<= 4.08%` PPL ratio $e^{\Delta\
   rank (`r90 = 70.8%` of `min_dim`, `stable_rank = 216.1`) causes `+0.7049` (`COMP-1`) to `+1.0415`
   (`LB_Uniform`) nats PTQ collapse — confirming that QAT is mandatory and a low storage floor does
   not imply acceptable accuracy.
+- **Production BCIR Implementation & Exp 5 Baseline Checkpoint ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md) §7):**
+  Implemented directly in `runtime/c/bcir_ai_kernels.{h,c}` (`LUT4-LANES`), `runtime/c/bcir_q8_model.{h,c}`
+  / `bcir_llama.c` / `bcir_decoder_gem.c` / `bcir/frontends/models/weights_io.py` (`BCIRQ8 v2` MLP-only
+  `LUT4_1B`), and `bcir/frontends/models/deploy_policy.py` (`P1–P6` qualification & `bcir.deploy_baseline.v1`),
+  verified on `Modular-AI` commit `b8a3bd15909cc1a66f98d429ab6a8d1357e0c7cd` (`wide512` KD-QAT
+  `ADMITTED_HYBRID_V2` at `2.05 MiB` / `3.05×` vs `v1` / `+0.0202` nats with `bcir-qualify` GEM parity;
+  `wide50m` zero-QAT PTQ `2.90×` smaller at `17.65 MiB` and narrow `wedge128` promoted to `PROMOTED_Q8_V1`
+  with exact recall match on 6/6 circuits; `LUT4-LANES` FP32 `4.01–4.77×` faster than `Q8-LANES` on AVX2
+  with `0` bit drift).
 - Parameter-matched `6.16M` geometry (`wide_shallow_6m` `d=512, L=2` vs `narrow_deep_6m` `d=256, L=8`,
   within `0.029%` params) proves width/aspect ratio — not parameter count — controls the storage floor
   (`0.37` vs `0.47 BPW`, `2.02×` lower `r=1` floor, `1.69×` faster decode).
