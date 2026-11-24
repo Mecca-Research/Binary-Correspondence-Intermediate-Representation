@@ -132,7 +132,7 @@ def test_backward_budget_selects_cheapest_proven_implementation():
     y = node("y", ["x"], [1], [
         option("FP64", 0, 20, "exact"),
         option("FP32", Fraction(1, 8), 3),
-        option("FP8", Fraction(1, 2), 1),
+        option("FP8", Fraction(3, 4), 1),
     ])
     p = propagate_precision([x, y], {"y": ErrorBound(1)})
     assert p.selected["y"].name == "FP32"
