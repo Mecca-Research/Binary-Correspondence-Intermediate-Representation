@@ -22,9 +22,7 @@ from bcir.kbcir.precision_contracts import (
 
 
 def rep(storage="Q8", **kwargs):
-    return NumericalRepresentation(
-        storage=storage, compute="FP32", accumulator="FP32", **kwargs
-    )
+    return NumericalRepresentation(storage=storage, compute="FP32", accumulator="FP32", **kwargs)
 
 
 def option(name, error, cost, assurance="bounded", evidence_id="test:local-proof"):
@@ -40,8 +38,10 @@ def option(name, error, cost, assurance="bounded", evidence_id="test:local-proof
 
 def node(name, inputs=(), gains=(), options=None):
     return PrecisionNode(
-        name, tuple(inputs), tuple(gains),
-        tuple(options) if options is not None else (option("exact", 0, 2, "exact"),)
+        name,
+        tuple(inputs),
+        tuple(gains),
+        tuple(options) if options is not None else (option("exact", 0, 2, "exact"),),
     )
 
 
@@ -87,16 +87,14 @@ def test_symmetric_code_dot_uses_sufficient_signed_accumulator():
 
 def test_mx_storage_requires_exact_ocp_v1_metadata():
     valid = NumericalRepresentation(
-        storage="MXFP4", compute="FP32", accumulator="FP32",
-        block_size=32, scale_format="E8M0"
+        storage="MXFP4", compute="FP32", accumulator="FP32", block_size=32, scale_format="E8M0"
     )
     assert valid.block_size == 32
     with pytest.raises(PrecisionContractError):
         NumericalRepresentation(storage="MXFP4", compute="FP32", accumulator="FP32")
     with pytest.raises(PrecisionContractError):
         NumericalRepresentation(
-            storage="MXFP8", compute="FP32", accumulator="FP32",
-            block_size=16, scale_format="E8M0"
+            storage="MXFP8", compute="FP32", accumulator="FP32", block_size=16, scale_format="E8M0"
         )
 
 
@@ -112,28 +110,35 @@ def test_stochastic_rounding_must_be_counter_addressed():
 def test_empirical_results_cannot_masquerade_as_proof():
     x = node("x", options=[option("FP32", 0, 5, "exact")])
     y = node(
-        "y", inputs=["x"], gains=[1],
+        "y",
+        inputs=["x"],
+        gains=[1],
         options=[
             option("fast-empirical", Fraction(1, 100), 1, "empirical", "ppl:pass"),
-            option("safe", Fraction(1, 100), 4)
-        ]
+            option("safe", Fraction(1, 100), 4),
+        ],
     )
     p = propagate_precision([x, y], {"y": ErrorBound(1)})
     assert p.selected["y"].name == "safe"
     with pytest.raises(PrecisionContractError):
         propagate_precision(
             [x, node("y", ["x"], [1], [option("only-predicted", 0, 1, "predicted")])],
-            {"y": ErrorBound(1)}
+            {"y": ErrorBound(1)},
         )
 
 
 def test_backward_budget_selects_cheapest_proven_implementation():
     x = node("x")
-    y = node("y", ["x"], [1], [
-        option("FP64", 0, 20, "exact"),
-        option("FP32", Fraction(1, 8), 3),
-        option("FP8", Fraction(3, 4), 1),
-    ])
+    y = node(
+        "y",
+        ["x"],
+        [1],
+        [
+            option("FP64", 0, 20, "exact"),
+            option("FP32", Fraction(1, 8), 3),
+            option("FP8", Fraction(3, 4), 1),
+        ],
+    )
     p = propagate_precision([x, y], {"y": ErrorBound(1)})
     assert p.selected["y"].name == "FP32"
     assert p.output_bounds["y"].amount == Fraction(1, 8)
@@ -142,10 +147,13 @@ def test_backward_budget_selects_cheapest_proven_implementation():
 
 
 def test_shared_dag_fanout_sums_sensitivities_not_min_of_paths():
-    x = node("x", options=[
-        option("cheap", Fraction(1, 8), 1),
-        option("wide", 0, 9, "exact"),
-    ])
+    x = node(
+        "x",
+        options=[
+            option("cheap", Fraction(1, 8), 1),
+            option("wide", 0, 9, "exact"),
+        ],
+    )
     a = node("a", ["x"], [2])
     b = node("b", ["x"], [3])
     y = node("y", ["a", "b"], [1, 1])
@@ -156,16 +164,16 @@ def test_shared_dag_fanout_sums_sensitivities_not_min_of_paths():
 
 
 def test_multiple_outputs_keep_tighter_requirement():
-    x = node("x", options=[
-        option("fast", Fraction(1, 16), 1),
-        option("exact", 0, 9, "exact"),
-    ])
+    x = node(
+        "x",
+        options=[
+            option("fast", Fraction(1, 16), 1),
+            option("exact", 0, 9, "exact"),
+        ],
+    )
     a = node("a", ["x"], [1])
     b = node("b", ["x"], [4])
-    p = propagate_precision(
-        [x, a, b],
-        {"a": ErrorBound(1), "b": ErrorBound(Fraction(1, 8))}
-    )
+    p = propagate_precision([x, a, b], {"a": ErrorBound(1), "b": ErrorBound(Fraction(1, 8))})
     assert p.selected["x"].name == "exact"
     assert p.local_budgets["x"].amount == Fraction(1, 64)
 
@@ -181,9 +189,7 @@ def test_rejects_units_not_proven_commensurate():
     x = node("x")
     y = node("y", ["x"], [1])
     with pytest.raises(PrecisionContractError, match="common"):
-        propagate_precision(
-            [x, y], {"x": ErrorBound(1, "meters"), "y": ErrorBound(1, "seconds")}
-        )
+        propagate_precision([x, y], {"x": ErrorBound(1, "meters"), "y": ErrorBound(1, "seconds")})
     with pytest.raises(PrecisionContractError):
         propagate_precision([x], {"missing": ErrorBound(1)})
 
@@ -197,6 +203,5 @@ def test_negative_gains_rejected_and_no_qualified_implementation_refused():
         option("unproven", 0, 5, "bounded", evidence_id="")
     with pytest.raises(PrecisionContractError, match="no qualified"):
         propagate_precision(
-            [node("x", options=[option("too-inaccurate", 2, 1)])],
-            {"x": ErrorBound(1)}
+            [node("x", options=[option("too-inaccurate", 2, 1)])], {"x": ErrorBound(1)}
         )
