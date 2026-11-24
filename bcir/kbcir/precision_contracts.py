@@ -108,9 +108,9 @@ class NumericalRepresentation:
     stochastic_counter: str | None = None
 
     def __post_init__(self) -> None:
-        if any(not isinstance(x, str) or not x for x in (
-            self.storage, self.compute, self.accumulator
-        )):
+        if any(
+            not isinstance(x, str) or not x for x in (self.storage, self.compute, self.accumulator)
+        ):
             raise PrecisionContractError("numerical formats must be named")
         if self.rounding not in ("nearest", "truncate", "stochastic"):
             raise PrecisionContractError("unsupported rounding mode")
@@ -264,7 +264,8 @@ def propagate_precision(
         cap = budgets[node.name]
         local_budgets[node.name] = None if cap is None else ErrorBound(cap, unit)
         eligible = [
-            option for option in node.options
+            option
+            for option in node.options
             if option.certifiable
             and option.local_error is not None
             and option.local_error.unit == unit
@@ -283,9 +284,7 @@ def propagate_precision(
         forward[node.name] = option.local_error.amount + sum(
             gain * forward[upstream] for upstream, gain in zip(node.inputs, node.gains)
         )
-    outputs = {
-        name: ErrorBound(forward[name], unit) for name in output_tolerances
-    }
+    outputs = {name: ErrorBound(forward[name], unit) for name in output_tolerances}
     if any(outputs[name].amount > bound.amount for name, bound in output_tolerances.items()):
         raise PrecisionContractError("forward error certificate exceeds output tolerance")
     return PrecisionPlan(
