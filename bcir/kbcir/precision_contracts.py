@@ -116,7 +116,7 @@ class NumericalRepresentation:
             raise PrecisionContractError("unsupported rounding mode")
         if self.overflow not in ("reject", "saturate", "wrap", "ieee"):
             raise PrecisionContractError("unsupported overflow policy")
-        if self.storage in _MX_FORMATS:
+        if self.storage in _MX_FORMATS or self.compute in _MX_FORMATS:
             if self.block_size != 32 or self.scale_format != "E8M0":
                 raise PrecisionContractError(
                     "OCP MX v1 concrete formats require 32-element blocks and E8M0 scale"
@@ -155,6 +155,12 @@ class PrecisionOption:
             raise PrecisionContractError("option requires a name")
         if type(self.cost) is not int or self.cost < 0:
             raise PrecisionContractError("cost must be a nonnegative integer")
+        if not isinstance(self.representation, NumericalRepresentation):
+            raise PrecisionContractError("option needs an explicit numerical representation")
+        if self.local_error is not None and not isinstance(self.local_error, ErrorBound):
+            raise PrecisionContractError("local error needs an ErrorBound")
+        if not isinstance(self.evidence_id, str):
+            raise PrecisionContractError("evidence ID must be a string")
         if self.assurance not in ("exact", "bounded", "empirical", "predicted"):
             raise PrecisionContractError("invalid assurance classification")
         if self.assurance in ("exact", "bounded"):
@@ -165,7 +171,11 @@ class PrecisionOption:
 
     @property
     def certifiable(self) -> bool:
-        return self.assurance in ("exact", "bounded") and self.local_error is not None
+        return (
+            self.assurance in ("exact", "bounded")
+            and self.local_error is not None
+            and self.representation.rounding != "stochastic"
+        )
 
 
 @dataclass(frozen=True)
@@ -226,6 +236,8 @@ def propagate_precision(
             if upstream not in by_name:
                 raise PrecisionContractError("nodes must be in DAG topological order")
         by_name[node.name] = node
+    if any(not isinstance(bound, ErrorBound) for bound in output_tolerances.values()):
+        raise PrecisionContractError("output tolerances must be explicit ErrorBound values")
     if any(out not in by_name for out in output_tolerances):
         raise PrecisionContractError("output name not present in graph")
     units = {bound.unit for bound in output_tolerances.values()}
