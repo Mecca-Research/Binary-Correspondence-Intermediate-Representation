@@ -444,6 +444,18 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "sense_by_ranker",
         "DEFAULT_MARGIN_THRESHOLD",
     ),
+    "precision_contracts": (
+        "ErrorBound",
+        "NumericalRepresentation",
+        "PrecisionContractError",
+        "PrecisionNode",
+        "PrecisionOption",
+        "PrecisionPlan",
+        "propagate_precision",
+        "quantization_error_bound_real",
+        "quantization_error_in_q8_ticks",
+        "signed_dot_accumulator_bits",
+    ),
     "precision": (
         "Interval",
         "iadd",

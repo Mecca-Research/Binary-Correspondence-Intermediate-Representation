@@ -3,9 +3,12 @@ mined from the MPAT (Machine Precision Analysis Toolkit) and AEDACI (Approximati
 Error Detection & Correction Interface) notes.
 
 Everything here is Q8 fixed-point and integer-exact: no floats, no IEEE rounding
-model, no arbitrary-precision bignum. The "error currency" is the **Q8 ULP** -- one
-integer tick = 2^-8 in real units; a Q8 op that truncates its low 8 bits loses at
-most 1 ULP. Three deterministic tools:
+model, no arbitrary-precision bignum. A fixed-point Q8 ULP is one 2^-8 real-unit
+tick, whereas a quantizer's *group-grid ULP* is 2**scale_exp real units. The
+legacy R17 score below uses both by convention; it is NOT a general mixed-grid
+error certificate or a full numerical model of quantized reductions. For
+explicit units, no-clipping grid bounds and an opt-in MPAT-style DAG planner,
+use bcir.kbcir.precision_contracts. Three deterministic tools:
 
   * **interval error bounds** (`accuracy_bound`, `Interval`) -- propagate integer
     [lo, hi] ranges and a worst-case ULP error count over a claim, giving a provable
@@ -109,8 +112,13 @@ def quantization_error_bound(*, rounding: str = "nearest") -> int:
 
 
 def accuracy_bound(claim, *, compensated: bool = False) -> int:
-    """Static worst-case error (ULPs) for a claim's Q8 realization -- the deterministic
-    producer for the cost vector's accuracy dimension. A `reduce.*` claim accumulates
+    """Legacy R17 local accuracy *score*, not a certified mixed-grid bound.
+    This preserves the historical Q8 / group-grid ULP accounting expected by
+    existing plans. To prove a bound across scaled quantized inputs, first
+    convert every step to one absolute-error unit and account for amplification
+    and clipping using bcir.kbcir.precision_contracts.
+
+    Original opt-in producer for the cost vector's accuracy dimension. A `reduce.*` claim accumulates
     `count` terms (bound = count ULP naive, 1 ULP compensated); any other elementwise
     Q8 op truncates at most once (1 ULP). A `quantize.*` claim is the bridge itself (1 ULP
     at its grid). A claim whose INPUTS are quantized lanes (`quantized_bits > 0`) ADDS the
@@ -129,9 +137,10 @@ def accuracy_bound(claim, *, compensated: bool = False) -> int:
 
 
 def meets_tolerance(claim, tolerance_ulp: int, *, compensated: bool = False) -> bool:
-    """The checkable accuracy contract: the claim's realization is legal at the
-    declared tolerance iff its static error bound fits within it (a verifier-law
-    shape; oracle-side, opt-in -- MLIR parity is roadmap)."""
+    """Legacy local-score tolerance gate, retained for existing R17 plans.
+    It must not certify mixed-grid or end-to-end model numerical correctness;
+    the opt-in precision_contracts graph planner handles explicit unit budgets.
+    """
     return accuracy_bound(claim, compensated=compensated) <= tolerance_ulp
 
 
