@@ -828,6 +828,257 @@ void bcir_opt_zero_grad(bcir_opt_state *opt) {
   if (opt->grad_bf16) memset(opt->grad_bf16, 0, opt->n_params * 2u);
 }
 
+#define BCIR_OPT_STATE_MAGIC   0x424349524F505431ULL /* "BCIROPT1" */
+#define BCIR_OPT_STATE_VERSION 1ULL
+#define BCIR_OPT_STATE_HDR_U64 10u
+#define BCIR_OPT_STATE_HDR_B   (BCIR_OPT_STATE_HDR_U64 * sizeof(uint64_t))
+
+static uint64_t opt_fnv1a_u64(uint64_t h, uint64_t v) {
+  for (unsigned b = 0u; b < 8u; ++b) {
+    h ^= (v >> (8u * b)) & 0xFFu;
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+static uint64_t opt_shapes_hash(const bcir_opt_state *opt) {
+  uint64_t h = 14695981039346656037ULL;
+  for (size_t s = 0; s < opt->n_shapes; ++s) {
+    const bcir_opt_tensor_shape *sh = &opt->shapes[s];
+    h = opt_fnv1a_u64(h, (uint64_t)sh->offset);
+    h = opt_fnv1a_u64(h, (uint64_t)sh->rows);
+    h = opt_fnv1a_u64(h, (uint64_t)sh->cols);
+    h = opt_fnv1a_u64(h, (uint64_t)(tensor_uses_muon(sh) ? 1u : 0u));
+  }
+  return h;
+}
+
+static int opt_f32_buf_finite(const unsigned char *p, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    float v = 0.0f;
+    memcpy(&v, p + i * 4u, 4u);
+    if (!isfinite(v)) return 0;
+  }
+  return 1;
+}
+
+size_t bcir_opt_state_bytes(const bcir_opt_state *opt) {
+  if (!opt) return 0u;
+  size_t total = BCIR_OPT_STATE_HDR_B;
+  int k = opt->opt_kind;
+  if (k == BCIR_OPT_FP32) {
+    total += 2u * opt->n_params * 4u;
+  } else if (k == BCIR_OPT_Q8_MOMENTS || k == BCIR_OPT_Q8_MOMENTS_BF16_GRAD) {
+    total += 2u * opt->n_params + 3u * opt->n_blocks * 4u;
+  } else if (k == BCIR_OPT_ADAFACTOR_M2 || k == BCIR_OPT_ADAFACTOR_BF16_GRAD) {
+    total += opt->n_params * 4u;
+    for (size_t s = 0; s < opt->n_shapes; ++s) {
+      size_t r = opt->shapes[s].rows, c = opt->shapes[s].cols;
+      total += (c <= 1u || r <= 1u) ? (r * c * 4u) : ((r + c) * 4u);
+    }
+  } else if (k == BCIR_OPT_MUON_FP32 || k == BCIR_OPT_Q8_MUON_BF16_GRAD) {
+    int q8_m = (k == BCIR_OPT_Q8_MUON_BF16_GRAD);
+    for (size_t s = 0; s < opt->n_shapes; ++s) {
+      const bcir_opt_tensor_shape *sh = &opt->shapes[s];
+      size_t len = sh->rows * sh->cols;
+      if (tensor_uses_muon(sh)) {
+        if (q8_m) {
+          size_t nb = (len + BCIR_OPT_Q8_BLOCK - 1u) / BCIR_OPT_Q8_BLOCK;
+          total += len + nb * 4u;
+        } else {
+          total += len * 4u;
+        }
+      } else {
+        total += 2u * len * 4u;
+      }
+    }
+  } else {
+    return 0u;
+  }
+  return total;
+}
+
+int bcir_opt_save_state(const bcir_opt_state *opt, void *dst, size_t dst_bytes) {
+  if (!opt || !dst) return 1;
+  size_t need = bcir_opt_state_bytes(opt);
+  if (need < BCIR_OPT_STATE_HDR_B || dst_bytes != need) return 2;
+  unsigned char *p = (unsigned char *)dst;
+  uint64_t b1_bits = 0u, b2_bits = 0u;
+  memcpy(&b1_bits, &opt->beta1_power, sizeof(uint64_t));
+  memcpy(&b2_bits, &opt->beta2_power, sizeof(uint64_t));
+  uint64_t hdr[BCIR_OPT_STATE_HDR_U64] = {
+    BCIR_OPT_STATE_MAGIC,
+    BCIR_OPT_STATE_VERSION,
+    (uint64_t)opt->opt_kind,
+    (uint64_t)opt->n_params,
+    (uint64_t)opt->n_blocks,
+    (uint64_t)opt->n_shapes,
+    opt_shapes_hash(opt),
+    opt->step,
+    b1_bits,
+    b2_bits,
+  };
+  memcpy(p, hdr, BCIR_OPT_STATE_HDR_B);
+  p += BCIR_OPT_STATE_HDR_B;
+  int k = opt->opt_kind;
+  if (k == BCIR_OPT_FP32) {
+    size_t nb = opt->n_params * 4u;
+    memcpy(p, opt->m1_fp32, nb); p += nb;
+    memcpy(p, opt->m2_fp32, nb); p += nb;
+  } else if (k == BCIR_OPT_Q8_MOMENTS || k == BCIR_OPT_Q8_MOMENTS_BF16_GRAD) {
+    size_t np = opt->n_params, blk = opt->n_blocks * 4u;
+    memcpy(p, opt->m1_q8, np); p += np;
+    memcpy(p, opt->m1_scale, blk); p += blk;
+    memcpy(p, opt->m2_q8, np); p += np;
+    memcpy(p, opt->m2_log_min, blk); p += blk;
+    memcpy(p, opt->m2_log_step, blk); p += blk;
+  } else if (k == BCIR_OPT_ADAFACTOR_M2 || k == BCIR_OPT_ADAFACTOR_BF16_GRAD) {
+    size_t nb = opt->n_params * 4u;
+    memcpy(p, opt->m1_fp32, nb); p += nb;
+    for (size_t s = 0; s < opt->n_shapes; ++s) {
+      size_t r = opt->shapes[s].rows, c = opt->shapes[s].cols;
+      if (c <= 1u || r <= 1u) {
+        size_t bytes = r * c * 4u;
+        memcpy(p, opt->af_row[s], bytes); p += bytes;
+      } else {
+        memcpy(p, opt->af_row[s], r * 4u); p += r * 4u;
+        memcpy(p, opt->af_col[s], c * 4u); p += c * 4u;
+      }
+    }
+  } else if (k == BCIR_OPT_MUON_FP32 || k == BCIR_OPT_Q8_MUON_BF16_GRAD) {
+    int q8_m = (k == BCIR_OPT_Q8_MUON_BF16_GRAD);
+    for (size_t s = 0; s < opt->n_shapes; ++s) {
+      const bcir_opt_tensor_shape *sh = &opt->shapes[s];
+      size_t len = sh->rows * sh->cols;
+      if (tensor_uses_muon(sh)) {
+        if (q8_m) {
+          size_t nb = (len + BCIR_OPT_Q8_BLOCK - 1u) / BCIR_OPT_Q8_BLOCK;
+          memcpy(p, opt->muon_m1_q8[s], len); p += len;
+          memcpy(p, opt->muon_m1_scale[s], nb * 4u); p += nb * 4u;
+        } else {
+          memcpy(p, opt->muon_m1_fp32[s], len * 4u); p += len * 4u;
+        }
+      } else {
+        memcpy(p, opt->adam_m1_fp32[s], len * 4u); p += len * 4u;
+        memcpy(p, opt->adam_m2_fp32[s], len * 4u); p += len * 4u;
+      }
+    }
+  } else {
+    return 3;
+  }
+  return ((size_t)(p - (unsigned char *)dst) == need) ? 0 : 4;
+}
+
+int bcir_opt_load_state(bcir_opt_state *opt, const void *src, size_t src_bytes) {
+  if (!opt || !src) return 1;
+  size_t need = bcir_opt_state_bytes(opt);
+  if (need < BCIR_OPT_STATE_HDR_B || src_bytes != need) return 2;
+  const unsigned char *p = (const unsigned char *)src;
+  uint64_t hdr[BCIR_OPT_STATE_HDR_U64];
+  memcpy(hdr, p, BCIR_OPT_STATE_HDR_B);
+  if (hdr[0] != BCIR_OPT_STATE_MAGIC || hdr[1] != BCIR_OPT_STATE_VERSION ||
+      hdr[2] != (uint64_t)opt->opt_kind || hdr[3] != (uint64_t)opt->n_params ||
+      hdr[4] != (uint64_t)opt->n_blocks || hdr[5] != (uint64_t)opt->n_shapes ||
+      hdr[6] != opt_shapes_hash(opt)) {
+    return 3;
+  }
+  double b1p = 0.0, b2p = 0.0;
+  memcpy(&b1p, &hdr[8], sizeof(double));
+  memcpy(&b2p, &hdr[9], sizeof(double));
+  if (!isfinite(b1p) || !isfinite(b2p) || b1p < 0.0 || b1p > 1.0 || b2p < 0.0 || b2p > 1.0) {
+    return 4;
+  }
+  /* Pass 1: validate finiteness of all float payload buffers before mutating opt. */
+  const unsigned char *q = p + BCIR_OPT_STATE_HDR_B;
+  int k = opt->opt_kind;
+  if (k == BCIR_OPT_FP32) {
+    if (!opt_f32_buf_finite(q, 2u * opt->n_params)) return 5;
+  } else if (k == BCIR_OPT_Q8_MOMENTS || k == BCIR_OPT_Q8_MOMENTS_BF16_GRAD) {
+    size_t np = opt->n_params, blk = opt->n_blocks * 4u;
+    q += np;
+    if (!opt_f32_buf_finite(q, opt->n_blocks)) return 5;
+    q += blk + np;
+    if (!opt_f32_buf_finite(q, 2u * opt->n_blocks)) return 5;
+  } else if (k == BCIR_OPT_ADAFACTOR_M2 || k == BCIR_OPT_ADAFACTOR_BF16_GRAD) {
+    size_t n_floats = (need - BCIR_OPT_STATE_HDR_B) / 4u;
+    if (!opt_f32_buf_finite(q, n_floats)) return 5;
+  } else if (k == BCIR_OPT_MUON_FP32 || k == BCIR_OPT_Q8_MUON_BF16_GRAD) {
+    int q8_m = (k == BCIR_OPT_Q8_MUON_BF16_GRAD);
+    for (size_t s = 0; s < opt->n_shapes; ++s) {
+      const bcir_opt_tensor_shape *sh = &opt->shapes[s];
+      size_t len = sh->rows * sh->cols;
+      if (tensor_uses_muon(sh)) {
+        if (q8_m) {
+          size_t nb = (len + BCIR_OPT_Q8_BLOCK - 1u) / BCIR_OPT_Q8_BLOCK;
+          q += len;
+          if (!opt_f32_buf_finite(q, nb)) return 5;
+          q += nb * 4u;
+        } else {
+          if (!opt_f32_buf_finite(q, len)) return 5;
+          q += len * 4u;
+        }
+      } else {
+        if (!opt_f32_buf_finite(q, 2u * len)) return 5;
+        q += 2u * len * 4u;
+      }
+    }
+  } else {
+    return 3;
+  }
+
+  /* Pass 2: commit validated state atomically. */
+  p += BCIR_OPT_STATE_HDR_B;
+  if (k == BCIR_OPT_FP32) {
+    size_t nb = opt->n_params * 4u;
+    memcpy(opt->m1_fp32, p, nb); p += nb;
+    memcpy(opt->m2_fp32, p, nb); p += nb;
+  } else if (k == BCIR_OPT_Q8_MOMENTS || k == BCIR_OPT_Q8_MOMENTS_BF16_GRAD) {
+    size_t np = opt->n_params, blk = opt->n_blocks * 4u;
+    memcpy(opt->m1_q8, p, np); p += np;
+    memcpy(opt->m1_scale, p, blk); p += blk;
+    memcpy(opt->m2_q8, p, np); p += np;
+    memcpy(opt->m2_log_min, p, blk); p += blk;
+    memcpy(opt->m2_log_step, p, blk); p += blk;
+  } else if (k == BCIR_OPT_ADAFACTOR_M2 || k == BCIR_OPT_ADAFACTOR_BF16_GRAD) {
+    size_t nb = opt->n_params * 4u;
+    memcpy(opt->m1_fp32, p, nb); p += nb;
+    for (size_t s = 0; s < opt->n_shapes; ++s) {
+      size_t r = opt->shapes[s].rows, c = opt->shapes[s].cols;
+      if (c <= 1u || r <= 1u) {
+        size_t bytes = r * c * 4u;
+        memcpy(opt->af_row[s], p, bytes); p += bytes;
+      } else {
+        memcpy(opt->af_row[s], p, r * 4u); p += r * 4u;
+        memcpy(opt->af_col[s], p, c * 4u); p += c * 4u;
+      }
+    }
+  } else if (k == BCIR_OPT_MUON_FP32 || k == BCIR_OPT_Q8_MUON_BF16_GRAD) {
+    int q8_m = (k == BCIR_OPT_Q8_MUON_BF16_GRAD);
+    for (size_t s = 0; s < opt->n_shapes; ++s) {
+      const bcir_opt_tensor_shape *sh = &opt->shapes[s];
+      size_t len = sh->rows * sh->cols;
+      if (tensor_uses_muon(sh)) {
+        if (q8_m) {
+          size_t nb = (len + BCIR_OPT_Q8_BLOCK - 1u) / BCIR_OPT_Q8_BLOCK;
+          memcpy(opt->muon_m1_q8[s], p, len); p += len;
+          memcpy(opt->muon_m1_scale[s], p, nb * 4u); p += nb * 4u;
+        } else {
+          memcpy(opt->muon_m1_fp32[s], p, len * 4u); p += len * 4u;
+        }
+      } else {
+        memcpy(opt->adam_m1_fp32[s], p, len * 4u); p += len * 4u;
+        memcpy(opt->adam_m2_fp32[s], p, len * 4u); p += len * 4u;
+      }
+    }
+  }
+  if ((size_t)(p - (const unsigned char *)src) != need) return 6;
+  opt->step = hdr[7];
+  opt->beta1_power = b1p;
+  opt->beta2_power = b2p;
+  bcir_opt_zero_grad(opt);
+  return 0;
+}
+
 void bcir_opt_commit_grad_fp32(bcir_opt_state *opt, const float *grad_work, int accumulate) {
   if (!opt || !grad_work) return;
   bcir_opt_commit_grad_span_fp32(opt, 0u, opt->n_params, grad_work, accumulate);

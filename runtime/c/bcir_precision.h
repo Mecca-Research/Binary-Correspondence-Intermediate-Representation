@@ -220,6 +220,11 @@ BCIR_DT_API int bcir_opt_step(bcir_tensor_pool *pool, bcir_opt_state *opt, float
                               double grad_scale, double *out_grad_norm, int *out_clipped,
                               bcir_prec_telemetry *tel);
 
+/* Exact persistent optimizer state serialization (0-bit-drift checkpoint resume). */
+BCIR_DT_API size_t bcir_opt_state_bytes(const bcir_opt_state *opt);
+BCIR_DT_API int bcir_opt_save_state(const bcir_opt_state *opt, void *dst, size_t dst_bytes);
+BCIR_DT_API int bcir_opt_load_state(bcir_opt_state *opt, const void *src, size_t src_bytes);
+
 /* Gate 0 mathematical verifier for deterministic 5-step quintic Newton-Schulz polar factor. */
 BCIR_DT_API int bcir_newton_schulz_verify(bcir_tensor_pool *pool, size_t rows, size_t cols,
                                           double *out_ortho_err);

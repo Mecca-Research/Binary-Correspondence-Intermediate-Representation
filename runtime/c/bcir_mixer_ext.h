@@ -116,6 +116,9 @@ BCIR_DT_API void bcir_ext_get_mem_stats(const bcir_ext_model *m, bcir_ext_mem_st
 BCIR_DT_API void bcir_ext_get_telemetry(const bcir_ext_model *m, bcir_prec_telemetry *out);
 BCIR_DT_API void bcir_ext_reset_telemetry(bcir_ext_model *m);
 BCIR_DT_API void bcir_ext_reset_opt(bcir_ext_model *m);
+BCIR_DT_API size_t bcir_ext_opt_state_bytes(const bcir_ext_model *m);
+BCIR_DT_API int bcir_ext_save_opt_state(const bcir_ext_model *m, void *dst, size_t dst_bytes);
+BCIR_DT_API int bcir_ext_load_opt_state(bcir_ext_model *m, const void *src, size_t src_bytes);
 BCIR_DT_API float *bcir_ext_weights_ptr(bcir_ext_model *m);
 BCIR_DT_API float *bcir_ext_grads_fp32_ptr(bcir_ext_model *m);
 BCIR_DT_API size_t bcir_ext_param_count(const bcir_ext_model *m);

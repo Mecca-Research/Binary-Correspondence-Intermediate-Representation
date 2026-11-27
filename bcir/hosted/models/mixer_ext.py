@@ -381,6 +381,12 @@ def _bind_lib(lib: ct.CDLL) -> None:
     lib.bcir_ext_reset_telemetry.restype = None
     lib.bcir_ext_reset_opt.argtypes = [ct.c_void_p]
     lib.bcir_ext_reset_opt.restype = None
+    lib.bcir_ext_opt_state_bytes.argtypes = [ct.c_void_p]
+    lib.bcir_ext_opt_state_bytes.restype = ct.c_size_t
+    lib.bcir_ext_save_opt_state.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_size_t]
+    lib.bcir_ext_save_opt_state.restype = ct.c_int
+    lib.bcir_ext_load_opt_state.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_size_t]
+    lib.bcir_ext_load_opt_state.restype = ct.c_int
     lib.bcir_ext_weights_ptr.argtypes = [ct.c_void_p]
     lib.bcir_ext_weights_ptr.restype = ct.POINTER(ct.c_float)
     lib.bcir_ext_param_count.argtypes = [ct.c_void_p]
@@ -579,15 +585,38 @@ class NativeMixerExt:
         ptr = self.lib.bcir_ext_weights_ptr(self._handle)
         ct.memmove(ptr, raw, len(raw))
 
-    def save_checkpoint(self, path: str | Path, *, step: int = 0, extra: dict | None = None) -> str:
-        """Save atomic SHA-256-verified JSON metadata + raw FP32 binary weights."""
+    def opt_state_bytes(self) -> bytes:
+        nbytes = int(self.lib.bcir_ext_opt_state_bytes(self._handle))
+        if nbytes <= 0:
+            raise RuntimeError("optimizer state size unavailable")
+        buf = ct.create_string_buffer(nbytes)
+        rc = self.lib.bcir_ext_save_opt_state(self._handle, buf, nbytes)
+        if rc != 0:
+            raise ValueError(f"bcir_ext_save_opt_state failed with status {rc}")
+        return buf.raw
+
+    def load_opt_state_bytes(self, raw: bytes) -> None:
+        buf = ct.create_string_buffer(raw, len(raw))
+        rc = self.lib.bcir_ext_load_opt_state(self._handle, buf, len(raw))
+        if rc != 0:
+            raise ValueError(f"bcir_ext_load_opt_state failed with status {rc}")
+
+    def save_checkpoint(
+        self,
+        path: str | Path,
+        *,
+        step: int = 0,
+        extra: dict | None = None,
+        include_opt_state: bool = True,
+    ) -> str:
+        """Save atomic SHA-256-verified JSON metadata, FP32 weights, and optimizer state."""
         base = Path(path)
         base.parent.mkdir(parents=True, exist_ok=True)
         bin_path = base.with_suffix(".bin")
         json_path = base.with_suffix(".json")
         payload = self.weights_bytes()
         digest = hashlib.sha256(payload).hexdigest()
-        meta = {
+        meta: dict[str, object] = {
             "schema": _CKPT_SCHEMA,
             "abi_version": 6,
             "step": int(step),
@@ -599,14 +628,28 @@ class NativeMixerExt:
             "extra": extra or {},
         }
         tmp_bin = bin_path.with_suffix(".bin.tmp")
-        tmp_json = json_path.with_suffix(".json.tmp")
         tmp_bin.write_bytes(payload)
         os.replace(tmp_bin, bin_path)
-        tmp_json.write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if include_opt_state:
+            opt_path = base.with_suffix(".opt.bin")
+            opt_payload = self.opt_state_bytes()
+            opt_digest = hashlib.sha256(opt_payload).hexdigest()
+            tmp_opt = opt_path.with_suffix(".bin.tmp")
+            tmp_opt.write_bytes(opt_payload)
+            os.replace(tmp_opt, opt_path)
+            meta["opt_state_file"] = opt_path.name
+            meta["opt_state_sha256"] = opt_digest
+            meta["opt_state_bytes"] = len(opt_payload)
+        tmp_json = json_path.with_suffix(".json.tmp")
+        tmp_json.write_text(
+            json.dumps(meta, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
         os.replace(tmp_json, json_path)
         return digest
 
-    def load_checkpoint(self, path: str | Path) -> dict:
+    def load_checkpoint(self, path: str | Path, *, load_opt_state: bool = True) -> dict:
         base = Path(path)
         json_path = base.with_suffix(".json")
         meta = json.loads(json_path.read_text(encoding="utf-8"))
@@ -618,6 +661,13 @@ class NativeMixerExt:
         if digest != meta["weights_sha256"]:
             raise ValueError("checkpoint weights SHA-256 mismatch")
         self.load_weights_bytes(payload)
+        if load_opt_state and "opt_state_file" in meta:
+            opt_path = json_path.parent / meta["opt_state_file"]
+            opt_payload = opt_path.read_bytes()
+            opt_digest = hashlib.sha256(opt_payload).hexdigest()
+            if opt_digest != meta["opt_state_sha256"]:
+                raise ValueError("checkpoint optimizer state SHA-256 mismatch")
+            self.load_opt_state_bytes(opt_payload)
         return meta
 
     def train_steps(

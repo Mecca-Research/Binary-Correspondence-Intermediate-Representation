@@ -1,7 +1,7 @@
 # BCIR Floating-Point Precision Frontier (50M), Region-Policy `COMP-1`, and `MIXER-EXT` Comparative Architecture Study
 
 **Date:** 2026-11-22 (updated 2026-11-24 with production `COMP-1` / `P1–P6` & Exp 5 baseline; updated 2026-11-27 with production ABI 6 `MIXER-EXT`, `Q8-Muon`, beyond-the-list `Arch-7` ladder, and `1.024M`-token `T=256` pilot)
-**Status:** Executed bare-metal C11 + Python ctypes empirical studies; all raw logs, Gate 0 proofs, multi-seed curves, checkpoints (`<= 24 MiB`), SHA-256 provenance manifests, multi-panel figures, and permanent `bcir.deploy_baseline.v1` checkpoint archived in [`Mecca-Research/Modular-AI`](https://github.com/Mecca-Research/Modular-AI) under `BCIR Model Training/precision-arch-study/` (merged [PR #228](https://github.com/Mecca-Research/Modular-AI/pull/228) at `8cc3f234be0bc84009b79f152ab55995ada9a499`) and `BCIR Model Training/mixer-ext-abi6-study/` ([PR #229](https://github.com/Mecca-Research/Modular-AI/pull/229) at `8cd57cd1136ef81532e58b6cd47d3421a7fe72bb`).
+**Status:** Executed bare-metal C11 + Python ctypes empirical studies; all raw logs, Gate 0 proofs, multi-seed curves, checkpoints (`<= 24 MiB`), SHA-256 provenance manifests, multi-panel figures, and permanent `bcir.deploy_baseline.v1` checkpoint archived in [`Mecca-Research/Modular-AI`](https://github.com/Mecca-Research/Modular-AI) under `BCIR Model Training/precision-arch-study/` (merged [PR #228](https://github.com/Mecca-Research/Modular-AI/pull/228) at `8cc3f234be0bc84009b79f152ab55995ada9a499`) and `BCIR Model Training/mixer-ext-abi6-study/` ([PR #229](https://github.com/Mecca-Research/Modular-AI/pull/229) at `e458a859e190430827319b0e725b325241fbd787`).
 **Host & Toolchain Provenance (`P6`):** Exp 1–4: `Intel(R) Xeon(R) 6985P-C` (2 cores, `avx512f`, `avx512_bf16`, `avx512_fp16`, `avx512_vnni`, no AMX exposed), `clang 23.1.6` (`-O3 -std=c11 -march=native -ffp-contract=off -Wall -Wextra -Werror`), linked against BCIR `runtime/c/bcir_tensor.c` and `runtime/c/bcir_decoder_train.c` at commit `15c7287e93a968795cf27c31caa7ee5e79cd48f9`. Exp 5 & §8 (ABI 6 `MIXER-EXT`): `Intel(R) Xeon(R) CPU @ 2.30GHz` (2 cores, `avx2_fma`, no `avx512f`), `clang 23.1.6`, linked directly against production BCIR `runtime/c/{bcir_q8_model,bcir_decode,bcir_ai_kernels,bcir_llama,bcir_tensor,bcir_precision,bcir_mixer_ext}.c`.
 **Related BCIR Roadmaps:**
 - [BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md](BCIR_TRAINING_STRATEGY_AND_OPTIMIZATION_ROADMAP_2026-11-21.md) (`TRAIN-OPT-1..10`, Precision Policy v0.1 `P1–P6`)
@@ -261,15 +261,15 @@ Executed via `src/exp5_deploy_policy_baseline.py` and `src/bcir_native_deploy_be
 
 ## 8. Production ABI 6 `MIXER-EXT` Runtime, `Q8-Muon` Frontier, Beyond-the-List `Arch-7` Ladder & `1.024M`-Token Pilot (`PR #229`)
 
-To advance directly from the Experiment 1–5 baseline to the next native sequence-mixer architecture and training stack — and push beyond the initial roadmap list — BCIR now ships the production ISO C11 ABI 6 `MIXER-EXT` + Default Training Stack runtime (`runtime/c/bcir_precision.{h,c}`, `runtime/c/bcir_mixer_ext.{h,c}`, `runtime/c/test_mixer_ext.c`, `bcir/hosted/models/mixer_ext.py`, `bcir/tests/test_mixer_ext.py`), preserving ABI 5 (`runtime/c/bcir_decoder_train.{h,c}`) untouched. Complete logs, JSON artifacts, plots, and the verified `1.024M`-token checkpoint are archived in [`Mecca-Research/Modular-AI` PR #229](https://github.com/Mecca-Research/Modular-AI/pull/229) (`BCIR Model Training/mixer-ext-abi6-study/`, pinned at commit `8cd57cd1136ef81532e58b6cd47d3421a7fe72bb`).
+To advance directly from the Experiment 1–5 baseline to the next native sequence-mixer architecture and training stack — and push beyond the initial roadmap list — BCIR now ships the production ISO C11 ABI 6 `MIXER-EXT` + Default Training Stack runtime (`runtime/c/bcir_precision.{h,c}`, `runtime/c/bcir_mixer_ext.{h,c}`, `runtime/c/test_mixer_ext.c`, `bcir/hosted/models/mixer_ext.py`, `bcir/tests/test_mixer_ext.py`), preserving ABI 5 (`runtime/c/bcir_decoder_train.{h,c}`) untouched. Complete logs, JSON artifacts, plots, and the verified `1.024M`-token checkpoint are archived in [`Mecca-Research/Modular-AI` PR #229](https://github.com/Mecca-Research/Modular-AI/pull/229) (`BCIR Model Training/mixer-ext-abi6-study/`, pinned at commit `e458a859e190430827319b0e725b325241fbd787`).
 
 ### 8.1 Production ABI 6 Implementation & Gate 0 Verification
 
 - **6 Native Mixers (`layer_mixer[l]`):** `GQA (0)`, `SWA (1)`, `DeltaNet (2)`, **Kimi Delta Attention `KDA` (`3`, `arXiv:2510.26692`)**, `MLA` RoPE/NoPE (`4`), and **Gated DeltaNet-2 `GDN-2` (`5`, `arXiv:2605.22791v2`)** with FP64 chunkwise WY solvers (`max_abs = 0.000e+00` DeltaNet, `3.55e-15` KDA, `2.67e-15` GDN-2 vs token recurrence) and verified MLA absorption (`<= 2.05e-8`).
 - **5 Orthogonal Frontier Toggles (default `0`):** `gate_mode` (`G1` SDPA output sigmoid gate, `arXiv:2505.06708`), `qk_norm` (per-head Q/K RMSNorm), `canon_mode` (`Canon-A/C` causal `conv1d k=4`, `arXiv:2512.17351v2`), `mhc_streams` (`C=2, 4` DeepSeek `mHC` Sinkhorn-Knopp Birkhoff doubly-stochastic residual streams, `arXiv:2512.24880v2`, `t_max=20`), and `online_softmax` (`TRAIN-OPT-5` `O(T)` LSE tiled attention for `GQA` & `MLA`, reducing `GQA` prob buffers **`512.0×`** at `T=1024`: `512.00 → 1.00 MiB`).
-- **7 Native Optimizers (`bcir_precision.{h,c}`):** Adds **`BCIR_OPT_MUON_FP32` (`12.03 B/p`)** and **`BCIR_OPT_Q8_MUON_BF16_GRAD` (`7.07 B/p`, `Muon-8L/AdamW-32 + BF16Grad`, `arXiv:2509.23106v3`)** alongside `FP32 AdamW`, `Q8`, `Q8+BF16Grad`, and `Adafactor`. Verified `0` bit drift `1T == 2T`, zero hot-path `malloc`, and clean under GCC `-std=c11 -Werror` and Clang 23 `-std=c23 -fsanitize=address,undefined` (`detect_leaks=1`).
+- **7 Native Optimizers & 0-Bit-Drift Resume (`bcir_precision.{h,c}`):** Adds **`BCIR_OPT_MUON_FP32` (`12.03 B/p`)** and **`BCIR_OPT_Q8_MUON_BF16_GRAD` (`7.07 B/p`, `Muon-8L/AdamW-32 + BF16Grad`, `arXiv:2509.23106v3`)** alongside `FP32 AdamW`, `Q8`, `Q8+BF16Grad`, and `Adafactor`, plus fail-closed binary optimizer-state serialization (`bcir_opt_{state_bytes,save_state,load_state}` / `bcir_ext_{opt_state_bytes,save_opt_state,load_opt_state}`). Verified `0` bit drift for both `1T == 2T` AND mid-run checkpoint resume across all 7 optimizers, zero hot-path `malloc`, 0 Clang 23 static-analyzer warnings, and clean under GCC `-std=c11 -Werror` and Clang 23 `-std=c23 -fsanitize=address,undefined` (`detect_leaks=1`).
 
-### 8.2 Optimizer Frontier & Muon Batch-Amortization Law (`Exp A`, `8cd57cd`)
+### 8.2 Optimizer Frontier & Muon Batch-Amortization Law (`Exp A`, `e458a85`)
 
 | Scale / Policy | Persistent (`MiB` / `B/p`) | Saved vs FP32 | Mean Test CE (2 seeds) | Mean Test PPL | `Delta CE` vs FP32 | Median `ms/step` |
 |---|---:|---:|---:|---:|---:|---:|
@@ -285,22 +285,22 @@ To advance directly from the Experiment 1–5 baseline to the next native sequen
 - On `wide512 GQA`, Q8 momentum quantization matches FP32 Muon within **`+0.0004` nats** on both seeds (`2.3629` vs `2.3624`), validating `arXiv:2509.23106v3` Theorem 3.
 - **CPU Batch-Amortization Rule:** Newton-Schulz fixed cost (`~940 ms` on `wide512`) slows tiny `N=256` updates by `5.92×`, amortizing to `2.23×` at `N=1024`, `1.62×` at `N=2048`, and `~1.15×` at `N=8192`. Use `Opt_Adafactor`/`Opt_Q8_BF16Grad` for small `N <= 512`, and **`Opt_Q8_Muon_BF16Grad`** once `N >= 2048` (via larger batch or gradient accumulation).
 
-### 8.3 10-Architecture ABI 6 Ablation Ladder (`Exp B`, `wide10m` 2 Seeds, 160 Steps, `Opt_Adafactor`)
+### 8.3 10-Architecture ABI 6 Ablation Ladder (`Exp B`, `wide10m` 2 Seeds, 160 Steps, `Opt_Adafactor`, Real Procrustes Joint-ITQ + Dual-SVID `COMP-1` PTQ)
 
 | Architecture | Params | Test CE (`Delta vs GQA`) | Test PPL | `BCIRQ8` `Delta` | `COMP-1` PTQ `Delta` | Max `\|Act\|` | `T=4096` State | `B1` `mq4` / `fill20` |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **`Arch7d` (`GDN2+G1NoPEMLA+CanonAC+mHC2`)** | `14.30M` | **`2.2526` (`-0.0927`)** | **`9.51`** | **`-0.0001`** | **`+0.1110`** | `10.62` | **`3.75 MiB`** | `20.8%` / `15.3%` (`act 9.04`) |
-| `Arch2_Hybrid_DN_GQA` | `13.53M` | `2.2622` (`-0.0831`) | `9.60` | `+0.0001` | `+0.2468` | `16.28` | `4.75 MiB` | `15.7%` / `11.9%` |
-| `Arch1_DeltaNet` | `13.93M` | `2.2651` (`-0.0802`) | `9.63` | `+0.0003` | `+0.1500` | **`7.62`** | **`1.00 MiB`** | `18.1%` / `16.9%` |
-| `Arch7c` (`GDN2+G1NoPEMLA+CanonAC`) | `14.30M` | `2.2662` (`-0.0791`) | `9.64` | `+0.0001` | `+0.1155` | `10.87` | `3.75 MiB` | `20.8%` / `19.4%` |
-| `Arch7b` (`GDN2+G1NoPEMLA`) | `14.28M` | `2.2796` (`-0.0657`) | `9.77` | `+0.0001` | `+0.1147` | `9.93` | `3.75 MiB` | `22.7%` / `15.3%` |
-| `Arch7a` (`KDA+NoPEMLA`) | `13.88M` | `2.3136` (`-0.0317`) | `10.11` | `+0.0003` | `+0.1215` | `13.96` | `3.75 MiB` | **`25.9%` / `20.9%`** |
-| `GQA_Full_G1_QKNorm` | `12.34M` | `2.3364` (`-0.0089`) | `10.34` | `+0.0001` | `+0.1493` | `14.13` | `16.00 MiB` | `20.8%` / `17.5%` |
-| `GQA_Full_CanonAC` | `12.34M` | `2.3428` (`-0.0025`) | `10.41` | `-0.0000` | `+0.1126` | `14.29` | `16.00 MiB` | `25.5%` / `19.1%` (`ord8 16.0%`) |
-| `GQA_Full` (baseline) | `12.33M` | `2.3453` (`+0.0000`) | `10.44` | `+0.0001` | `+0.1076` | `14.09` | `16.00 MiB` | `20.4%` / `18.4%` |
-| `Arch4_MLA` (decoupled RoPE) | `13.57M` | `2.3972` (`+0.0519`) | `10.99` | `-0.0001` | `+0.1358` | `11.00` | `14.00 MiB` | `21.8%` / `15.9%` |
+| **`Arch7d` (`GDN2+G1NoPEMLA+CanonAC+mHC2`)** | `14.30M` | **`2.2526` (`-0.0927`)** | **`9.51`** | **`-0.0001`** | `+0.1086` | `10.62` | **`3.75 MiB`** | `20.8%` / `15.3%` (`act 9.06`) |
+| `Arch2_Hybrid_DN_GQA` | `13.53M` | `2.2622` (`-0.0830`) | `9.60` | `+0.0001` | `+0.2214` | `16.28` | `4.75 MiB` | `15.7%` / `11.9%` |
+| `Arch1_DeltaNet` | `13.93M` | `2.2651` (`-0.0802`) | `9.63` | `+0.0003` | `+0.1297` | **`7.62`** | **`1.00 MiB`** | `18.1%` / `16.9%` |
+| `Arch7c` (`GDN2+G1NoPEMLA+CanonAC`) | `14.30M` | `2.2662` (`-0.0791`) | `9.64` | `+0.0001` | `+0.1105` | `10.87` | `3.75 MiB` | `20.8%` / `19.4%` |
+| `Arch7b` (`GDN2+G1NoPEMLA`) | `14.28M` | `2.2796` (`-0.0657`) | `9.77` | `+0.0001` | `+0.1043` | `9.93` | `3.75 MiB` | `22.7%` / `15.3%` |
+| `Arch7a` (`KDA+NoPEMLA`) | `13.88M` | `2.3136` (`-0.0316`) | `10.11` | `+0.0003` | `+0.1166` | `13.96` | `3.75 MiB` | **`25.9%` / `20.9%`** |
+| `GQA_Full_G1_QKNorm` | `12.34M` | `2.3364` (`-0.0089`) | `10.34` | `+0.0001` | `+0.1282` | `14.13` | `16.00 MiB` | `20.8%` / `17.5%` |
+| `GQA_Full_CanonAC` | `12.34M` | `2.3428` (`-0.0025`) | `10.41` | `-0.0000` | `+0.0960` | `14.29` | `16.00 MiB` | `25.5%` / `19.1%` (`ord8 16.0%`) |
+| `GQA_Full` (baseline) | `12.33M` | `2.3453` (`+0.0000`) | `10.44` | `+0.0001` | **`+0.0885`** | `14.09` | `16.00 MiB` | `20.4%` / `18.4%` |
+| `Arch4_MLA` (decoupled RoPE) | `13.57M` | `2.3972` (`+0.0519`) | `10.99` | `-0.0001` | `+0.1203` | `11.00` | `14.00 MiB` | `21.8%` / `15.9%` |
 
-Every beyond-the-list component stacked monotonically (`Arch7a → 7b`: `-0.0340` nats; `7b → 7c`: `-0.0134`; `7c → 7d`: `-0.0136`), overtaking `Arch2_Hybrid_DN_GQA` while cutting `T=4096` state `4.27×` vs GQA (`3.75 MiB`) and cutting zero-QAT `COMP-1` PTQ error **`2.22×`** (`+0.1110` vs `+0.2468`).
+Every beyond-the-list component stacked monotonically (`Arch7a → 7b`: `-0.0340` nats; `7b → 7c`: `-0.0134`; `7c → 7d`: `-0.0136`), overtaking `Arch2_Hybrid_DN_GQA` while cutting `T=4096` state `4.27×` vs GQA (`3.75 MiB`) and cutting zero-QAT Dual-SVID + Joint-ITQ `COMP-1` PTQ error **`2.04×`** (`+0.1086` vs `+0.2214`).
 
 ### 8.4 Real `1.024M`-Token `T=256` Long-Horizon Pilot (`Exp C`, `online_softmax=1`, `B=8`)
 
@@ -311,4 +311,4 @@ Every beyond-the-list component stacked monotonically (`Arch7a → 7b`: `-0.0340
 | `Arch-7d` + `Opt_Adafactor` | `1.22M` | `14.03` | `1.6542` | `5.23` | `+0.0003` | `3.79` | `475.7 s` | `2,153` |
 | **`Arch-7d` + `Opt_Q8_Muon_BF16Grad`** | `1.22M` | **`8.76`** | **`1.5716`** | **`4.81`** | `+0.0005` | **`2.15`** | `511.0 s` | `2,004` |
 
-At `N=2,048` tokens/update over `1,024,000` real tokens (`~0.85–1.0` tokens/param), **`Arch-7d + Opt_Q8_Muon_BF16Grad`** achieves a **triple Pareto win**: **`-0.2949` nats (`-25.5%` PPL)** below `GQA_Full`, **`-0.1422` nats** below `Arch-2`, faster wall time than `GQA_Full` (`511.0 s` vs `526.5 s`), lowest persistent RAM (`8.76 MiB`), and **`4.84×` lower peak activation amplitude** (`2.15` vs `10.42`). Atomic SHA-256 checkpoint reload parity was verified to `9.93e-8` CE; full Tier M (`10M`) and Tier L (`50M`) runs remain queued on 16+ core Xeon/EPYC hosts via `src/run_tier_ml_qual.py`.
+At `N=2,048` tokens/update over `1,024,000` real tokens (`~0.85–1.0` tokens/param), **`Arch-7d + Opt_Q8_Muon_BF16Grad`** achieves a **triple Pareto win**: **`-0.2949` nats (`-25.5%` PPL)** below `GQA_Full`, **`-0.1422` nats** below `Arch-2`, faster wall time than `GQA_Full` (`511.0 s` vs `526.5 s`), lowest persistent RAM (`8.76 MiB`), and **`4.84×` lower peak activation amplitude** (`2.15` vs `10.42`). Atomic SHA-256 checkpoint reload parity (`9.93e-8` CE) and live mid-run 0-bit-drift training resume (`4 + 4 == 8` steps with periodic in-loop recovery checkpoints + full optimizer state restore across `Opt_Adafactor` and `Opt_Q8_Muon_BF16Grad`, `test_ce_abs_diff = 0.0e+00`) are verified in `results/exp_c_tier_ml_pilot.json`; full Tier M (`10M`) and Tier L (`50M`) runs remain queued on 16+ core Xeon/EPYC hosts via `src/run_tier_ml_qual.py`.

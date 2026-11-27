@@ -879,6 +879,15 @@ void bcir_ext_get_mem_stats(const bcir_ext_model *m, bcir_ext_mem_stats *out) { 
 void bcir_ext_get_telemetry(const bcir_ext_model *m, bcir_prec_telemetry *out) { if (m && out) *out = m->tel; }
 void bcir_ext_reset_telemetry(bcir_ext_model *m) { if (m) bcir_prec_telemetry_reset(&m->tel); }
 void bcir_ext_reset_opt(bcir_ext_model *m) { if (m && m->opt) bcir_opt_reset(m->opt); }
+size_t bcir_ext_opt_state_bytes(const bcir_ext_model *m) {
+  return (m && m->opt) ? bcir_opt_state_bytes(m->opt) : 0u;
+}
+int bcir_ext_save_opt_state(const bcir_ext_model *m, void *dst, size_t dst_bytes) {
+  return (m && m->opt) ? bcir_opt_save_state(m->opt, dst, dst_bytes) : 1;
+}
+int bcir_ext_load_opt_state(bcir_ext_model *m, const void *src, size_t src_bytes) {
+  return (m && m->opt) ? bcir_opt_load_state(m->opt, src, src_bytes) : 1;
+}
 float *bcir_ext_weights_ptr(bcir_ext_model *m) { return m ? m->weights : NULL; }
 float *bcir_ext_grads_fp32_ptr(bcir_ext_model *m) { return m ? m->opt->grad_fp32 : NULL; }
 size_t bcir_ext_param_count(const bcir_ext_model *m) { return m ? m->n_params : 0u; }

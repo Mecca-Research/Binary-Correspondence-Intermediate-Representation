@@ -96,24 +96,31 @@ def test_hybrid_gdn2_gated_mla_train_and_checkpoint_roundtrip():
     )
     pol = PrecisionPolicy(opt_kind="muon_q8_bf16_grad")
     opt = OptimizerConfig(lr=3e-3, grad_clip=3.0)
-    toks, tgts = _synth_data(6 * spec.batch * spec.time, spec.vocab)
+    stride = spec.batch * spec.time
+    toks, tgts = _synth_data(6 * stride, spec.vocab)
 
     with NativeMixerExt(lib_path, spec, pol) as model:
         ms = model.mem_stats()
         assert ms["persistent_bytes"] < ms["n_params"] * 8.0
-        ev = model.train_steps(toks, tgts, steps=6, opt=opt)
-        assert all(math.isfinite(e["loss"]) and e["status"] == 0 for e in ev)
+        ev_first = model.train_steps(toks[: 3 * stride], tgts[: 3 * stride], steps=3, opt=opt)
+        assert all(math.isfinite(e["loss"]) and e["status"] == 0 for e in ev_first)
         tel = model.telemetry()
         assert tel["muon_ns_calls"] > 0
         assert tel["fp64_wy_solves"] > 0
 
-        eval_before = model.evaluate(toks, tgts, n_batches=2)
-        assert math.isfinite(eval_before["ce"]) and eval_before["nonfinite"] == 0
-
         with tempfile.TemporaryDirectory() as td:
-            ckpt = Path(td) / "hybrid_step6"
-            digest = model.save_checkpoint(ckpt, step=6, extra={"tag": "abi6"})
+            ckpt = Path(td) / "hybrid_step3"
+            digest = model.save_checkpoint(ckpt, step=3, extra={"tag": "abi6"})
             assert len(digest) == 64
+
+            # Continue uninterrupted for steps 4..6 on the original model
+            ev_cont = model.train_steps(toks[3 * stride :], tgts[3 * stride :], steps=3, opt=opt)
+            assert all(math.isfinite(e["loss"]) and e["status"] == 0 for e in ev_cont)
+            weights_uninterrupted = model.weights_bytes()
+            eval_before = model.evaluate(toks, tgts, n_batches=2)
+            assert math.isfinite(eval_before["ce"]) and eval_before["nonfinite"] == 0
+
+            # Restore step-3 weights + optimizer state into a fresh model and continue steps 4..6
             spec_resume = MixerExtSpec(
                 vocab=spec.vocab,
                 width=spec.width,
@@ -138,7 +145,14 @@ def test_hybrid_gdn2_gated_mla_train_and_checkpoint_roundtrip():
             )
             with NativeMixerExt(lib_path, spec_resume, pol) as restored:
                 meta = restored.load_checkpoint(ckpt)
-                assert meta["step"] == 6 and meta["extra"]["tag"] == "abi6"
+                assert meta["step"] == 3 and meta["extra"]["tag"] == "abi6"
+                assert "opt_state_sha256" in meta
+                ev_resumed = restored.train_steps(
+                    toks[3 * stride :], tgts[3 * stride :], steps=3, opt=opt
+                )
+                assert [e["loss"] for e in ev_resumed] == [e["loss"] for e in ev_cont]
+                assert [e["step"] for e in ev_resumed] == [e["step"] for e in ev_cont]
+                assert restored.weights_bytes() == weights_uninterrupted
                 eval_after = restored.evaluate(toks, tgts, n_batches=2)
                 assert eval_after["ce"] == eval_before["ce"]
                 assert eval_after["accuracy"] == eval_before["accuracy"]

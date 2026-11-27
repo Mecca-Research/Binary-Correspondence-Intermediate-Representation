@@ -222,8 +222,50 @@ static int check_thread_parity_and_optimizers(void) {
     if (ok == BCIR_OPT_MUON_FP32 || ok == BCIR_OPT_Q8_MUON_BF16_GRAD) {
       CHECK(tel.muon_ns_calls > 0u);
     }
-    printf("PASS opt.%s 1T==2T_bits=0 persistent_bytes=%zu\n",
-           bcir_prec_opt_name(ok), ms1.persistent_bytes);
+
+    /* Bit-exact mid-run checkpoint resume (2 + 2 steps == 4 uninterrupted steps) */
+    bcir_ext_model *m3 = bcir_ext_create(&sp1, &pol);
+    CHECK(m3 != NULL);
+    bcir_ext_step_metrics ev3a[2], ev3b[2];
+    CHECK(bcir_ext_train_loop(m3, tok, tgt, NULL, NULL, 2u, &opt_cfg, ev3a) == 0);
+    size_t obytes = bcir_ext_opt_state_bytes(m3);
+    CHECK(obytes >= 80u);
+    float *w_snap = (float *)malloc(np * sizeof(float));
+    unsigned char *o_snap = (unsigned char *)malloc(obytes);
+    if (!w_snap || !o_snap) {
+      free(w_snap); free(o_snap);
+      bcir_ext_destroy(m1); bcir_ext_destroy(m2); bcir_ext_destroy(m3);
+      free(tok); free(tgt);
+      return 1;
+    }
+    memcpy(w_snap, bcir_ext_weights_ptr(m3), np * sizeof(float));
+    CHECK(bcir_ext_save_opt_state(m3, o_snap, obytes) == 0);
+    bcir_ext_destroy(m3);
+
+    bcir_ext_spec sp_res = sp1;
+    sp_res.skip_init = 1;
+    bcir_ext_model *m4 = bcir_ext_create(&sp_res, &pol);
+    CHECK(m4 != NULL);
+    memcpy(bcir_ext_weights_ptr(m4), w_snap, np * sizeof(float));
+    /* Fail-closed checks: truncated buffer, bad magic, and non-finite payload must fail */
+    CHECK(bcir_ext_load_opt_state(m4, o_snap, obytes - 1u) != 0);
+    o_snap[0] ^= 0xFFu;
+    CHECK(bcir_ext_load_opt_state(m4, o_snap, obytes) != 0);
+    o_snap[0] ^= 0xFFu;
+    CHECK(bcir_ext_load_opt_state(m4, o_snap, obytes) == 0);
+    CHECK(bcir_ext_train_loop(m4, tok + 2u * N, tgt + 2u * N, NULL, NULL, 2u, &opt_cfg, ev3b) == 0);
+    CHECK(memcmp(bcir_ext_weights_ptr(m1), bcir_ext_weights_ptr(m4), np * sizeof(float)) == 0);
+    for (int s = 0; s < 2; ++s) {
+      CHECK(ev3b[s].loss == ev1[2 + s].loss);
+      CHECK(ev3b[s].grad_norm == ev1[2 + s].grad_norm);
+      CHECK(ev3b[s].step == ev1[2 + s].step);
+    }
+    free(w_snap);
+    free(o_snap);
+    bcir_ext_destroy(m4);
+
+    printf("PASS opt.%s 1T==2T_bits=0 resume_bits=0 opt_state_bytes=%zu persistent_bytes=%zu\n",
+           bcir_prec_opt_name(ok), obytes, ms1.persistent_bytes);
     bcir_ext_destroy(m1);
     bcir_ext_destroy(m2);
   }

@@ -137,7 +137,7 @@ beyond the original list and established the new #1 empirical result across both
 
 | ID | Architecture | Primary Gap Solved | Core Mixing Complexity (Train / Infer State) | Fits BCIR Blocked GEMM / AMX? | Status & Target Scale |
 |---|---|---|---|---|---|
-| **Arch-7** | **Hybrid `GDN-2` + `G1-NoPE-MLA` + `Canon-AC` + `mHC`** (`BCIR-Arch7d`) | **#1 overall (`wide10m` `9.51` PPL, `1.024M` pilot `4.81` PPL w/ Q8-Muon)**; `2.22×` lower `COMP-1` PTQ error, `4.27×` smaller `T=4k` state, `4.84×` lower peak act | $O(B T (d^2 + C d))$ / `3.75 MiB` @ 4k | **Yes (WY GEMMs + `online_softmax`)** | **IMPLEMENTED (ABI 6)** · 1M → 10M → 50M |
+| **Arch-7** | **Hybrid `GDN-2` + `G1-NoPE-MLA` + `Canon-AC` + `mHC`** (`BCIR-Arch7d`) | **#1 overall (`wide10m` `9.51` PPL, `1.024M` pilot `4.81` PPL w/ Q8-Muon)**; `2.04×` lower `COMP-1` PTQ error, `4.27×` smaller `T=4k` state, `4.84×` lower peak act | $O(B T (d^2 + C d))$ / `3.75 MiB` @ 4k | **Yes (WY GEMMs + `online_softmax`)** | **IMPLEMENTED (ABI 6)** · 1M → 10M → 50M |
 | **Arch-1** | **Chunkwise Gated DeltaNet** (`BCIR-DeltaNet`) | Write-side KV binding, filler suppression, `0.00 MiB` KV cache | $O(B T (d^2 + C d))$ / $O(h d_k d_v)$ fixed | **Yes (>90% GEMM via WY chunks)** | **IMPLEMENTED (ABI 6)** · 526k → 10M → 50M |
 | **Arch-2** | **Hybrid DeltaNet/SWA + Global Attn** (`BCIR-Hybrid-DN+GQA` / `SWA`) | Local LM vs global recall trade-off without 50/50 interference | $O(B T (W d + d^2))$ / `4.75 MiB` @ 4k | **Yes (SWA/DeltaNet + GQA)** | **IMPLEMENTED (ABI 6)** · 526k → 10M → 50M |
 | **Arch-3** | **Write-Gated Keyed-Wedge** (Sym + Antisym Bilinear Memory) | Repairs all 3 geometric flaws of `wedge-query-qware` | $O(B T (d^2 + C r^2))$ / $O(h r^2)$ fixed | **Yes (chunked $K^\top V$ GEMMs)** | **P1 (Geometric)** · 526k → 10M |
@@ -477,12 +477,13 @@ exceeded; `<= 0.04` nat WikiText-2 CE drift — `<= 4.08%` PPL ratio $e^{\Delta\
   promoted to `PROMOTED_Q8_V1` with exact recall match on 6/6 circuits; `LUT4-LANES` FP32 `4.30–5.47×`
   faster than `Q8-LANES` on AVX2 with `0` bit drift).
 - **Production ABI 6 `MIXER-EXT` + Beyond-the-List `Arch-7` Study ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md) §8):**
-  Verified on `Modular-AI` PR #229 commit `8cd57cd1136ef81532e58b6cd47d3421a7fe72bb`: `Arch-7d`
+  Verified on `Modular-AI` PR #229 commit `e458a859e190430827319b0e725b325241fbd787`: `Arch-7d`
   (`3:1 GDN-2 + G1-NoPE-MLA + Canon-AC + DeepSeek mHC C=2`) leads `wide10m` (`9.51` PPL vs `Arch-2`
-  `9.60` and `GQA_Full` `10.44`) with `2.22×` lower zero-QAT `COMP-1` PTQ error (`+0.1110` vs
-  `+0.2468`) and `3.75 MiB` `T=4096` state; paired with `Opt_Q8_Muon_BF16Grad` (`7.07 B/p`), it wins
-  the `1.024M`-token `T=256` pilot at `4.81` untouched test PPL (`-0.2949` nats vs `GQA_Full` `6.47`),
-  faster wall clock than `GQA_Full`, lowest RAM (`8.76 MiB`), and `4.84×` lower peak activations.
+  `9.60` and `GQA_Full` `10.44`) with `2.04×` lower zero-QAT Dual-SVID + Joint-ITQ `COMP-1` PTQ
+  error (`+0.1086` vs `+0.2214`) and `3.75 MiB` `T=4096` state; paired with `Opt_Q8_Muon_BF16Grad`
+  (`7.07 B/p`), it wins the `1.024M`-token `T=256` pilot at `4.81` untouched test PPL (`-0.2949`
+  nats vs `GQA_Full` `6.47`), faster wall clock than `GQA_Full`, lowest RAM (`8.76 MiB`), `4.84×`
+  lower peak activations, and verified 0-bit-drift mid-run checkpoint resume across all 7 optimizers.
 - Parameter-matched `6.16M` geometry (`wide_shallow_6m` `d=512, L=2` vs `narrow_deep_6m` `d=256, L=8`,
   within `0.029%` params) proves width/aspect ratio — not parameter count — controls the storage floor
   (`0.37` vs `0.47 BPW`, `2.02×` lower `r=1` floor, `1.69×` faster decode).
@@ -518,7 +519,7 @@ caught in `gp-global` and `wedge-next`):
    keeping ABI 5 `bcir_decoder_train.c` untouched.
 2. **Phase M2 (`Arch-1` + `Arch-2` + `Arch-7` Verification & `1.024M` Pilot) — COMPLETED (G1/G4/Pilot):**
    Benchmarked all 10 architectures across recall (`B1`), `wide10m` LM (`B2`), and `1.024M`-token
-   `T=256` pilot (`Exp C`, PR #229 `8cd57cd`); `Keyed-Wedge` (`Arch-3`) remains optional geometric control.
+   `T=256` pilot (`Exp C`, PR #229 `e458a85`); `Keyed-Wedge` (`Arch-3`) remains optional geometric control.
 3. **Phase M3 (`Arch-5` BLT & Tier M `10M`-Token Scaling):** Execute full Tier M (`10M`-token)
    `wide10m` qualification of `Arch-7d` + `Opt_Q8_Muon_BF16Grad` on 16+ core hosts via
    `run_tier_ml_qual.py` and implement `Arch-5` (`BCIR-BLT` 4-byte / UAX #29 patches after UC-6).
@@ -551,4 +552,4 @@ caught in `gp-global` and `wedge-next`):
 - Archived BCIR model-training evidence (`gp-global`, `wedge-next`, `wedge-integrated`, `wedge-query-qware`, `wedge-pr818`, `BCIR-50M-Study`): https://github.com/Mecca-Research/Modular-AI
 - Pinned LittleBit / LittleBit-2 bare-metal C experiment bundle (`littlebit-sub1bit-study`, merged commit `3ec7ee5551b3740c46015b86aef9fe3e52e142bb`, PR #227): https://github.com/Mecca-Research/Modular-AI/tree/3ec7ee5551b3740c46015b86aef9fe3e52e142bb/BCIR%20Model%20Training/littlebit-sub1bit-study
 - Pinned Precision Frontier & Exp 5 Deployment Baseline bundle (`precision-arch-study`, merged commit `8cc3f234be0bc84009b79f152ab55995ada9a499`, PR #228): https://github.com/Mecca-Research/Modular-AI/tree/8cc3f234be0bc84009b79f152ab55995ada9a499/BCIR%20Model%20Training/precision-arch-study
-- Pinned ABI 6 `MIXER-EXT`, `Q8-Muon`, `Arch-7` & `1.024M` Pilot bundle (`mixer-ext-abi6-study`, commit `8cd57cd1136ef81532e58b6cd47d3421a7fe72bb`, PR #229): https://github.com/Mecca-Research/Modular-AI/tree/8cd57cd1136ef81532e58b6cd47d3421a7fe72bb/BCIR%20Model%20Training/mixer-ext-abi6-study
+- Pinned ABI 6 `MIXER-EXT`, `Q8-Muon`, `Arch-7` & `1.024M` Pilot bundle (`mixer-ext-abi6-study`, commit `e458a859e190430827319b0e725b325241fbd787`, PR #229): https://github.com/Mecca-Research/Modular-AI/tree/e458a859e190430827319b0e725b325241fbd787/BCIR%20Model%20Training/mixer-ext-abi6-study
