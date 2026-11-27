@@ -289,6 +289,30 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-27 — CSUB-2's close-out: a pointer element subscripted, and `(*q)->m` on the twin.**
+  - The last form a unit's first refusal named for the rung: `j->pa[k][i] = v` of a member array of pointers
+    (`bcir_tensor.c`), which both rails refused. One subscript past the array's dimensions now indexes the pointer
+    the element holds, as `v[k][i]` of a local `T *v[N]` does, in every position: read, stored, compound-assigned,
+    stepped, assigned as a value and addressed, of two dimensions, through a loaded pointer and of a union. The
+    oracle's member-array index takes its own dimensions' subscripts and steps through the pointer for the rest; the
+    twin reads the form in one function (`load_member_ptr`) that every path through a member's pointer takes.
+  - **On the way, three twin defects at the base.** A `T **` member's subscript chain stopped after one step
+    (`s.p[0][1] = x` refused, where the oracle lowered it); a loaded `T **` member was typed a `T *` in the emit,
+    which no compiler took; and `const uint32_t g(void);` was declared without its qualifier, which Clang refuses
+    beside the source as conflicting.
+  - **A6, `(*q)->m` through a dereferenced `T **`**, is the twin's as it is the oracle's in every position
+    (`paren_deref_base`); the twin had refused each.
+  - **What stays refused is refused in one set of words:** a member through a pointer element (`s.pp[i]->m`,
+    CF-IDXARROW), `(&**q)->m`, a subscript of a scalar element, and a pointer to an array as a block object, which a
+    member or a parameter is (CSUB-2d). The twin had said `;`, `=` or `expected declarator name`.
+  - **Evidence.** `test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails`: 32 units lowered
+    digest-equal on both rails, each rail's emit run as Clang's build of the source and compiled as C11 strictly,
+    and 9 refused alike.
+  - **Standing faults.** `cfront-ptrelem.json`, 24, each swept RED. A loaded element left an array field survived the
+    first sweep and was dropped as an equivalent mutant: no path reads the array's flags once its element is loaded.
+    The ratchet stays at 46 of 68: `bcir_tensor.c`
+    moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
+
 - **2026-11-21 — N14: budgeted planning in the C planner.**
   - Tier 3 of the native port audit: on-target re-planning under a budget, `min M(pi) s.t. R(pi, Theta) <= B`.
     `bcir_kp_plan_budgeted` (`runtime/c/bcir_kplan.c`) is the twin of `kbcir.rcsp.optimize_constrained`. It runs

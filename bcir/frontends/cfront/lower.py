@@ -2394,8 +2394,12 @@ class _FuncLowerer:
                         raise CLowerError(
                             f"indexing a >3-dimensional struct member array ('{n.field}') is not yet supported"
                         )
-                    if len(idx_nodes) != len(dims):
-                        # partial indexing of a member array (a row pointer `s.m[i]`): defer to fallback.
+                    if len(idx_nodes) != len(dims) and not (
+                        len(idx_nodes) > len(dims) and t.kind == "pointer"
+                    ):
+                        # partial indexing of a member array (a row pointer `s.m[i]`): defer to fallback. One
+                        # subscript past an array of pointers indexes the pointer the element holds,
+                        # `j->pa[k][i]` (CSUB-2; `bcir_tensor.c`), as `v[k][i]` of a local `T *v[N]` does
                         raise CLowerError(
                             f"partial indexing of a struct member array ('{n.field}') is not yet supported"
                         )
@@ -2453,7 +2457,7 @@ class _FuncLowerer:
                 # array, a multi-dim VLA's too (Horner-flattened below), else one (a member array
                 # took all of them above) -- the twin's `subscript_dims`
                 if mem_shape is not None:
-                    take = len(idx_rids)
+                    take = len(mem_shape)
                 elif vla_str is not None:
                     take = len(vla_str)
                 else:
@@ -5768,6 +5772,10 @@ class _FuncLowerer:
                     raise CLowerError(ALIGN_VLA)
                 return None
             inferred = False  # `T a[] = {...}` / `T m[][B] = {...}`: the initializer sizes it
+            if getattr(st.type, "row_ptr", False):
+                # `T (*p)[N]` as a block object, initialized or not: a member or a parameter is one (CSUB-2d),
+                # a local has no storage spelling here (the twin's refusal, in the same words)
+                raise CLowerError("a local pointer to an array is not supported")
             if len(st.type.array) == 1 and st.type.array[0] in (0, None) and st.init is None:
                 # `T a[];` has no size and nothing to count (6.7.9p22) -- it was a zero-length array
                 raise CLowerError("an array of unknown size needs an initializer")

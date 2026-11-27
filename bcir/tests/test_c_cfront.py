@@ -4143,7 +4143,7 @@ _PTRARR_FORMS = {
     "uint32_t f(struct Q *q){ return *q->p; }": True,
     "uint32_t f(struct Q q){ return *q.p + 1u; }": True,
     "uint32_t f(void){ return (uint32_t)sizeof(struct T) + 100u*(uint32_t)sizeof(struct U); }": True,
-    "uint32_t f(struct T *t){ return t->arr[1][2]; }": False,
+    "uint32_t f(struct T *t){ return t->arr[1][2]; }": True,  # the pointer the element holds (CSUB-2)
     "uint32_t f(struct U *u){ return u->sp[1]->v; }": False,
     "uint32_t f(struct T *t){ t->arr[0]++; return t->d; }": False,
     "uint32_t f(struct T *t){ t->arr[0]--; return t->d; }": False,
@@ -4168,7 +4168,8 @@ def test_an_array_of_pointers_member_is_laid_out_and_accessed_as_pointers():
     the element into an integer (the emitted C did not compile). Each element now takes the ABI's pointer
     size and loads and stores whole, typed `T *`. `*t->arr[i]` (and `*s->p` through a plain pointer member)
     dereferences the postfix expression, as its precedence says, where the twin had dereferenced the name.
-    `t->arr[i][j]` and `t->arr[i]++` are refused on both rails, since the oracle refuses them. Every form is
+    `t->arr[i]++` is refused on both rails, since the oracle refuses it; `t->arr[i][j]` indexes the pointer the
+    element holds since CSUB-2's close-out. Every form is
     pinned (lowered or refused) and compared digest for digest on x86-64 and i386; the layout is held to
     Clang on every target. `cfront_ptrmember.c` runs the lowered forms against the original."""
     for body, lowered in _PTRARR_FORMS.items():
@@ -8769,7 +8770,7 @@ _GAPS_REFUSED = (
     (
         "uint8_t gm[3][5];\nuint32_t f(uint32_t i) { uint8_t (*r)[5] = gm; return r[i % 3u][1]; }",
         "a local pointer to an array is not supported",
-        "expected declarator",
+        "a local pointer to an array is not supported",  # the twin's own words before CSUB-2's close-out
     ),
     (
         "uint32_t f(uint32_t i) { uint8_t m[3][5] = {0}; uint8_t *r = (uint8_t *)&m[i % 3u]; return r[1]; }",
@@ -9297,7 +9298,7 @@ _PAREN_NEST_REFUSED = (
         "uint32_t f(uint32_t x) { uint32_t m[2][3] = {{1u, 2u, 3u}, {4u, 5u, 6u}}; uint32_t (*p)[3] = m;"
         " return (*p)[1] + x; }",
         "a local pointer to an array is not supported",
-        "expected declarator name",
+        "a local pointer to an array is not supported",
     ),
 )
 
@@ -14958,6 +14959,356 @@ def test_an_object_through_a_loaded_pointer_lowers_alike_on_both_rails():
                 assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
             _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
     for src, why in _LOADED_REFUSED:
+        _refused_alike(exe, src, why, phase="PARSE")
+
+
+# CSUB-2's close-out: `j->pa[k][i]` -- a subscript of the pointer an element of a member array of pointers holds
+# (`bcir_tensor.c`) -- in every position, a `T **` member's element subscripted in turn, `(*q)->m` through a
+# dereferenced `T **` (A6), and a prototype whose return type is qualified at its top level. Each unit lowers alike;
+# each rail's emit runs as Clang's build of the source and compiles as C11 strictly.
+_PTRELEM_LOWERED = (
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t *pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint32_t a[4] = {1, 2, 3, 4}; struct job j; j.pa[0] = a; j.pa[1] = a + 1;\n"
+        "  j.pa[1][2] += x; j.pa[0][0] <<= 2; j.pa[1][0] ^= 5u;\n"
+        "  return a[0] + a[1] + a[3];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t *pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint32_t a[4] = {1, 2, 3, 4}; struct job j; struct job *p = &j; p->pa[0] = a; p->pa[1] = a + 2;\n"
+        "  p->pa[1][1]++; ++p->pa[0][0]; uint32_t r = p->pa[1][0]--; uint32_t q = --p->pa[0][1];\n"
+        "  return a[0] + a[1] + a[2] + a[3] + r + q + x;\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t *pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint32_t a[4] = {0}; struct job j; struct job *p = &j; p->pa[0] = a; p->pa[1] = a + 2;\n"
+        "  uint32_t r = (p->pa[1][1] = x + 3u);\n"
+        "  uint32_t q = (p->pa[0][1] += 4u);\n"
+        "  return r + q + a[3] + a[1];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t *pa[2]; };\n"
+        "static uint32_t *g(struct job *p, uint32_t k) { return &p->pa[1][k]; }\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint32_t a[4] = {5, 6, 7, 8}; struct job j; j.pa[0] = a; j.pa[1] = a + 1;\n"
+        "  uint32_t *q = g(&j, 2u); *q = x; uint32_t *r = &j.pa[0][0];\n"
+        "  return *r + a[3];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint16_t *pa[2][3]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint16_t a[8] = {1, 2, 3, 4, 5, 6, 7, 8}; struct job j;\n"
+        "  for (uint32_t r = 0; r < 2; r++) for (uint32_t c = 0; c < 3; c++) j.pa[r][c] = a + r + c;\n"
+        "  j.pa[1][2][1] = (uint16_t)x;\n"
+        "  return (uint32_t)j.pa[1][2][1] + j.pa[0][1][3] + a[4];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct pt { uint32_t x, y; };\n"
+        "struct job { struct pt *pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  struct pt a[3] = {{1, 2}, {3, 4}, {5, 6}}; struct job j; j.pa[0] = a; j.pa[1] = a + 1;\n"
+        "  j.pa[1][1].y = x; j.pa[0][2].x += 1u;\n"
+        "  return j.pa[1][1].y + a[2].x + j.pa[0][0].y;\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t *pa[2]; };\n"
+        "struct own { struct job *j; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint32_t a[4] = {1, 2, 3, 4}; struct job j; struct own o; struct own *po = &o; o.j = &j; j.pa[0] = a; j.pa[1] = a + 2;\n"
+        "  po->j->pa[1][1] = x; po->j->pa[0][0] += 2u; po->j->pa[0][1]++;\n"
+        "  return po->j->pa[1][1] + a[0] + a[1];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { volatile uint32_t *pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  volatile uint32_t a[4] = {1, 2, 3, 4}; struct job j; j.pa[0] = a; j.pa[1] = a + 2;\n"
+        "  j.pa[1][1] = x; uint32_t r = j.pa[0][1];\n"
+        "  return r + a[3];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t **pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint32_t a[2] = {1, 2}; uint32_t *pp[2]; pp[0] = a; pp[1] = a + 1; struct job j; j.pa[0] = pp; j.pa[1] = pp;\n"
+        "  j.pa[1][1][0] = x;\n"
+        "  return j.pa[0][0][1] + j.pa[0][0][0];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { const uint8_t *pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  static const uint8_t t[4] = {9, 8, 7, 6}; struct job j; j.pa[0] = t; j.pa[1] = t + 1;\n"
+        "  return (uint32_t)j.pa[1][2] + j.pa[0][x & 3u];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint16_t *pa[2]; uint32_t n; };\n"
+        "static void fill(struct job *j) { for (uint32_t k = 0; k < 2; k++) for (uint32_t i = 0; i < j->n; i++) j->pa[k][i] = (uint16_t)(k * 10u + i); }\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint16_t a[3], b[3]; struct job j; j.pa[0] = a; j.pa[1] = b; j.n = 3; fill(&j);\n"
+        "  return (uint32_t)a[2] + b[1] + x;\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "union u { uint32_t *pa[2]; uint64_t w; };\n"
+        "uint32_t f(uint32_t x) { uint32_t a[3] = {4, 5, 6}; union u v; v.pa[1] = a; v.pa[1][2] = x; return a[2] + v.pa[1][0]; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { int8_t *pa[2]; };\n"
+        "int32_t f(int32_t x) { int8_t a[3] = {-1, -2, -3}; struct job j; j.pa[0] = a; j.pa[0][1] = (int8_t)x; return j.pa[0][1] + j.pa[0][2]; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { _Atomic uint32_t *pa[2]; };\n"
+        "uint32_t f(uint32_t x) { _Atomic uint32_t a[2]; a[0] = 1u; a[1] = 2u; struct job j; j.pa[0] = a; j.pa[0][1] += x; return j.pa[0][1]; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t **p; };\n"
+        "uint32_t f(uint32_t x) { uint32_t a[2] = {1, 2}; uint32_t *pp[1]; pp[0] = a; struct job j; j.p = pp; j.p[0][1] = x; return j.p[0][0] + a[1]; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t **pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint32_t a[2] = {1, 2}; uint32_t *pp[2]; pp[0] = a; pp[1] = a + 1; struct job j; j.pa[0] = pp; j.pa[1] = pp;\n"
+        "  return j.pa[0][1][0] + j.pa[1][0][1] + x;\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint32_t **pp; };\n"
+        "uint32_t f(uint32_t x) { uint32_t a[2] = {1, 2}; uint32_t *v[1]; v[0] = a; struct job j; struct job *p = &j; p->pp = v; p->pp[0][1]++; uint32_t r = (p->pp[0][0] += x); uint32_t *q = &p->pp[0][1]; return r + *q + a[1]; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint16_t *pa[2]; uint32_t n; };\n"
+        "static uint32_t g(struct job *j, uint32_t x) {\n"
+        "  j->pa[1][2] = (uint16_t)x;\n"
+        "  j->pa[0][1] = (uint16_t)(j->pa[1][2] + 1u);\n"
+        "  j->pa[0][3] += 2u;\n"
+        "  return (uint32_t)j->pa[0][1] + j->pa[1][2] + j->pa[0][3];\n"
+        "}\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint16_t a[4] = {1, 2, 3, 4}, b[4] = {5, 6, 7, 8};\n"
+        "  struct job j;\n"
+        "  j.pa[0] = a; j.pa[1] = b; j.n = 0;\n"
+        "  return g(&j, x) + a[1] + b[2];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct job { uint16_t *pa[2]; };\n"
+        "uint32_t f(uint32_t x) {\n"
+        "  uint16_t a[4] = {1, 2, 3, 4};\n"
+        "  struct job j;\n"
+        "  j.pa[0] = a; j.pa[1] = a + 2;\n"
+        "  j.pa[1][1] = (uint16_t)x;\n"
+        "  return (uint32_t)j.pa[0][3] + j.pa[1][1];\n"
+        "}\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct pt { uint32_t x, y; };\n"
+        "struct job { struct pt **pp; };\n"
+        "uint32_t f(uint32_t x) { struct pt a[2] = {{1, 2}, {3, 4}}; struct pt *v[2]; v[0] = a; v[1] = a + 1; struct job j; j.pp = v; return j.pp[1][0].y + x; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct pt { uint32_t x, y; };\n"
+        "struct job { struct pt **pp; };\n"
+        "uint32_t f(uint32_t x) { struct pt a[2] = {{1, 2}, {3, 4}}; struct pt *v[2]; v[0] = a; v[1] = a + 1; struct job j; j.pp = v; j.pp[1][0].y = x; return a[1].y; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct t { uint32_t v; uint32_t m; };\n"
+        "static uint32_t g(struct t **q) { return (*q)->v + (*q)->m; }\n"
+        "uint32_t f(uint32_t x) { struct t s; s.v = x; s.m = 2u; struct t *p = &s; return g(&p); }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct t { uint32_t v; uint32_t m; };\n"
+        "static void g(struct t **q, uint32_t x) { (*q)->v = x; (*q)->m = x + 1u; }\n"
+        "uint32_t f(uint32_t x) { struct t s; struct t *p = &s; g(&p, x); return s.v + s.m; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct t { uint32_t v; uint32_t m; };\n"
+        "uint32_t f(uint32_t x) { struct t s = {1u, 2u}; struct t *p = &s; struct t **q = &p; (*q)->v += x; (*q)->m <<= 1; return s.v + s.m; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct t { uint32_t v; uint32_t m; };\n"
+        "uint32_t f(uint32_t x) { struct t s = {1u, 2u}; struct t *p = &s; struct t **q = &p; (*q)->v++; uint32_t r = --(*q)->m; return s.v + r + x; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct t { uint32_t v; uint32_t m; };\n"
+        "uint32_t f(uint32_t x) { struct t s = {1u, 2u}; struct t *p = &s; struct t **q = &p; uint32_t r = ((*q)->v = x + 2u); return r + s.v; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct t { uint32_t v; uint32_t m; };\n"
+        "uint32_t f(uint32_t x) { struct t s = {1u, 2u}; struct t *p = &s; struct t **q = &p; uint32_t *w = &(*q)->m; *w = x; return s.m; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct t { uint32_t a[3]; uint32_t *p; };\n"
+        "uint32_t f(uint32_t x) { uint32_t b[2] = {7u, 8u}; struct t s = {{1u, 2u, 3u}, b}; struct t *p = &s; struct t **q = &p; (*q)->a[1] = x; (*q)->p[1] += 1u; return (*q)->a[1] + (*q)->a[2] + b[1]; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "struct t { uint32_t v; uint32_t m; };\n"
+        "uint32_t f(uint32_t x) { struct t s = {1u, 2u}; struct t *p = &s; return (&s)->m + (&*p)->v + x; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "const uint32_t g(uint32_t x);\n"
+        "const uint32_t g(uint32_t x) { return x * 2u; }\n"
+        "uint32_t f(uint32_t x) { return g(x) + 1u; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "volatile uint32_t g(uint32_t x);\n"
+        "const volatile int32_t h(int32_t x);\n"
+        "volatile uint32_t g(uint32_t x) { return x * 2u; }\n"
+        "const volatile int32_t h(int32_t x) { return x - 1; }\n"
+        "uint32_t f(uint32_t x) { return g(x) + (uint32_t)h((int32_t)x); }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "const uint32_t *g(const uint32_t *p);\n"
+        "const uint32_t *g(const uint32_t *p) { return p + 1; }\n"
+        "uint32_t f(uint32_t x) { uint32_t a[2] = {x, x + 1u}; return *g(a); }\n"
+    ),
+)
+# ... and what C, or the oracle, refuses after them, in one set of words: a subscript of a scalar element, a member
+# through a pointer element (CF-IDXARROW), an address no fold reduces to its object, and a pointer to an array as a
+# block object, which a member or a parameter is (CSUB-2d)
+_PTRELEM_REFUSED = (
+    (
+        "#include <stdint.h>\nstruct job { uint32_t *p; };\nuint32_t f(uint32_t x) { uint32_t a[2] = {1, 2};"
+        " struct job j; j.p = a; j.p[1][0] = x; return a[1]; }\n",
+        "a subscript of an element that is not a pointer",
+    ),
+    (
+        "#include <stdint.h>\nstruct job { uint32_t *pa[2]; };\nuint32_t f(uint32_t x) { uint32_t a[2] = {1, 2};"
+        " struct job j; j.pa[0] = a; j.pa[0][1][0] = x; return a[1]; }\n",
+        "a subscript of an element that is not a pointer",
+    ),
+    (
+        (
+            "#include <stdint.h>\n"
+            "struct job { uint32_t *pa[2]; };\n"
+            "uint32_t f(uint32_t x) { uint32_t a[2] = {1, 2}; struct job j; j.pa[0] = a; return j.pa[0][1][0] + x; }\n"
+        ),
+        "a subscript of an element that is not a pointer",
+    ),
+    (
+        (
+            "#include <stdint.h>\n"
+            "struct job { uint32_t *p; };\n"
+            "uint32_t f(uint32_t x) { uint32_t a[2] = {1, 2}; struct job j; j.p = a; return j.p[1][0] + x; }\n"
+        ),
+        "a subscript of an element that is not a pointer",
+    ),
+    (
+        (
+            "#include <stdint.h>\n"
+            "struct pt { uint32_t x, y; };\n"
+            "struct job { struct pt **pp; };\n"
+            "uint32_t f(uint32_t x) { struct pt a[2] = {{1, 2}, {3, 4}}; struct pt *v[2]; v[0] = a; v[1] = a + 1; struct job j; j.pp = v; j.pp[1][0].y = x; j.pp[0]->x += 1u; return j.pp[1][0].y + j.pp[0][1].x + a[0].x; }\n"
+        ),
+        "unsupported base expression Index",
+    ),
+    (
+        (
+            "#include <stdint.h>\n"
+            "struct pt { uint32_t x, y; };\n"
+            "struct job { struct pt **pp; };\n"
+            "uint32_t f(uint32_t x) { struct pt a[2] = {{1, 2}, {3, 4}}; struct pt *v[2]; v[0] = a; v[1] = a + 1; struct job j; j.pp = v; return j.pp[0]->x + x; }\n"
+        ),
+        "unsupported base expression Index",
+    ),
+    (
+        (
+            "#include <stdint.h>\n"
+            "struct t { uint32_t v; uint32_t m; };\n"
+            "uint32_t f(uint32_t x) { struct t s = {1u, 2u}; struct t *p = &s; struct t **q = &p; return (&**q)->m + x; }\n"
+        ),
+        "unsupported base expression Unary",
+    ),
+    (
+        (
+            "#include <stdint.h>\n"
+            "uint32_t f(uint32_t x) {\n"
+            "  uint32_t m[3][4] = {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}};\n"
+            "  uint32_t (*row)[4] = m;\n"
+            "  uint32_t s = row[1][2];\n"
+            "  row[2][3] = x;\n"
+            "  return s + m[2][3];\n"
+            "}\n"
+        ),
+        "a local pointer to an array is not supported",
+    ),
+    (
+        (
+            "#include <stdint.h>\n"
+            "uint32_t f(uint32_t x) { static uint32_t m[2][3]; uint32_t (*row)[3]; row = m; return row[1][2] + x; }\n"
+        ),
+        "a local pointer to an array is not supported",
+    ),
+)
+
+
+def test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails():
+    """CSUB-2. `s.pa[k][i]` of a member array of pointers `T *pa[N]` indexes the pointer the element holds, as `v[k][i]`
+    of a local `T *v[N]` does, on both rails -- read, stored, compound-assigned, stepped, assigned as a value and
+    addressed, of two dimensions, through a loaded pointer and of a union; a `T **` member's element is subscripted
+    in turn; `(*q)->m` and `(*q)->a[i]` through a dereferenced `T **` are the twin's as the oracle's (A6); and
+    `const uint32_t g(void);` keeps its qualifier in the twin's declaration, which Clang compares with the
+    source's. Each unit lowers alike, each rail's emit runs as Clang's build of the source and compiles as C11
+    strictly; what both refuse, they refuse in one set of words."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_PTRELEM_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"pe{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src, twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src, emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for src, why in _PTRELEM_REFUSED:
         _refused_alike(exe, src, why, phase="PARSE")
 
 

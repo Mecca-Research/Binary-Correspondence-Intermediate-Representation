@@ -244,9 +244,9 @@
     },
     "bcir_tensor.c": {
       "verdict": "blocked",
-      "blocker": "parse error: partial indexing of a struct member array is not yet supported",
-      "construct": "a subscript of a pointer element of a member array, through a loaded pointer (`j->pa[k][i] = v` of `uint16_t *pa[2]`); then threads and SIMD",
-      "rung": "CSUB-2"
+      "blocker": "parse error: a call of more than 16 arguments is not supported",
+      "construct": "a call of 18 arguments (`bcir_tensor_attention_backward_contract_variant_ws_pool`'s workspace call), past the claim graph's 16 reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS); then threads and SIMD",
+      "rung": "CSUB-6"
     },
     "bcir_tokenize_cli.c": {
       "verdict": "blocked",

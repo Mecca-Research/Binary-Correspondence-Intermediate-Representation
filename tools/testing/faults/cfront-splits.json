@@ -39,15 +39,15 @@
     {
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T1 the twin's inc/dec stops at a pointer member (`h.next->v++` refused again)",
-      "new": "    if(0 && f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){   /* on through the pointer member it loads: `h.next->v++`,",
-      "old": "    if(f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){   /* on through the pointer member it loads: `h.next->v++`,",
+      "new": "    if(0 && ((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f))){   /* on through the pointer it loads:",
+      "old": "    if((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f)){   /* on through the pointer it loads:",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T2 the twin's assignment value stops at a pointer member (`x = (h.next->v = 5)` refused again)",
-      "new": "    if(0 && f.is_ptr && !v->type.is_volatile && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){",
-      "old": "    if(f.is_ptr && !v->type.is_volatile && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){",
+      "new": "    if(0 && ((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f)) && !v->type.is_volatile){",
+      "old": "    if(((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f)) && !v->type.is_volatile){",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

@@ -621,7 +621,14 @@ _mm_sfence();                      //                   store (release) fence ->
   scalars: `p->m[k][j]` read, stored, stepped and addressed, `sizeof *p->m` the row, and the pointer tested, copied,
   taken from a two-dimensional array and passed to a row-pointer parameter (CSUB-2d).
 - A struct or union a prototyped callee returns -- `c = admit(buf, n)`, `mk(x).b`, `sum(mk(x))` -- the aggregate
-  value, as a defined callee's is; and `->` or `[]` after a pointer one returns, `mkp(x)->a` (CSUB-2).
+  value, as a defined callee's is; and `->` or `[]` after a pointer one returns, `mkp(x)->a` (CSUB-2). A prototype
+  whose return is qualified at its top level, `const uint32_t g(void);`, keeps the qualifier in the emit's
+  declaration, which Clang compares with the source's.
+- The pointer an element of a member array of pointers holds, subscripted -- `j->pa[k][i] = v` of `uint16_t *pa[2]`
+  (`bcir_tensor.c`), as `v[k][i]` of a local `T *v[N]` is: read, stored, compound-assigned, stepped, assigned as a
+  value and addressed, of a two-dimensional member array, through a loaded pointer and of a union. A `T **`
+  member's or element's pointer is subscripted in turn (`s.p[0][1]`, `s.pa[k][i][j]`), and `(*q)->m`, `(*q)->a[i]`
+  through a dereferenced `T **` are a member of the struct `*q` points at, in every position (CSUB-2).
 - A row of scalars used as a value -- `strcmp(keys[i], k)`, `f(p->calls[k])`, `fsub(a, p[1], p[0])` of a `gf p[4]`,
   `s.m[k]`, `a[i].m[j]` -- the pointer to its first element, `&m[k][0]`: passed, assigned, chosen, stepped, compared,
   sized and dereferenced (`*m[k]`, `*(m[k] + i)`); of locals, statics, globals, VLAs, parameters, members and the row a
@@ -794,9 +801,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   CSUB-2c).
 - `->` of a struct element, `a[i]->m` where `a[i]` is the struct itself (``member access `->` through a value that
   is not a pointer to a struct or union``, C11 6.5.2.3p2; CSUB-2e).
-- Through a loaded pointer: `->` of a dereferenced `T **` (`(*q)->v`), a volatile object's address, a pointer or
-  struct member's address (`&p->q->name`, `&s->t->arena`), a member array's element (`&p->q->arr[1]`) and a pointer
-  element's address (`&p->pp[j]`). The oracle lowers them, and the twin refuses them (CSUB-2e).
+- A member through a pointer element, `s.pp[i]->m` of a `struct T **pp`, as `pp[i]->m` and `a[i]->m` are
+  (`unsupported base expression Index`, CF-IDXARROW); an address no fold reduces to its object, `(&**q)->m`
+  (`unsupported base expression Unary`); a subscript of a scalar element, `s.p[1][0]` (`a subscript of an element
+  that is not a pointer`); and a pointer to an array as a block object, `T (*row)[N]`, which a member or a parameter
+  is (`a local pointer to an array is not supported`; CSUB-2).
 - The row `*` designates -- `*p->m` of a pointer-to-array member, `*rows` of a row-pointer parameter, `*t` of a
   two-dimensional array -- `typeof` of a row, and a row of rows, structs or pointers (`partial indexing of a
   multi-dimensional array (a row used as a value) is not yet supported`); a row's address, `&t[1]` (`the address of a
