@@ -104,14 +104,14 @@
       "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
       "label": "QT3 the twin's `extern` declaration drops the qualifiers below each parameter's top",
       "new": "      ctype_str(pt,ps,sizeof ps);\n      ctext_putf(c,&c->tudefs,",
-      "old": "      ctype_qstr(pt,ps,sizeof ps);\n      ctext_putf(c,&c->tudefs,",
+      "old": "      ctype_declstr(pt,ps,sizeof ps);\n      ctext_putf(c,&c->tudefs,",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
       "label": "QT4 the twin's `extern` declaration drops its return's qualifiers",
       "new": "    char rets[BCIR_EMIT_TYPE]; ctype_str(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */\n",
-      "old": "    char rets[BCIR_EMIT_TYPE]; ctype_qstr(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */\n",
+      "old": "    char rets[BCIR_EMIT_TYPE]; ctype_declstr(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

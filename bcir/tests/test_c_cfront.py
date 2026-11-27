@@ -9944,10 +9944,11 @@ def _std_probes(abi) -> list:
     return out
 
 
-#: The headers a compiler's own freestanding headers do not hold, which a hosted C library supplies: `<math.h>`, and
+#: The headers a compiler's own freestanding headers do not hold, which a hosted C library supplies: `<math.h>`;
 #: C23's `<stdbit.h>`, freestanding in C23 but in no Clang resource directory -- glibc's spells its type-generic forms
-#: through its own helpers, so its expansions are held to on the glibc host, by value (CSUB-3)
-_LIBC_HEADERS = ("math.h", "stdbit.h")
+#: through its own helpers, so its expansions are held to on the glibc host, by value (CSUB-3); and the hosted
+#: profile's `<stdio.h>`, `<stdlib.h>`, `<errno.h>` and `<time.h>` (CSUB-5)
+_LIBC_HEADERS = ("math.h", "stdbit.h", "stdio.h", "stdlib.h", "errno.h", "time.h", "inttypes.h")
 
 
 def _std_probe_unit(probes, libc: bool = True, host: bool = False) -> str:
@@ -10107,7 +10108,10 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
                 for k, (_h, n, p) in enumerate(probes)
                 if _is_int_expansion(ours[k])
             ]
-            libc = "#if __has_include(<stdbit.h>)\n#include <stdbit.h>\n#endif\n"
+            libc = "#if __has_include(<stdbit.h>)\n#include <stdbit.h>\n#endif\n" + "".join(
+                f"#include <{h}>\n"
+                for h in ("stdio.h", "stdlib.h", "errno.h", "time.h", "inttypes.h")
+            )
             verdict = _clang_syntax(includes + libc + "\n".join(checks) + "\n", abi, hosted=True)
             assert not verdict, (name, verdict)
     if host is not None and shutil.which("clang"):
@@ -16001,6 +16005,219 @@ def test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operan
         if why in (ARGC_FEW, ARGC_MANY):
             assert _clang_c23_accepts(src) in (False, None), src
         _refused_alike(exe, src, why, phase="PARSE")
+
+
+# CSUB-5b: the hosted profile. Both rails read `<stdio.h>`, `<stdlib.h>`, `<errno.h>` and `<time.h>` as the target's C
+# library declares what the runtime's tools call of it -- glibc's tags and `__errno_location` on Linux, the UCRT's
+# `_iobuf` and `_errno` on Windows -- so each call is a typed external edge the host linker resolves, and each emitted
+# `extern` declaration agrees with the library's own. Both rails had read each as nothing: `FILE` an unknown type,
+# `stderr` an undeclared identifier, `struct timespec` an unknown struct.
+_HOSTED_HDR = (
+    "#define _POSIX_C_SOURCE 200809L\n#include <stdint.h>\n#include <stddef.h>\n#include <limits.h>\n"
+    "#include <stdio.h>\n#include <stdlib.h>\n#include <errno.h>\n#include <time.h>\n#include <inttypes.h>\n"
+)
+# ... every function the four declare, called where no run reaches, so its declaration meets the library's
+_HOSTED_DECLS_UNIT = _HOSTED_HDR + (
+    "static int cmp(const void *a, const void *b){ return *(const int *)a - *(const int *)b; }\n"
+    "uint32_t f(uint32_t k){\n  if (k != 0x7a3b9c1du) return k + 1u;\n"
+    "  char buf[16] = {0}; char *e = buf; struct timespec ts; int v[4] = {3, 1, 2, 0}; uint32_t acc = 0u;\n"
+    '  FILE *o = fopen("x", "rb"); FILE *t = tmpfile();\n'
+    '  acc += (uint32_t)fread(buf, 1u, 4u, o) + (uint32_t)fwrite(buf, 1u, 4u, o) + (uint32_t)fputs("a", o);\n'
+    '  acc += (uint32_t)fputc(1, o) + (uint32_t)putc(2, o) + (uint32_t)putchar(3) + (uint32_t)puts("b");\n'
+    "  acc += (uint32_t)fgetc(o) + (uint32_t)getc(o) + (uint32_t)getchar() + (uint32_t)ungetc(4, o);\n"
+    "  acc += (uint32_t)(fgets(buf, 8, o) != 0) + (uint32_t)fflush(stdout) + (uint32_t)ferror(stderr);\n"
+    "  acc += (uint32_t)feof(stdin); clearerr(o); acc += (uint32_t)fseek(o, 1L, SEEK_SET) + (uint32_t)ftell(o);\n"
+    '  rewind(o); acc += (uint32_t)remove("x") + (uint32_t)rename("x", "y") + (uint32_t)fileno(t);\n'
+    '  acc += (uint32_t)(fdopen(1, "w") != 0) + (uint32_t)snprintf(buf, sizeof buf, "%" PRIu64, (uint64_t)acc);\n'
+    '  perror("c"); acc += (uint32_t)fclose(o) + (uint32_t)fclose(t);\n'
+    "  acc += (uint32_t)strtol(buf, &e, 10) + (uint32_t)strtoul(buf, &e, 10) + (uint32_t)strtoll(buf, &e, 10);\n"
+    "  acc += (uint32_t)strtoull(buf, &e, 10) + (uint32_t)strtod(buf, &e) + (uint32_t)atoi(buf) + (uint32_t)atol(buf);\n"
+    '  acc += (uint32_t)(getenv("HOME") != 0) + (uint32_t)abs(-1) + (uint32_t)labs(-2L) + (uint32_t)mkstemp(buf);\n'
+    "  qsort(v, 4u, sizeof v[0], cmp); acc += (uint32_t)(bsearch(&v[1], v, 4u, sizeof v[0], cmp) != 0);\n"
+    "  errno = EINVAL; acc += (uint32_t)errno + (uint32_t)ERANGE + (uint32_t)EXIT_FAILURE;\n"
+    "  acc += (uint32_t)timespec_get(&ts, TIME_UTC) + (uint32_t)time(0) + (uint32_t)clock_gettime(CLOCK_MONOTONIC, &ts);\n"
+    "  if (acc == 7u) exit(EXIT_SUCCESS);\n  if (acc == 9u) abort();\n  return acc;\n}\n"
+)
+_HOSTED_LOWERED = tuple(
+    _HOSTED_HDR + body
+    for body in (
+        # a stream round trip through the library's own temporary file
+        "uint32_t f(uint32_t k){ FILE *t = tmpfile(); if (!t) return 0u; uint32_t v = k * 2654435761u;\n"
+        "  for (int i = 0; i < 4; i++) fputc((int)((v >> (8 * i)) & 0xffu), t);\n"
+        '  fputs("ab", t); long n = ftell(t); rewind(t); uint32_t r = 0u;\n'
+        "  for (int i = 0; i < 6; i++) { int c = fgetc(t); r = r * 31u + (uint32_t)c; }\n"
+        "  r += (uint32_t)(fgetc(t) == EOF) + (uint32_t)feof(t); char out[4]; fseek(t, 1L, SEEK_SET);\n"
+        "  size_t got = fread(out, 1u, 3u, t); r += (uint32_t)(unsigned char)out[0];\n"
+        "  fclose(t); return r + (uint32_t)n * 7u + (uint32_t)got; }\n",
+        # a number parsed, its end and errno read, and an overflow's ERANGE
+        'uint32_t f(uint32_t k){ char buf[16]; snprintf(buf, sizeof buf, "%u", (unsigned)k); char *e = buf;\n'
+        "  errno = 0; unsigned long v = strtoul(buf, &e, 10); uint32_t r = (uint32_t)v + (uint32_t)(*e == 0);\n"
+        '  r += (uint32_t)(errno == 0); errno = 0; long big = strtol("99999999999999999999999", &e, 10);\n'
+        "  r += (uint32_t)(errno == ERANGE) * 3u + (uint32_t)(big == LONG_MAX) * 5u; return r; }\n",
+        # a sort and a search through a comparator the unit defines
+        "static int cmp(const void *a, const void *b){ uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;"
+        " return (x > y) - (x < y); }\n"
+        "uint32_t f(uint32_t k){ uint32_t a[8]; for (uint32_t i = 0; i < 8u; i++) a[i] = (k ^ (i * 2654435761u)) % 1000u;\n"
+        "  qsort(a, 8u, sizeof a[0], cmp); uint32_t r = 0u; for (uint32_t i = 0; i < 8u; i++) r = r * 31u + a[i];\n"
+        "  uint32_t key = a[3]; uint32_t *p = bsearch(&key, a, 8u, sizeof a[0], cmp); return r + (uint32_t)(p != 0); }\n",
+        # the clocks, read for what a run cannot change (POSIX's `clock_gettime` is the declarations witness's: the
+        # harness includes the library's headers before a unit's `_POSIX_C_SOURCE`)
+        "uint32_t f(uint32_t k){ struct timespec ts; int b = timespec_get(&ts, TIME_UTC); time_t now = time(0);\n"
+        "  return (uint32_t)(b == TIME_UTC) + (uint32_t)(ts.tv_nsec >= 0 && ts.tv_nsec < 1000000000L) * 2u"
+        " + (uint32_t)(ts.tv_sec > 0) + (k & 1u) + (uint32_t)(now > 0) * 4u; }\n",
+        # the rest: the streams the library owns, a variable no run sets, the conversions
+        "uint32_t f(uint32_t k){ return (uint32_t)fflush(stdout) + (uint32_t)ferror(stderr) + (uint32_t)abs(-(int)(k &"
+        ' 0xffffu)) + (uint32_t)atoi("42") + (uint32_t)(getenv("BCIR_NO_SUCH_VARIABLE_HERE") == 0) + (uint32_t)labs(-7L)'
+        " + (uint32_t)EXIT_FAILURE; }\n",
+        # an anonymous struct after tagged ones, named in a cast: one name on both rails (`bcir_cc.c`)
+        "struct ta { int x; };\nstruct tb { int y; };\ntypedef struct { uint32_t v; } T;\n"
+        "uint32_t f(uint32_t k){ T t = { k }; void *p = &t; T *q = (T *)p; struct ta a = {1}; struct tb b = {2};"
+        " return q->v + (uint32_t)a.x + (uint32_t)b.y; }\n",
+    )
+)
+# ... and a `FILE` is the library's: only a pointer to one, which both rails refuse to give a layout (Clang takes each
+# against glibc, whose `FILE` is complete) -- in the words the incomplete aggregate's refusal already has on each
+_HOSTED_REFUSED = tuple(
+    (_HOSTED_HDR + "uint32_t f(uint32_t k){ " + body + " }\n", why, twin_why)
+    for body, why, twin_why in (
+        ("FILE f; (void)f; return k;", "the incomplete struct or union '_IO_FILE' has no layout here",
+         "the incomplete struct or union has no layout here"),
+        ("return (uint32_t)sizeof(FILE);", "the incomplete struct or union '_IO_FILE' has no layout here",
+         "the incomplete struct or union has no layout here"),
+        ("FILE *o = stdout; return (uint32_t)sizeof(*o);", "sizeof of an incomplete type", "sizeof of an incomplete type"),
+    )
+)  # fmt: skip
+#: The runtime's units the profile brings under the verified compiler: each lowers to one digest on both rails
+_HOSTED_UNITS = (
+    "bcir_cc.c",
+    "bcir_llama_cli.c",
+    "bcir_pack_cli.c",
+    "bcir_qualify_cli.c",
+    "bcir_tokenize_cli.c",
+    "bcir_tokload_tool.c",
+    "bcir_asn1_bench.c",
+    "bcir_ai_microbench.c",
+)
+
+
+def test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations():
+    """CSUB-5. `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` are one text on both rails for
+    each of the five targets, their macros' expansions too -- `FILE` glibc's `struct _IO_FILE` on Linux and the UCRT's
+    `struct _iobuf` on Windows, `errno` each library's own location, `PRIu64` `"lu"` where `long` is 64 bits. And on a glibc host every function the four declare, called
+    where no run reaches, lowers alike, R18 clean, and each rail's emit -- an `extern` declaration of each -- compiles
+    beside the library's own headers as C11 strictly, POSIX's declarations in view: an `extern` declaration that is not
+    the library's -- `int64_t strtoll(...)`, which is `long` on LP64, where glibc's returns `long long`, as the twin had
+    spelled it -- is a conflicting declaration, an error."""
+    from bcir.frontends.cfront.abi import TARGETS
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    probes = ("EOF", "SEEK_END", "EXIT_FAILURE", "errno", "ERANGE", "EINVAL", "TIME_UTC", "PRIu64", "PRIdPTR",
+              "PRIx32", "PRIdMAX")  # fmt: skip
+    unit = (
+        "#include <stdio.h>\n#include <stdlib.h>\n#include <errno.h>\n#include <time.h>\n#include <inttypes.h>\n"
+        + "".join(f"@ {k} @ {p}\n" for k, p in enumerate(probes))
+    )
+    for name, abi in TARGETS.items():
+        ours = _cpp._tokens(_cpp.preprocess(unit, abi=abi))
+        assert ("_iobuf" if name.endswith("windows") else "_IO_FILE") in ours, name
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "hosted.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            r = subprocess.run(
+                [exe, "--target", name, "--emit-cpp", path], capture_output=True, text=True
+            )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _cpp._tokens(r.stdout) == ours, name
+    if exe is None or _glibc_host_target() is None:
+        return
+    src = _HOSTED_DECLS_UNIT
+    assert _clang_c23_accepts(src) in (True, None), src
+    summary, r, entry = _oracle(src)
+    assert " ok=1 " in summary, summary
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "decls.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        twin_summary, twin_emit = _c_run(exe, path)
+        assert twin_summary == summary, (twin_summary, summary)
+        oracle_emit = "\n".join(r.emitted.values())
+        for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+            assert " fflush(struct _IO_FILE *);" in emit, (
+                rail,
+                emit[:600],
+            )  # the library's FILE, declared
+            unit = os.path.join(d, f"decls_{rail}.c")
+            with open(unit, "w", encoding="utf-8") as fh:
+                fh.write(
+                    src + '\n#include <string.h>\n#include "bcir_quarantine.h"\n' + emit + "\n"
+                )
+            run = subprocess.run(
+                [_CC, "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-fsyntax-only", "-I", _C,
+                 "-Werror=incompatible-pointer-types", "-Werror=int-conversion", unit],
+                capture_output=True, text=True,
+            )  # fmt: skip
+            assert run.returncode == 0, (rail, run.stderr[-1500:])
+
+
+def test_the_hosted_profile_lowers_alike_and_runs_as_the_c_librarys_build():
+    """CSUB-5. On a glibc host, a unit of the hosted profile lowers alike on both rails, R18 clean, and each rail's
+    emit runs as the host compiler's build of the source against the library and compiles as C11 strictly: a stream
+    round trip through `tmpfile`, a number parsed with its end, `errno` and an overflow's `ERANGE`, a sort and a search
+    through the unit's own comparator, the clocks, the library's streams and conversions, and an anonymous struct after
+    tagged ones named in a cast -- which the twin had numbered by every aggregate before it, the oracle by the
+    anonymous ones, so `bcir_cc.c` lowered to two digests. A `FILE` object and `sizeof(FILE)` are refused on both rails.
+    And the runtime's units the profile brings under the verified compiler each lower to one digest on both rails."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    host = _glibc_host_target() is not None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_HOSTED_LOWERED):
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src[-300:], summary)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"h{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src[-300:], twin_summary, summary)
+            if not host:
+                continue
+            assert _clang_c23_accepts(src) in (True, None), src
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src[-300:])
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+        for n, (src, why, twin_why) in enumerate(_HOSTED_REFUSED):
+            assert _oracle_refusal(src) == why, (src, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and twin_why in run.stdout + run.stderr, (
+                src[-200:],
+                run.stdout[:300],
+            )
+    for unit in _HOSTED_UNITS:
+        text = open(os.path.join(_C, unit), encoding="utf-8").read()
+        summary = _summary_line(
+            compile_unit(text, check_clang=False, search_paths=[_C], filename=unit)
+        )
+        assert " ok=1 " in summary, (unit, summary)
+        if _CC:
+            cc = _build_bcir_cc(_session_build_dir())
+            run = subprocess.run(
+                [cc, "-I", _C, os.path.join(_C, unit)], capture_output=True, text=True
+            )
+            assert run.returncode == 0 and run.stdout.split(": ", 1)[-1].strip() == summary, (
+                unit,
+                run.stdout,
+                summary,
+            )
 
 
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through

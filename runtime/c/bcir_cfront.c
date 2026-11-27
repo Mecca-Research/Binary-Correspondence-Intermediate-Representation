@@ -795,6 +795,7 @@ static int fits(CC *c,char *d,size_t n,const char *fmt,...){
 }
 static void ctype_str(const bcir_ctype *ty,char *o,size_t n);   /* a C type's spelling (the emitter's) */
 static void ctype_qstr(const bcir_ctype *ty,char *o,size_t n);  /* ... as a function type spells it (CF-QUALS) */
+static void ctype_declstr(const bcir_ctype *ty,char *o,size_t n);   /* ... as a library's declaration spells it */
 static unsigned qual_key(const bcir_ctype *t);                  /* ... and compares it (CF-QUALS) */
 
 /* --- types --------------------------------------------------------------- */
@@ -1280,6 +1281,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   if(ptrtrk) ty->size=cc_abi(c)->pointer_size;
   else if(longs>=1&&ty->is_float) ty->size=cc_abi(c)->long_double_size;   /* `long double` (80/128-bit) */
   else if(longs==1&&!ty->is_float&&ty->kind==0) ty->size=cc_abi(c)->long_size;
+  if(longs>=1 && !ty->is_float && ty->kind==0) ty->c_long=(uint8_t)(longs>=2?2:1);   /* as spelled (CSUB-5) */
   if(cplxkw) ty->size = (floatkw ? ty->size : 8) * 2;   /* a complex is a pair of the element float; a bare
                                                          * `_Complex` (no float kw) is double. Only a complex
                                                          * spelled HERE: one from a typedef, `typeof` or
@@ -1514,7 +1516,14 @@ static int p_struct_body_in(CC *c) {
   S->incomplete=1;                      /* until its closing brace: `struct node *next` is fine, a by-value
                                          * `struct node` member of itself is not */
   if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(c,S->tag,&tag);}
-  else snprintf(S->tag,sizeof S->tag,"$anon%d",my);   /* anonymous: synth a unique tag */
+  else {                                /* anonymous: synth a unique tag, numbered as the oracle's parser numbers them --
+                                         * the anonymous aggregates before it, not every one: a cast to a pointer to one
+                                         * names it in its op, which the digest holds, and `bcir_cc.c`'s headers' 31
+                                         * tagged structs had made its `$anon0` the twin's `$anon31` (CSUB-5). Counted
+                                         * over the slots, which a speculative parse's rollback truncates, as a counter
+                                         * could not be */
+    int na=0; for(int k=0;k<my;k++) na+=is_anon_tag(c->s[k].tag);
+    snprintf(S->tag,sizeof S->tag,"$anon%d",na); }
   attrs(c,&packed,&aligned);
   if(is(c,"{")) trailing_attrs(c,c->i,&packed,&aligned);   /* `} __attribute__((packed))` packs these members */
   if(!eat(c,"{"))return -1;
@@ -1730,7 +1739,7 @@ static int block_aggregate(CC *c, int agg_ok){
   int a=c->i, si=p_struct_body(c);
   if(si<0 || c->failed) return -1;
   sdef *S=&c->s[si];
-  snprintf(S->tdname,sizeof S->tdname,"__bcir_anon%d",si);
+  snprintf(S->tdname,sizeof S->tdname,"__bcir_anon%s",S->tag+5);   /* its tag's number, as the oracle's */
   size_t old=c->fn->block_types?strlen(c->fn->block_types):0, add=strlen("  typedef ")+strlen(S->tdname)+3;
   for(int k=a;k<c->i;k++) add+=(size_t)c->t[k].n+1;
   char *nb=(char *)bcir_host_allocate(&c->allocator,old+add+1);
@@ -10486,14 +10495,14 @@ static int p_func(CC *c, bcir_func *fn) {
     c->n_protos++;
     /* every qualifier below a parameter's and the return's top level kept: a `const T *` or `T *const *`
      * parameter is another type than a `T *` or `T **` one, and the declaration's type would conflict (CF-QUALS) */
-    char rets[BCIR_EMIT_TYPE]; ctype_qstr(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */
+    char rets[BCIR_EMIT_TYPE]; ctype_declstr(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */
     /* ... and a scalar return's own qualifiers: `const uint32_t g(void);` is another function type than `uint32_t
      * g(void);` to Clang, which refuses the pair as conflicting (CSUB-2) */
     const char *rq = fn->ret.kind==2 ? "" : fn->ret.is_const && fn->ret.is_volatile ? "const volatile "
                    : fn->ret.is_const ? "const " : fn->ret.is_volatile ? "volatile " : "";
     ctext_putf(c,&c->tudefs,"extern %s%s %s(",rq,rets,fn->name);
     for(int k=0;k<fn->n_params;k++){ const bcir_ctype *pt=&fn->params[k].type; char ps[BCIR_EMIT_TYPE];
-      ctype_qstr(pt,ps,sizeof ps);
+      ctype_declstr(pt,ps,sizeof ps);
       ctext_putf(c,&c->tudefs,"%s%s",k?", ":"",ps); }
     if(fn->variadic) ctext_putf(c,&c->tudefs,"%s...",fn->n_params?", ":"");
     ctext_putf(c,&c->tudefs,"%s);\n",(fn->n_params||fn->variadic)?"":"void");
@@ -10628,6 +10637,27 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
  * level -- `const char *const *` -- where the emit's own objects are spelled without them (`ctype_str`) and meet it
  * through a cast (`qcast`). A scalar, a struct or a function pointer is its top level whole. The oracle's
  * `_qual_type`. */
+static void ctype_qstr(const bcir_ctype *ty,char *o,size_t n);
+/* `ctype_qstr` of a parameter or return of a function the C library or another unit defines, as its own declaration
+ * spells it: an integer spelled `long` or `long long` by its C name, where the emit spells it by its width -- `int64_t`
+ * is `long` on an LP64 target, `int32_t` `int` on Windows, and the library declares `long long strtoll(...)`, `long
+ * strtol(...)` (`c_long`, CSUB-5). The oracle spells a type's own name throughout. */
+static void ctype_declstr(const bcir_ctype *ty,char *o,size_t n){
+  ctype_qstr(ty,o,n);
+  if(!ty->c_long || ty->is_bool || ty->is_plain_char || ty->is_float || ty->kind==1 || ty->kind==3 ||
+     (ty->kind==2 && (ty->ptr_to_struct || ty->ptr_to_fp))) return;
+  static const char *const W[]={"uint64_t","int64_t","uint32_t","int32_t",0};
+  for(int w=0;W[w];w++){
+    char *at=strstr(o,W[w]); size_t wl=strlen(W[w]);
+    if(!at) continue;
+    if(at>o){ char pc=at[-1]; if((pc>='a'&&pc<='z')||(pc>='A'&&pc<='Z')||(pc>='0'&&pc<='9')||pc=='_') continue; }
+    const char *cn = W[w][0]=='u' ? (ty->c_long==2?"unsigned long long":"unsigned long")
+                                  : (ty->c_long==2?"long long":"long");
+    char rest[BCIR_EMIT_TYPE]; snprintf(rest,sizeof rest,"%s",at+wl);
+    snprintf(at,n-(size_t)(at-o),"%s%s",cn,rest);
+    return;
+  }
+}
 static void ctype_qstr(const bcir_ctype *ty,char *o,size_t n){
   if(ty->kind!=2 || n==0){ ctype_str(ty,o,n); return; }
   char b[BCIR_EMIT_TYPE]; ctype_str(ty,b,sizeof b);

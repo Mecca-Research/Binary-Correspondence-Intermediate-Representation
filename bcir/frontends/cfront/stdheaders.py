@@ -47,6 +47,11 @@ NAMES = (
     "stdatomic.h",
     "stdbit.h",
     "math.h",
+    "stdio.h",
+    "stdlib.h",
+    "errno.h",
+    "time.h",
+    "inttypes.h",
 )
 
 _I8, _I16, _I32 = 127, 32767, 2147483647
@@ -441,6 +446,136 @@ def _stdbit(abi: TargetABI) -> list[str]:
     return out
 
 
+# The hosted profile (CSUB-5): what the runtime's tools call of the C library, declared as the target's library
+# declares it -- glibc's tags and `__errno_location` on Linux, the UCRT's `_iobuf` and `_errno` on Windows -- so each
+# call is a typed external edge the host linker resolves (a prototype, Phase 3 linking), and each emitted `extern`
+# declaration agrees with the library's own header the artifact is built beside. No body: the library is the host's.
+def _windows(abi: TargetABI) -> bool:
+    return abi.name.endswith("-windows")
+
+
+def _stdio(abi: TargetABI) -> list[str]:
+    tag = "_iobuf" if _windows(abi) else "_IO_FILE"
+    out = [
+        "#define EOF (-1)",
+        "#define SEEK_SET 0",
+        "#define SEEK_CUR 1",
+        "#define SEEK_END 2",
+        f"typedef struct {tag} FILE;",
+        "extern FILE *stdin;",
+        "extern FILE *stdout;",
+        "extern FILE *stderr;",
+        "FILE *fopen(const char *, const char *);",
+        "int fclose(FILE *);",
+        "size_t fread(void *, size_t, size_t, FILE *);",
+        "size_t fwrite(const void *, size_t, size_t, FILE *);",
+        "int fputs(const char *, FILE *);",
+        "int fputc(int, FILE *);",
+        "int putc(int, FILE *);",
+        "int putchar(int);",
+        "int puts(const char *);",
+        "int fgetc(FILE *);",
+        "int getc(FILE *);",
+        "int getchar(void);",
+        "int ungetc(int, FILE *);",
+        "char *fgets(char *, int, FILE *);",
+        "int fflush(FILE *);",
+        "int ferror(FILE *);",
+        "int feof(FILE *);",
+        "void clearerr(FILE *);",
+        "int fseek(FILE *, long, int);",
+        "long ftell(FILE *);",
+        "void rewind(FILE *);",
+        "int remove(const char *);",
+        "int rename(const char *, const char *);",
+        "FILE *tmpfile(void);",
+        "void perror(const char *);",
+    ]
+    if not _windows(abi):  # POSIX's; the UCRT's are `_fileno` and `_fdopen`
+        out += ["int fileno(FILE *);", "FILE *fdopen(int, const char *);"]
+    return out
+
+
+def _stdlib(abi: TargetABI) -> list[str]:
+    # the allocator's four are both rails' own edges (`_STDLIB_ALLOC`), each with its lifetime event
+    out = [
+        "#define EXIT_SUCCESS 0",
+        "#define EXIT_FAILURE 1",
+        "void exit(int);",
+        "void abort(void);",
+        "long strtol(const char *, char **, int);",
+        "unsigned long strtoul(const char *, char **, int);",
+        "long long strtoll(const char *, char **, int);",
+        "unsigned long long strtoull(const char *, char **, int);",
+        "double strtod(const char *, char **);",
+        "int atoi(const char *);",
+        "long atol(const char *);",
+        "char *getenv(const char *);",
+        "void qsort(void *, size_t, size_t, int (*)(const void *, const void *));",
+        "void *bsearch(const void *, const void *, size_t, size_t, int (*)(const void *, const void *));",
+        "int abs(int);",
+        "long labs(long);",
+    ]
+    if not _windows(abi):
+        out.append("int mkstemp(char *);")  # POSIX's
+    return out
+
+
+def _errno(abi: TargetABI) -> list[str]:
+    loc = "_errno" if _windows(abi) else "__errno_location"
+    # the codes both libraries give the same values (POSIX's on Linux, the UCRT's on Windows)
+    codes = (
+        ("EPERM", 1),
+        ("ENOENT", 2),
+        ("EINTR", 4),
+        ("EIO", 5),
+        ("EBADF", 9),
+        ("EAGAIN", 11),
+        ("ENOMEM", 12),
+        ("EACCES", 13),
+        ("EEXIST", 17),
+        ("EINVAL", 22),
+        ("ENOSPC", 28),
+        ("ERANGE", 34),
+    )
+    return [
+        f"int *{loc}(void);",
+        f"#define errno (*{loc}())",
+        *(f"#define {n} {v}" for n, v in codes),
+    ]
+
+
+def _time(abi: TargetABI) -> list[str]:
+    out = [
+        "typedef long long time_t;" if _windows(abi) else "typedef long time_t;",
+        "struct timespec { time_t tv_sec; long tv_nsec; };",
+        "#define TIME_UTC 1",
+        "int timespec_get(struct timespec *, int);",
+        "time_t time(time_t *);",
+    ]
+    if not _windows(abi):  # POSIX's clocks; the UCRT has none
+        out += [
+            "#define CLOCK_REALTIME 0",
+            "#define CLOCK_MONOTONIC 1",
+            "int clock_gettime(int, struct timespec *);",
+        ]
+    return out
+
+
+def _inttypes(abi: TargetABI) -> list[str]:
+    # the format macros' length modifiers, as the target's library spells them: `l` for a 64-bit integer where `long`
+    # is one (LP64 Linux), `ll` where it is not (i386, Windows); a pointer's and `intmax_t`'s likewise
+    lp64 = abi.long_size == 8
+    widths = {"8": "", "16": "", "32": "", "64": "l" if lp64 else "ll"}
+    widths["PTR"] = "l" if lp64 else "" if abi.pointer_size == 4 else "ll"
+    widths["MAX"] = "l" if lp64 else "ll"
+    return [
+        f'#define PRI{c}{w} "{m}{c}"'
+        for w, m in widths.items()
+        for c in ("d", "i", "u", "x", "X", "o")
+    ]
+
+
 def _math(abi: TargetABI) -> list[str]:
     # the constants and the classification macros, spelled as glibc spells them: `isinf` its sign-returning builtin
     return [
@@ -469,6 +604,11 @@ _BUILDERS = {
     "stdatomic.h": _stdatomic,
     "stdbit.h": _stdbit,
     "math.h": _math,
+    "stdio.h": _stdio,
+    "stdlib.h": _stdlib,
+    "errno.h": _errno,
+    "time.h": _time,
+    "inttypes.h": _inttypes,
 }
 
 

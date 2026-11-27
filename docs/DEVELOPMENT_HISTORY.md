@@ -313,6 +313,26 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-27 — CSUB-5b: the hosted headers on both rails; eight tools under the verified compiler.**
+  - Both rails read `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` as the target's C library
+    declares what the runtime's tools call of it: glibc's `struct _IO_FILE` and `__errno_location` on Linux, the
+    UCRT's `struct _iobuf` and `_errno` on Windows, and each format macro's length modifier. Each call is a typed
+    external edge, a prototype as Phase 3 linking takes; no lowering changed. They had read each as nothing.
+  - **Two twin defects, found by the units the headers let through:**
+    - An anonymous struct was numbered by every aggregate before it, where the oracle counts the anonymous ones, so
+      a cast naming it gave `bcir_cc.c` two digests.
+    - Another unit's or the library's function was declared by the emit's own spelling, `int64_t strtoll(...)`,
+      which conflicts with glibc's `long long`. The twin's type now records an integer's `long`s as spelled.
+  - **Evidence.**
+    - `test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations`: the five headers are
+      one text on both rails for the five targets. Every function they declare lowers alike, and each rail's emit
+      compiles beside glibc's headers as C11 strictly.
+    - `test_the_hosted_profile_lowers_alike_and_runs_as_the_c_librarys_build`: 6 units lower alike and run as the
+      host build against glibc; a `FILE` object and `sizeof(FILE)` are refused on both rails; the 8 units the profile
+      brings in lower to one digest on both rails.
+  - The ratchet moves to **55 of 68**.
+  - **Standing faults.** `cfront-hosted.json`, 16, each swept RED.
+
 - **2026-11-27 — CSUB-4: the atomics API on both rails; `bcir_ring.c` under the verified compiler.**
   - Both rails read `<stdatomic.h>`'s macros: `ATOMIC_*_LOCK_FREE` (2 on every target of the matrix, held to Clang's),
     `ATOMIC_FLAG_INIT` and `kill_dependency`. They had read the header as nothing.

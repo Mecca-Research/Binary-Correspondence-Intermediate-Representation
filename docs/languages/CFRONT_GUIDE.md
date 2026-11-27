@@ -613,6 +613,9 @@ _mm_sfence();                      //                   store (release) fence ->
     no association, as C23 7.18.1p3 leaves it out (CSUB-3).
 
   A unit that includes the header defines the seventy functions, as glibc's does.
+- The hosted profile: `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` as the target's C library
+  declares them, each call a typed external edge the host linker resolves. A `FILE` is the library's: only a pointer
+  to one. POSIX's `fileno`, `fdopen`, `mkstemp` and `clock_gettime` are declared on Linux alone (CSUB-5).
 - C11's atomics API: `<stdatomic.h>`'s lock-free macros, `ATOMIC_FLAG_INIT` and `kill_dependency`; and each generic's
   explicit-order form, of constant memory orders the operation takes (C11 7.17.7), lowered as its implicit form with
   the orders as the claim's immediates. A variable order is a follow-on (CSUB-4).

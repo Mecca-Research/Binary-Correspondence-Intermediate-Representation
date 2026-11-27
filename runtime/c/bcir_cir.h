@@ -186,6 +186,10 @@ typedef struct bcir_ctype {
                               * definition (0: not one) -- the call's result is that aggregate value */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
   int      nadims;           /* number of array dims (0 == not an array parameter) */
+  uint8_t  c_long;           /* an integer's `long`s as the source spells them: 1 `long`, 2 `long long`, else 0. The
+                              * emit spells an integer by its width (`int64_t`); a declaration of a function the C
+                              * library or another unit defines spells it as C does, which the library's own agrees
+                              * with -- `long long strtoll(...)`, not `int64_t`, which is `long` on LP64 (CSUB-5) */
 } bcir_ctype;
 
 typedef struct bcir_param { char name[BCIR_CIR_NAME]; uint32_t rid; bcir_ctype type; } bcir_param;

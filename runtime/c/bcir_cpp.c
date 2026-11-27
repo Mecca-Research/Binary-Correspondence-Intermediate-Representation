@@ -1257,6 +1257,78 @@ static void h_stdbit(const CppState *st, hbuf *b) {
          op, op, op, op, op, op);
   }
 }
+/* The hosted profile (CSUB-5), the oracle's `stdheaders._stdio`, `_stdlib`, `_errno` and `_time` line for line: what the
+ * runtime's tools call of the C library, declared as the target's library declares it -- glibc's tags and
+ * `__errno_location` on Linux, the UCRT's `_iobuf` and `_errno` on Windows (`msvc`) -- so each call is a typed
+ * external edge the host linker resolves, and each emitted `extern` declaration agrees with the library's own. */
+static void h_lines(hbuf *b, const char *const *lines) {
+  for (int k = 0; lines[k]; k++) hput(b, "%s", lines[k]);
+}
+static void h_stdio(const CppState *st, hbuf *b) {
+  static const char *const head[] = {"#define EOF (-1)", "#define SEEK_SET 0", "#define SEEK_CUR 1", "#define SEEK_END 2", 0};
+  static const char *const decls[] = {
+    "extern FILE *stdin;", "extern FILE *stdout;", "extern FILE *stderr;",
+    "FILE *fopen(const char *, const char *);", "int fclose(FILE *);",
+    "size_t fread(void *, size_t, size_t, FILE *);", "size_t fwrite(const void *, size_t, size_t, FILE *);",
+    "int fputs(const char *, FILE *);", "int fputc(int, FILE *);", "int putc(int, FILE *);", "int putchar(int);",
+    "int puts(const char *);", "int fgetc(FILE *);", "int getc(FILE *);", "int getchar(void);",
+    "int ungetc(int, FILE *);", "char *fgets(char *, int, FILE *);", "int fflush(FILE *);", "int ferror(FILE *);",
+    "int feof(FILE *);", "void clearerr(FILE *);", "int fseek(FILE *, long, int);", "long ftell(FILE *);",
+    "void rewind(FILE *);", "int remove(const char *);", "int rename(const char *, const char *);",
+    "FILE *tmpfile(void);", "void perror(const char *);", 0};
+  h_lines(b, head);
+  hput(b, "typedef struct %s FILE;", st->msvc ? "_iobuf" : "_IO_FILE");
+  h_lines(b, decls);
+  if (!st->msvc) {                                  /* POSIX's; the UCRT's are `_fileno` and `_fdopen` */
+    hput(b, "int fileno(FILE *);");
+    hput(b, "FILE *fdopen(int, const char *);");
+  }
+}
+static void h_stdlib(const CppState *st, hbuf *b) {   /* the allocator's four are both rails' own edges */
+  static const char *const decls[] = {
+    "#define EXIT_SUCCESS 0", "#define EXIT_FAILURE 1", "void exit(int);", "void abort(void);",
+    "long strtol(const char *, char **, int);", "unsigned long strtoul(const char *, char **, int);",
+    "long long strtoll(const char *, char **, int);", "unsigned long long strtoull(const char *, char **, int);",
+    "double strtod(const char *, char **);", "int atoi(const char *);", "long atol(const char *);",
+    "char *getenv(const char *);", "void qsort(void *, size_t, size_t, int (*)(const void *, const void *));",
+    "void *bsearch(const void *, const void *, size_t, size_t, int (*)(const void *, const void *));",
+    "int abs(int);", "long labs(long);", 0};
+  h_lines(b, decls);
+  if (!st->msvc) hput(b, "int mkstemp(char *);");  /* POSIX's */
+}
+static void h_errno(const CppState *st, hbuf *b) {    /* the codes both libraries give the same values */
+  static const struct { const char *n; int v; } codes[] = {
+    {"EPERM", 1}, {"ENOENT", 2}, {"EINTR", 4}, {"EIO", 5}, {"EBADF", 9}, {"EAGAIN", 11}, {"ENOMEM", 12},
+    {"EACCES", 13}, {"EEXIST", 17}, {"EINVAL", 22}, {"ENOSPC", 28}, {"ERANGE", 34}, {0, 0}};
+  const char *loc = st->msvc ? "_errno" : "__errno_location";
+  hput(b, "int *%s(void);", loc);
+  hput(b, "#define errno (*%s())", loc);
+  for (int k = 0; codes[k].n; k++) hput(b, "#define %s %d", codes[k].n, codes[k].v);
+}
+static void h_time(const CppState *st, hbuf *b) {
+  hput(b, "%s", st->msvc ? "typedef long long time_t;" : "typedef long time_t;");
+  hput(b, "struct timespec { time_t tv_sec; long tv_nsec; };");
+  hput(b, "#define TIME_UTC 1");
+  hput(b, "int timespec_get(struct timespec *, int);");
+  hput(b, "time_t time(time_t *);");
+  if (!st->msvc) {                                    /* POSIX's clocks; the UCRT has none */
+    hput(b, "#define CLOCK_REALTIME 0");
+    hput(b, "#define CLOCK_MONOTONIC 1");
+    hput(b, "int clock_gettime(int, struct timespec *);");
+  }
+}
+/* `<inttypes.h>`'s format macros (the oracle's `_inttypes`): `l` for a 64-bit integer where `long` is one (LP64
+ * Linux), `ll` where it is not (i386, Windows); a pointer's and `intmax_t`'s likewise. */
+static void h_inttypes(const CppState *st, hbuf *b) {
+  int lp64 = st->long_size == 8;
+  const char *w64 = lp64 ? "l" : "ll", *wptr = lp64 ? "l" : st->pointer_size == 4 ? "" : "ll";
+  static const char *const W[] = {"8", "16", "32", "64", "PTR", "MAX"};
+  static const char *const C[] = {"d", "i", "u", "x", "X", "o"};
+  for (int w = 0; w < 6; w++) {
+    const char *m = w < 3 ? "" : w == 3 ? w64 : w == 4 ? wptr : w64;
+    for (int k = 0; k < 6; k++) hput(b, "#define PRI%s%s \"%s%s\"", C[k], W[w], m, C[k]);
+  }
+}
 static void h_math(hbuf *b) {
   hput(b, "#define NAN (__builtin_nanf(\"\"))"); hput(b, "#define INFINITY (__builtin_inff())");
   hput(b, "#define HUGE_VAL (__builtin_huge_val())"); hput(b, "#define HUGE_VALF (__builtin_huge_valf())");
@@ -1267,7 +1339,7 @@ static void h_math(hbuf *b) {
 }
 static const char *const builtin_names[] = {"stdint.h", "stddef.h", "stdbool.h", "limits.h", "float.h", "iso646.h",
                                             "stdalign.h", "stdckdint.h", "stdatomic.h", "stdbit.h", "math.h",
-                                            0};
+                                            "stdio.h", "stdlib.h", "errno.h", "time.h", "inttypes.h", 0};
 static int builtin_known(const char *name) {
   for (int k = 0; builtin_names[k]; k++) if (!strcmp(builtin_names[k], name)) return 1;
   return 0;
@@ -1293,6 +1365,11 @@ static int builtin_header(CppState *st, const char *name) {
   else if (!strcmp(name, "stdckdint.h")) h_stdckdint(&b);
   else if (!strcmp(name, "stdatomic.h")) h_stdatomic(&b);
   else if (!strcmp(name, "stdbit.h")) h_stdbit(st, &b);
+  else if (!strcmp(name, "stdio.h")) h_stdio(st, &b);
+  else if (!strcmp(name, "stdlib.h")) h_stdlib(st, &b);
+  else if (!strcmp(name, "errno.h")) h_errno(st, &b);
+  else if (!strcmp(name, "time.h")) h_time(st, &b);
+  else if (!strcmp(name, "inttypes.h")) h_inttypes(st, &b);
   else h_math(&b);
   hput(&b, "#endif");
   if (b.full) { cpp_limit(st, "standard header text too large"); return 0; }

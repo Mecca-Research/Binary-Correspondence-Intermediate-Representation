@@ -9,10 +9,7 @@
       "verdict": "clean"
     },
     "bcir_ai_microbench.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: unknown struct",
-      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_artifact_bundle.c": {
       "verdict": "clean"
@@ -21,10 +18,7 @@
       "verdict": "clean"
     },
     "bcir_asn1_bench.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: unknown struct",
-      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_asn1_streampack.c": {
       "verdict": "clean"
@@ -37,15 +31,12 @@
     },
     "bcir_bundle_cli.c": {
       "verdict": "blocked",
-      "blocker": "parse error: use of undeclared identifier 'stderr'",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "blocker": "verify error: R18: call to undefined function close",
+      "construct": "<unistd.h>: POSIX's `close` of the descriptor `mkstemp` opened -- the host's interface past the C library",
       "rung": "CSUB-5"
     },
     "bcir_cc.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: unknown type",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_cfront.c": {
       "verdict": "blocked",
@@ -64,9 +55,9 @@
     },
     "bcir_cpp.c": {
       "verdict": "blocked",
-      "blocker": "parse error: unknown type",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
-      "rung": "CSUB-5"
+      "blocker": "parse error: ;",
+      "construct": "a comma expression in a `for` loop's init clause (`for (i++, e = n - 1; i < e;)`), a statement form beside CF-STEP's steps",
+      "rung": "CSUB-2"
     },
     "bcir_decode.c": {
       "verdict": "clean"
@@ -112,9 +103,9 @@
     },
     "bcir_etl_tool.c": {
       "verdict": "blocked",
-      "blocker": "parse error: use of undeclared identifier 'FILE'",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
-      "rung": "CSUB-5"
+      "blocker": "parse error: ;",
+      "construct": "a store through a cast's subscript, `((char *)b)[len] = 0`, an lvalue form the rails do not read",
+      "rung": "CSUB-2"
     },
     "bcir_exec.c": {
       "verdict": "clean"
@@ -135,31 +126,25 @@
       "verdict": "clean"
     },
     "bcir_llama_cli.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: unknown type",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_make.c": {
       "verdict": "blocked",
-      "blocker": "parse error: use of undeclared identifier 'stderr'",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "blocker": "parse error: expected ->/./[ after a pointer field",
+      "construct": "<sys/stat.h>: POSIX's `struct stat`, a member of a host structure the profile does not lay out",
       "rung": "CSUB-5"
     },
     "bcir_microbench.c": {
       "verdict": "blocked",
-      "blocker": "parse error: unknown struct",
-      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "blocker": "verify error: R18: call to undefined function strncpy",
+      "construct": "<string.h>'s `strncpy`, a write the libc edges do not hold yet (`memcpy`, `memmove` and `memset` are)",
       "rung": "CSUB-5"
     },
     "bcir_oer.c": {
       "verdict": "clean"
     },
     "bcir_pack_cli.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: use of undeclared identifier 'stderr'",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_per.c": {
       "verdict": "clean"
@@ -184,26 +169,23 @@
     },
     "bcir_q8_model.c": {
       "verdict": "blocked",
-      "blocker": "parse error: unknown type",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
-      "rung": "CSUB-5"
+      "blocker": "parse error: ;",
+      "construct": "a comma expression in a `for` loop's init clause (`for (i = start, end = start + count; ...)`), a statement form beside CF-STEP's steps",
+      "rung": "CSUB-2"
     },
     "bcir_qualify_cli.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: unknown struct",
-      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_quarantine.c": {
       "verdict": "blocked",
       "blocker": "parse error: unknown type",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "construct": "GNU's `__attribute__((weak))` before a function definition: the quarantine's handler, which a strong definition overrides at link time -- a link attribute neither rail takes",
       "rung": "CSUB-5"
     },
     "bcir_quarantine_recover.c": {
       "verdict": "blocked",
       "blocker": "parse error: unknown type",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "construct": "GNU's `__attribute__((weak))` before a function definition: the quarantine's handler, which a strong definition overrides at link time -- a link attribute neither rail takes",
       "rung": "CSUB-5"
     },
     "bcir_ring.c": {
@@ -246,19 +228,13 @@
       "rung": "CSUB-6"
     },
     "bcir_tokenize_cli.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: use of undeclared identifier 'stderr'",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_tokload.c": {
       "verdict": "clean"
     },
     "bcir_tokload_tool.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: use of undeclared identifier 'FILE'",
-      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_train.c": {
       "verdict": "clean"

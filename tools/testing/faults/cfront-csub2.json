@@ -224,7 +224,7 @@
    "expects": "test_untagged_aggregates_of_a_block_declaration_lower_and_refuse_alike_on_both_rails",
    "label": "CS2B18 twin: a block aggregate's type left unnamed (`struct $anonN` in the emit)",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "  snprintf(S->tdname,sizeof S->tdname,\"__bcir_anon%d\",si);",
+   "old": "  snprintf(S->tdname,sizeof S->tdname,\"__bcir_anon%s\",S->tag+5);   /* its tag's number, as the oracle's */",
    "new": "  S->tdname[0]=0;"
   },
   {
