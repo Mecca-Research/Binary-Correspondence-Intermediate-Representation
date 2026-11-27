@@ -601,6 +601,12 @@ class NativeMixerExt:
         if rc != 0:
             raise ValueError(f"bcir_ext_load_opt_state failed with status {rc}")
 
+    @staticmethod
+    def _ckpt_stem_and_json(path: str | Path) -> tuple[str, Path]:
+        base = Path(path)
+        stem = base.stem if base.suffix in (".json", ".bin") else base.name
+        return stem, base.parent / f"{stem}.json"
+
     def save_checkpoint(
         self,
         path: str | Path,
@@ -608,17 +614,38 @@ class NativeMixerExt:
         step: int = 0,
         extra: dict | None = None,
         include_opt_state: bool = True,
+        _abort_before_commit: bool = False,
     ) -> str:
-        """Save atomic SHA-256-verified JSON metadata, FP32 weights, and optimizer state."""
-        base = Path(path)
-        base.parent.mkdir(parents=True, exist_ok=True)
-        bin_path = base.with_suffix(".bin")
-        json_path = base.with_suffix(".json")
+        """Save crash-atomic SHA-256-verified JSON metadata, FP32 weights, and optimizer state.
+
+        Writes new generation-tagged `.bin`/`.opt.bin` payloads first, commits `.json` via
+        `os.replace`, and unlinks the prior generation's payloads only after commit so an
+        interruption mid-overwrite preserves the last valid checkpoint generation.
+        """
+        stem, json_path = self._ckpt_stem_and_json(path)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        prev_meta: dict[str, object] | None = None
+        prev_gen = 0
+        if json_path.exists():
+            try:
+                loaded = json.loads(json_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    prev_meta = loaded
+                    raw_gen = loaded.get("generation", 0)
+                    prev_gen = int(raw_gen) if isinstance(raw_gen, int) else 0
+            except (OSError, ValueError, TypeError):
+                prev_meta = None
+                prev_gen = 0
+        gen = prev_gen + 1
+
         payload = self.weights_bytes()
         digest = hashlib.sha256(payload).hexdigest()
+        gen_prefix = f"{stem}.g{gen}_{digest[:8]}"
+        bin_path = json_path.parent / f"{gen_prefix}.bin"
         meta: dict[str, object] = {
             "schema": _CKPT_SCHEMA,
             "abi_version": 6,
+            "generation": gen,
             "step": int(step),
             "n_params": self.n_params,
             "weights_sha256": digest,
@@ -627,31 +654,39 @@ class NativeMixerExt:
             "policy": asdict(self.policy),
             "extra": extra or {},
         }
-        tmp_bin = bin_path.with_suffix(".bin.tmp")
+        tmp_bin = json_path.parent / f".{gen_prefix}.bin.tmp"
         tmp_bin.write_bytes(payload)
         os.replace(tmp_bin, bin_path)
+        new_files = {bin_path.name}
+        if _abort_before_commit:
+            raise RuntimeError("simulated mid-save interruption before metadata commit")
         if include_opt_state:
-            opt_path = base.with_suffix(".opt.bin")
+            opt_path = json_path.parent / f"{gen_prefix}.opt.bin"
             opt_payload = self.opt_state_bytes()
             opt_digest = hashlib.sha256(opt_payload).hexdigest()
-            tmp_opt = opt_path.with_suffix(".bin.tmp")
+            tmp_opt = json_path.parent / f".{gen_prefix}.opt.bin.tmp"
             tmp_opt.write_bytes(opt_payload)
             os.replace(tmp_opt, opt_path)
             meta["opt_state_file"] = opt_path.name
             meta["opt_state_sha256"] = opt_digest
             meta["opt_state_bytes"] = len(opt_payload)
-        tmp_json = json_path.with_suffix(".json.tmp")
+            new_files.add(opt_path.name)
+        tmp_json = json_path.parent / f".{stem}.g{gen}.json.tmp"
         tmp_json.write_text(
             json.dumps(meta, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
             newline="\n",
         )
         os.replace(tmp_json, json_path)
+        if prev_meta is not None:
+            for key in ("weights_file", "opt_state_file"):
+                old_name = prev_meta.get(key)
+                if isinstance(old_name, str) and old_name not in new_files:
+                    (json_path.parent / old_name).unlink(missing_ok=True)
         return digest
 
     def load_checkpoint(self, path: str | Path, *, load_opt_state: bool = True) -> dict:
-        base = Path(path)
-        json_path = base.with_suffix(".json")
+        _, json_path = self._ckpt_stem_and_json(path)
         meta = json.loads(json_path.read_text(encoding="utf-8"))
         if meta.get("schema") != _CKPT_SCHEMA:
             raise ValueError(f"unsupported checkpoint schema {meta.get('schema')!r}")

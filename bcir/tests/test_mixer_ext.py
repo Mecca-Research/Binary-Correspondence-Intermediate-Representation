@@ -120,6 +120,17 @@ def test_hybrid_gdn2_gated_mla_train_and_checkpoint_roundtrip():
             eval_before = model.evaluate(toks, tgts, n_batches=2)
             assert math.isfinite(eval_before["ce"]) and eval_before["nonfinite"] == 0
 
+            # Simulate a mid-save interruption while overwriting ckpt at step 6:
+            # generation 1 (step 3) must remain intact and pass SHA-256 verification.
+            try:
+                model.save_checkpoint(
+                    ckpt, step=6, extra={"tag": "aborted"}, _abort_before_commit=True
+                )
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("simulated mid-save interruption did not raise")
+
             # Restore step-3 weights + optimizer state into a fresh model and continue steps 4..6
             spec_resume = MixerExtSpec(
                 vocab=spec.vocab,
@@ -145,8 +156,12 @@ def test_hybrid_gdn2_gated_mla_train_and_checkpoint_roundtrip():
             )
             with NativeMixerExt(lib_path, spec_resume, pol) as restored:
                 meta = restored.load_checkpoint(ckpt)
+                assert meta["generation"] == 1
                 assert meta["step"] == 3 and meta["extra"]["tag"] == "abi6"
                 assert "opt_state_sha256" in meta
+                g1_weights_file = ckpt.parent / meta["weights_file"]
+                g1_opt_file = ckpt.parent / meta["opt_state_file"]
+                assert g1_weights_file.exists() and g1_opt_file.exists()
                 ev_resumed = restored.train_steps(
                     toks[3 * stride :], tgts[3 * stride :], steps=3, opt=opt
                 )
@@ -156,6 +171,11 @@ def test_hybrid_gdn2_gated_mla_train_and_checkpoint_roundtrip():
                 eval_after = restored.evaluate(toks, tgts, n_batches=2)
                 assert eval_after["ce"] == eval_before["ce"]
                 assert eval_after["accuracy"] == eval_before["accuracy"]
+                # Commit generation 2 and confirm prior generation payloads are cleaned up
+                restored.save_checkpoint(ckpt, step=6, extra={"tag": "abi6_g2"})
+                meta2 = restored.load_checkpoint(ckpt)
+                assert meta2["generation"] == 2 and meta2["step"] == 6
+                assert not g1_weights_file.exists() and not g1_opt_file.exists()
 
 
 def test_optimizer_memory_frontier_and_fail_closed():

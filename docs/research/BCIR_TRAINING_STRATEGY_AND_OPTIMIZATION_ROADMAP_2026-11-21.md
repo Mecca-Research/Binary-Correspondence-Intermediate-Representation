@@ -451,7 +451,7 @@ change:
 
 Executed bare-metal C11 benchmarks on `Intel(R) Xeon(R) 6985P-C` and `Intel(R) Xeon(R) CPU @ 2.30GHz`
 (2T, `clang 23.1.6`, `-ffp-contract=off`, archived in merged `Modular-AI` PR #228 at
-`8cc3f234be0bc84009b79f152ab55995ada9a499` and PR #229 at `e458a859e190430827319b0e725b325241fbd787`)
+`8cc3f234be0bc84009b79f152ab55995ada9a499` and PR #229 at `529f3f2eae601c5a39d2ffa5543e0f57795f044d`)
 establish six operational rules for BCIR training and deployment:
 
 1. **Optimizer-state compression outweighs inference weight precision for training RAM — and `Opt_Q8_Muon_BF16Grad` (`7.07 B/p`) sets a new frontier:** At `50.54M–50.74M` (`wide50m`), `Opt_Q8_BF16Grad` (`8.05 B/param`, `387.86–389.37 MiB`) saves **`383.3–384.8 MiB` (`-49.7%`)** while matching FP32 test CE within `-0.0009` nats; `Opt_Adafactor` (`12.01 B/param`, saves `192.3–193.1 MiB`) remains the wall-clock Pareto winner at tiny update batches (`N <= 512`). Extending beyond the initial list in ABI 6 (`runtime/c/bcir_precision.{h,c}`), **`Opt_Q8_Muon_BF16Grad`** (`Muon-8L/AdamW-32 + BF16Grad`, `arXiv:2509.23106v3`) pushes `wide50m` persistent state down to **`342.17 MiB` (`7.07 B/param`, saving `432.03 MiB` / `-55.8%`)**, matches FP32 Muon within `+0.0004` nats on `wide512`, and beats FP32 AdamW on `wide10m 3:1 Hybrid-DN+GQA` by **`-0.0920` nats (`PPL 9.12` vs `10.00`, 2 seeds) at `2.24×` less RAM**. Because Newton-Schulz carries a fixed per-update cost (`5.92×` at `N=256`, amortizing to `1.62×` at `N=2048` and `~1.15×` at `N=8192`), adopt `Opt_Adafactor`/`Opt_Q8_BF16Grad` for tiny batches (`N <= 512`) and **`Opt_Q8_Muon_BF16Grad`** once `N >= 2048` (via batch size or gradient accumulation).
@@ -482,7 +482,7 @@ establish six operational rules for BCIR training and deployment:
    `8cc3f234be0bc84009b79f152ab55995ada9a499` (`wide512` KD-QAT `ADMITTED_HYBRID_V2` at `2.05 MiB` /
    `3.05×` cut / `+0.0096` nats with frozen Q8 attention and `bcir-qualify` GEM parity; `wide50m`
    zero-QAT PTQ and narrow `wedge128` automatically promoted via `P3`/`P4` to `PROMOTED_Q8_V1`).
-6. **Production ABI 6 `MIXER-EXT` + `Arch-7d` + `1.024M`-Token `T=256` Pilot (`PR #229`, `e458a85`):**
+6. **Production ABI 6 `MIXER-EXT` + `Arch-7d` + `1.024M`-Token `T=256` Pilot (`PR #229`, `529f3f2`):**
    Landed in `runtime/c/bcir_mixer_ext.{h,c}`, `runtime/c/bcir_precision.{h,c}`, and
    `bcir/hosted/models/mixer_ext.py` (preserving ABI 5 untouched). Over `1,024,000` real tokens at
    `T=256, B=8` (`online_softmax=1`, `~0.85–1.0` tok/param), **`Arch-7d` (`GDN-2 + G1-NoPE-MLA +
@@ -490,8 +490,8 @@ establish six operational rules for BCIR training and deployment:
    **`4.81`** vs `Arch-7d + Adafactor` (`5.23`), `Arch-2 Hybrid-DN+GQA` (`5.55`), and `GQA_Full`
    (`6.47`, `-0.2949` nats / `-25.5%` PPL), faster wall time than `GQA_Full` (`511.0 s` vs `526.5 s`),
    lowest persistent RAM (`8.76 MiB`), `4.84×` lower peak activation amplitude (`2.15` vs `10.42`),
-   and verified 0-bit-drift mid-run checkpoint resume with full optimizer state restore across all 7
-   optimizers (`bcir_ext_{opt_state_bytes,save_opt_state,load_opt_state}`).
+   and verified crash-atomic 0-bit-drift mid-run checkpoint resume with full optimizer state restore across
+   all 7 optimizers (`bcir_ext_{opt_state_bytes,save_opt_state,load_opt_state}`).
    Full Tier M (`10M`) and Tier L (`50M`) runs remain queued on 16+ core hosts via `run_tier_ml_qual.py`.
 
 ---
@@ -501,9 +501,9 @@ establish six operational rules for BCIR training and deployment:
 | Priority | Slice | Primary Metric Targeted | Status / Dependencies |
 |---:|---|---|---|
 | **1** | `TRAIN-OPT-1` ($\mu$P + residual init) & `TRAIN-OPT-4` (fast C init / `skip_init`) — **IMPLEMENTED** | Fix 99.8% clip saturation; cut 50M init `15.6s → <0.45s` | `runtime/c/bcir_precision.{h,c}` (`PR #228` `8cc3f23`) |
-| **2** | `TRAIN-OPT-5` (`online_softmax=1` `O(T)` LSE tiled attention) — **IMPLEMENTED** | Cut `GQA` `T=1024` prob storage `512.0×` (`512 → 1 MiB`), `0` bit drift | `runtime/c/bcir_mixer_ext.{h,c}` (`PR #229` `e458a85`) |
+| **2** | `TRAIN-OPT-5` (`online_softmax=1` `O(T)` LSE tiled attention) — **IMPLEMENTED** | Cut `GQA` `T=1024` prob storage `512.0×` (`512 → 1 MiB`), `0` bit drift | `runtime/c/bcir_mixer_ext.{h,c}` (`PR #229` `529f3f2`) |
 | **3** | `TRAIN-OPT-2` (causal suffix trimming + masked-target loss) — **IMPLEMENTED** | `2.54×` speedup on padded KV batches; fail-closed all-masked refusal | `runtime/c/bcir_mixer_ext.{h,c}` (ABI 6) |
 | **4** | `MIXER-EXT` ABI 6 + `Arch-1/2/4` + Beyond-the-List `Arch-7` (`KDA`/`GDN-2`/`G1`/`Canon`/`mHC`) — **IMPLEMENTED** | `wide10m` #1 `9.51` PPL, `1.024M` pilot `4.81` PPL, `4.27×` smaller `T=4k` state | `runtime/c/bcir_mixer_ext.{h,c}`, `bcir/hosted/models/mixer_ext.py` |
-| **5** | `TRAIN-OPT-6` (`VDPBF16PS`) & `TRAIN-OPT-7` (`Adafactor` `12.0 B/p`, `Q8+BF16Grad` `8.05 B/p`, **`Q8-Muon+BF16Grad` `7.07 B/p`**) — **IMPLEMENTED** | Cut `50.74M` persistent RAM `774 → 342 MiB` (`-55.8%`); `-0.092` nats on `wide10m` hybrid; 0-bit-drift resume | `runtime/c/bcir_precision.{h,c}` (`PR #229` `e458a85`) |
+| **5** | `TRAIN-OPT-6` (`VDPBF16PS`) & `TRAIN-OPT-7` (`Adafactor` `12.0 B/p`, `Q8+BF16Grad` `8.05 B/p`, **`Q8-Muon+BF16Grad` `7.07 B/p`**) — **IMPLEMENTED** | Cut `50.74M` persistent RAM `774 → 342 MiB` (`-55.8%`); `-0.092` nats on `wide10m` hybrid; crash-atomic 0-bit-drift resume | `runtime/c/bcir_precision.{h,c}` (`PR #229` `529f3f2`) |
 | **6** | `TRAIN-OPT-3` (Tier M/L `10M–50M` scaling on 16+ core hosts) + `Arch-5/6` + `WSP-1..4` | True converged scaling laws (`>= 10M–50M` tok at `wide10m`/`wide50m`), `BCIR-BLT`, `BCIR-MoE` | `run_tier_ml_qual.py` (`1.024M` pilot done; 16+ core queue) |
 | **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP & `LUT4-LANES`) — **IMPLEMENTED** | Whole-model & MLP decode speedup + `>= 3×` smaller edge artifacts ($d \ge 512$), gated by `P1–P6` (`bcir/frontends/models/deploy_policy.py`) | `bcir_q8_model.h`, `bcir_ai_kernels.h`, Exp 5 baseline `8cc3f234be0bc84009b79f152ab55995ada9a499` |
