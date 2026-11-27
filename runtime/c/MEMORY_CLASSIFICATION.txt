@@ -35,6 +35,8 @@ hosted_tool bcir_cc.c
 hosted_tool bcir_ai_kernels.c
 hosted_tool bcir_tensor.c
 hosted_tool bcir_decoder_train.c
+hosted_tool bcir_precision.c
+hosted_tool bcir_mixer_ext.c
 hosted_tool bcir_decoder_pack.c
 hosted_tool bcir_decoder_gem.c
 hosted_tool bcir_ai_microbench.c

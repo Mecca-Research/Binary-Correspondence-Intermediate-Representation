@@ -101,10 +101,10 @@ checkpoints (`checkpoints/*.npz`), raw JSON/text outputs (`results/*.json`,
 `results/verify_gates_output.txt`), and SHA-256 provenance manifest (`results/MANIFEST.json`,
 pinning every source file, trained teacher, saved `../wedge-pr818/checkpoints/*.npz` checkpoint,
 and `../gp-global/data/wikitext2-*.parquet` split) are archived in the companion repository at
-pinned commit **`c83cc78e4396d7690ff518faec82f57ed321bc72`**:
+pinned commit **`3ec7ee5551b3740c46015b86aef9fe3e52e142bb`**:
 
 - Pinned bundle:
-  https://github.com/Mecca-Research/Modular-AI/tree/c83cc78e4396d7690ff518faec82f57ed321bc72/BCIR%20Model%20Training/littlebit-sub1bit-study
+  https://github.com/Mecca-Research/Modular-AI/tree/3ec7ee5551b3740c46015b86aef9fe3e52e142bb/BCIR%20Model%20Training/littlebit-sub1bit-study
 - BCIR base commit linked during build and verification: `3fdb708d73371a6e0e1abf7dde70b7239fc2fc06`
 
 All measurements were executed on Intel Xeon Platinum 8481C (`avx512f`, `avx512_bf16`,
@@ -502,6 +502,6 @@ Precision Policy v0.1 Rules `P1–P6` in
 - Pinned reproducible native-C experiment bundle, trained FP32 teachers, raw JSON/text outputs,
   3-gate verification log, and SHA-256 provenance manifest (covering `wedge-pr818` checkpoints and
   `gp-global/data/` WikiText-2 splits):
-  https://github.com/Mecca-Research/Modular-AI/tree/c83cc78e4396d7690ff518faec82f57ed321bc72/BCIR%20Model%20Training/littlebit-sub1bit-study
+  https://github.com/Mecca-Research/Modular-AI/tree/3ec7ee5551b3740c46015b86aef9fe3e52e142bb/BCIR%20Model%20Training/littlebit-sub1bit-study
   ([PR #227](https://github.com/Mecca-Research/Modular-AI/pull/227),
-  [`results/MANIFEST.json`](https://github.com/Mecca-Research/Modular-AI/blob/c83cc78e4396d7690ff518faec82f57ed321bc72/BCIR%20Model%20Training/littlebit-sub1bit-study/results/MANIFEST.json))
+  [`results/MANIFEST.json`](https://github.com/Mecca-Research/Modular-AI/blob/3ec7ee5551b3740c46015b86aef9fe3e52e142bb/BCIR%20Model%20Training/littlebit-sub1bit-study/results/MANIFEST.json))

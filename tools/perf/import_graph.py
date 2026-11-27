@@ -58,7 +58,7 @@ _COLD_KBCIR = (
 _COLD_LOWER = ("jit", "wasm", "specialist")
 _COLD_GEM = ("concurrency", "overlap", "schedule", "async_tokens", "cim", "dvfs")
 _COLD_TOP = ("silicon", "performance_audit")
-_COLD_HOSTED_MODELS = ("spec", "model", "train", "export", "checkpoint")
+_COLD_HOSTED_MODELS = ("spec", "model", "train", "export", "checkpoint", "mixer_ext")
 _COLD_HOSTED_TRAINING = (
     "contracts",
     "data",

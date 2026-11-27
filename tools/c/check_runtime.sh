@@ -148,6 +148,9 @@ show_section bundle_listing || exit 1
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1
 
+echo "[c-runtime] ABI 6 MIXER-EXT (DeltaNet/KDA/MLA/GDN-2 + G1/Canon/mHC/Muon): C11/C23"
+show_section mixer_ext || exit 1
+
 echo "[c-runtime] StreamPack executor: Python->C parity"
 show_section executor || exit 1
 
