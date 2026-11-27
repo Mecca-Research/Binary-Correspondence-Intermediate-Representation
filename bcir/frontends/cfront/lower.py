@@ -720,6 +720,14 @@ _INIT_MAX_FRAMES = 64  # the subobjects one brace list may nest into (the twin's
 MAX_CALL_ARGS = (
     16  # the arguments a call carries, both rails (the twin's BCIR_CALL_MAX_ARGS; CF-CALLARGS)
 )
+# ... and as many as a prototype has parameters, at least as many where it ends in `...`: Clang's words (CF-ARGC; the
+# twin's CC_ARGC_FEW and CC_ARGC_MANY)
+ARGC_FEW = "too few arguments to function call"
+# A `_Generic` whose controlling type no association names and that has no `default` -- `<stdbit.h>`'s functions of a
+# signed, `bool` or non-integer argument, which C23 7.18.1p3 leaves out -- in one set of words (the twin's
+# CC_GENERIC_NONE; CSUB-3)
+GENERIC_NONE = "no _Generic association matches the controlling expression's type"
+ARGC_MANY = "too many arguments to function call"
 
 # A struct or union object takes only a value of its own type: its initializer, when not a brace list, is
 # one expression of it (C11 6.7.9p13), and so is what `=` assigns it (6.5.16.1p1). CF-STRUCTINIT: the rails
@@ -3425,7 +3433,7 @@ class _FuncLowerer:
                 return expr
         if default is not None:
             return default
-        raise CLowerError("no _Generic association matches the controlling expression's type")
+        raise CLowerError(GENERIC_NONE)
 
     def _lit_type(self, node: "cast.IntLit") -> CType:
         """An integer constant's type (§6.4.4.1) at this target, as the parser read it (`_int_lit_type`). The twin's
@@ -3890,6 +3898,7 @@ class _FuncLowerer:
             fct = None
         # a null pointer argument is its parameter's pointer, as in a direct call (CF-NULLCALL)
         if fct is not None and fct.kind == "funcptr":
+            self._check_arity(len(actuals), fct.params, bool(getattr(fct, "variadic", False)))
             self._null_pointer_args(actuals, fct.params)
         if _returns_void(fct):  # a void member function: a claim with no result, the void value
             self._emit(
@@ -5297,9 +5306,24 @@ class _FuncLowerer:
             return scalar("uint32_t")
         return unqualified(el)
 
+    @staticmethod
+    def _check_arity(n: int, params: tuple, variadic: bool) -> None:
+        """A call of a function with a prototype passes as many arguments as it has parameters, and at least as many
+        where it ends in `...` (C11 6.5.2.2p2; C23 reads `T f()` as `T f(void)`). Both rails had lowered `g()` of a
+        `g(unsigned x)` and `g(k, k)` of it, emits no compiler builds, where Clang refuses the source (CF-ARGC)."""
+        if n < len(params):
+            raise CLowerError(ARGC_FEW)
+        if n > len(params) and not variadic:
+            raise CLowerError(ARGC_MANY)
+
     def _call_through(self, fptr: int, fpct: CType, actuals: tuple, label: str) -> int:
         """A `c.call.indirect` through the function-pointer value `fptr` of type `fpct` (reads: the pointer,
         then the actuals): a function-pointer object's (`fp(x)`) or any value's (`ops[i](x)`, CF-FPTAB)."""
+        # as many arguments as the function type it points at has parameters, where that type is known: a designator's
+        # value carries no parameters of its own (`_fn_type`; the twin's `argc_sig`, CF-ARGC)
+        ft = self._fn_type(fptr)
+        if ft is not None:
+            self._check_arity(len(actuals), ft.params, bool(getattr(ft, "variadic", False)))
         # an argument converts to its parameter's type (C11 6.5.2.2p7), through a pointer as in a direct
         # call: a null pointer constant is the parameter's pointer (CF-NULLCALL; CF-NULLARG's direct calls)
         self._null_pointer_args(actuals, fpct.params)
@@ -5499,6 +5523,13 @@ class _FuncLowerer:
             )
         if node.callee in self.func_rets or node.callee in self.protos:
             self._require_declared(node.callee, "call to undeclared function")
+            params = (
+                self.func_params.get(node.callee)
+                if node.callee in self.func_rets
+                else self.protos[node.callee][1]
+            )
+            if params is not None:
+                self._check_arity(len(actuals), params, node.callee in self.func_variadic)
         if node.callee in self.protos and node.callee not in self.func_rets:
             # Phase 3 LINKING: a PROTOTYPED cross-TU callee -- a TYPED external edge the host LINKER
             # resolves from a sibling object. Like a libm edge it is opaque to the in-unit R18 call

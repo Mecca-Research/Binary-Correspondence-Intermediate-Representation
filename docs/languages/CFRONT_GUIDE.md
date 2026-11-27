@@ -605,6 +605,17 @@ _mm_sfence();                      //                   store (release) fence ->
 - C23's checked arithmetic, `<stdckdint.h>`'s `ckd_add`, `ckd_sub` and `ckd_mul`, as the overflow builtins Clang and
   GCC define them to be: a `bool`, true when the mathematical result does not fit `*r`, which takes it wrapped. A
   result through a pointer to volatile storage is a follow-on (CSUB-3).
+- C23's bit utilities, `<stdbit.h>`, one text on both rails for the target:
+  - the version and the endian macros;
+  - the fourteen typed functions of each standard unsigned type, `static inline` functions over the integer builtins
+    (`bit_ceil` of a value whose ceiling the type cannot hold is 0);
+  - each type-generic form a `_Generic` of them, so an argument of a signed, `bool`, floating or pointer type names
+    no association, as C23 7.18.1p3 leaves it out (CSUB-3).
+
+  A unit that includes the header defines the seventy functions, as glibc's does.
+- A call of a function with a prototype passes as many arguments as it has parameters, and at least as many where it
+  ends in `...` -- through a definition, a prototype, a function-pointer object, a member, a table element or a
+  select alike; any other count is refused in Clang's words (CF-ARGC).
 - The `<string.h>` reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`
   (freestanding since C23) -- as libc edges beside `memcpy`, `memmove` and `memset`: called verbatim, opaque to R18,
   each typed by its declared result; the linkable artifact includes `<string.h>` for them (CSUB-5).

@@ -217,8 +217,8 @@
     {
       "expects": "test_null_pointer_arguments_run_as_the_original_on_both_rails",
       "label": "TN2 the twin types no argument of a same-unit definition",
-      "new": "      if(def) np=0;",
-      "old": "      if(def) np=def->n_params;",
+      "new": "const bcir_ctype *at=def?NULL:pt?&pt[a]:NULL;",
+      "old": "const bcir_ctype *at=def?&def->params[a].type:pt?&pt[a]:NULL;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

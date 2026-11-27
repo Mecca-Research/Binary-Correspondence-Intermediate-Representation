@@ -44,6 +44,7 @@ NAMES = (
     "iso646.h",
     "stdalign.h",
     "stdckdint.h",
+    "stdbit.h",
     "math.h",
 )
 
@@ -318,6 +319,100 @@ def _stdckdint(abi: TargetABI) -> list[str]:
     ]
 
 
+#: <stdbit.h>'s operations (C23 7.18.3-7.18.16), in the standard's order, and each one's result: a count (`unsigned
+#: int`), a `bool`, or a value of the argument's type
+_STDBIT_OPS = (
+    "leading_zeros",
+    "leading_ones",
+    "trailing_zeros",
+    "trailing_ones",
+    "first_leading_zero",
+    "first_leading_one",
+    "first_trailing_zero",
+    "first_trailing_one",
+    "count_zeros",
+    "count_ones",
+    "has_single_bit",
+    "bit_width",
+    "bit_floor",
+    "bit_ceil",
+)
+
+
+def _stdbit(abi: TargetABI) -> list[str]:
+    # C23's bit utilities (7.18), each typed function a `static inline` one in the subset's own C over the integer
+    # builtins both rails lower verbatim, so a unit's calls are ordinary calls of functions it defines: a builtin's
+    # count is taken in its own type's width and narrowed to the argument's, a zero argument's count is the width,
+    # and `bit_ceil` of a value whose ceiling the type cannot hold is 0, as glibc's is for the narrow types and C23
+    # leaves unspecified. The type-generic forms select the typed function by `_Generic` (CSUB-3)
+    long_bits = 8 * abi.long_size
+    out = [
+        "#define __STDC_VERSION_STDBIT_H__ 202311L",
+        "#define __STDC_ENDIAN_LITTLE__ 1234",
+        "#define __STDC_ENDIAN_BIG__ 4321",
+        f"#define __STDC_ENDIAN_NATIVE__ {1234 if abi.endian == 'little' else 4321}",
+    ]
+    types = (
+        ("uc", "unsigned char", 8, ""),
+        ("us", "unsigned short", 16, ""),
+        ("ui", "unsigned int", 32, ""),
+        ("ul", "unsigned long", long_bits, "l"),
+        ("ull", "unsigned long long", 64, "ll"),
+    )
+    for suf, ty, w, b in types:
+        pad = (32 if b == "" else long_bits if b == "l" else 64) - w
+        clz = f"(unsigned int)__builtin_clz{b}(x)" + (f" - {pad}u" if pad else "")
+        ones = f"(({ty})~({ty})0)"
+        body = {
+            "leading_zeros": f"return x ? {clz} : {w}u;",
+            "leading_ones": f"return stdc_leading_zeros_{suf}(({ty})~x);",
+            "trailing_zeros": f"return x ? (unsigned int)__builtin_ctz{b}(x) : {w}u;",
+            "trailing_ones": f"return stdc_trailing_zeros_{suf}(({ty})~x);",
+            "first_leading_zero": f"return x == {ones} ? 0u : stdc_leading_ones_{suf}(x) + 1u;",
+            "first_leading_one": f"return x ? stdc_leading_zeros_{suf}(x) + 1u : 0u;",
+            "first_trailing_zero": f"return x == {ones} ? 0u : stdc_trailing_ones_{suf}(x) + 1u;",
+            "first_trailing_one": f"return x ? stdc_trailing_zeros_{suf}(x) + 1u : 0u;",
+            "count_zeros": f"return {w}u - stdc_count_ones_{suf}(x);",
+            "count_ones": f"return (unsigned int)__builtin_popcount{b}(x);",
+            "has_single_bit": f"return stdc_count_ones_{suf}(x) == 1u;",
+            "bit_width": f"return {w}u - stdc_leading_zeros_{suf}(x);",
+            "bit_floor": f"return x ? ({ty})(({ty})1 << (stdc_bit_width_{suf}(x) - 1u)) : ({ty})0;",
+            "bit_ceil": f"return x <= 1u ? ({ty})1 : stdc_bit_width_{suf}(({ty})(x - 1u)) >= {w}u ? ({ty})0"
+            f" : ({ty})(({ty})1 << stdc_bit_width_{suf}(({ty})(x - 1u)));",
+        }
+        # defined in dependency order: each body calls only the ones above it
+        for op in (
+            "leading_zeros",
+            "leading_ones",
+            "trailing_zeros",
+            "trailing_ones",
+            "first_leading_zero",
+            "first_leading_one",
+            "first_trailing_zero",
+            "first_trailing_one",
+            "count_ones",
+            "count_zeros",
+            "has_single_bit",
+            "bit_width",
+            "bit_floor",
+            "bit_ceil",
+        ):
+            ret = (
+                "_Bool"
+                if op == "has_single_bit"
+                else ty
+                if op in ("bit_floor", "bit_ceil")
+                else "unsigned int"
+            )
+            out.append(f"static inline {ret} stdc_{op}_{suf}({ty} x) {{ {body[op]} }}")
+    for op in _STDBIT_OPS:
+        out.append(
+            f"#define stdc_{op}(x) _Generic((x), unsigned char: stdc_{op}_uc, unsigned short: stdc_{op}_us,"
+            f" unsigned int: stdc_{op}_ui, unsigned long: stdc_{op}_ul, unsigned long long: stdc_{op}_ull)(x)"
+        )
+    return out
+
+
 def _math(abi: TargetABI) -> list[str]:
     # the constants and the classification macros, spelled as glibc spells them: `isinf` its sign-returning builtin
     return [
@@ -343,6 +438,7 @@ _BUILDERS = {
     "iso646.h": _iso646,
     "stdalign.h": _stdalign,
     "stdckdint.h": _stdckdint,
+    "stdbit.h": _stdbit,
     "math.h": _math,
 }
 

@@ -1181,6 +1181,73 @@ static void h_stdckdint(hbuf *b) {   /* C23's checked arithmetic (7.20) as Clang
   hput(b, "#define ckd_sub(R, A, B) __builtin_sub_overflow((A), (B), (R))");
   hput(b, "#define ckd_mul(R, A, B) __builtin_mul_overflow((A), (B), (R))");
 }
+/* C23's bit utilities (7.18), the oracle's `stdheaders._stdbit` line for line: each typed function a `static inline`
+ * one in the subset's own C over the integer builtins both rails lower verbatim -- a builtin's count taken in its own
+ * type's width and narrowed to the argument's, a zero argument's count the width, `bit_ceil` of a value whose ceiling
+ * the type cannot hold 0 -- and the type-generic forms a `_Generic` of them (CSUB-3). */
+static const char *const stdbit_ops[] = {"leading_zeros", "leading_ones", "trailing_zeros", "trailing_ones",
+                                         "first_leading_zero", "first_leading_one", "first_trailing_zero",
+                                         "first_trailing_one", "count_zeros", "count_ones", "has_single_bit",
+                                         "bit_width", "bit_floor", "bit_ceil", 0};
+/* ... in the order they are defined: each body calls only those before it */
+static const char *const stdbit_defs[] = {"leading_zeros", "leading_ones", "trailing_zeros", "trailing_ones",
+                                          "first_leading_zero", "first_leading_one", "first_trailing_zero",
+                                          "first_trailing_one", "count_ones", "count_zeros", "has_single_bit",
+                                          "bit_width", "bit_floor", "bit_ceil", 0};
+static void h_stdbit(const CppState *st, hbuf *b) {
+  int long_bits = 8 * st->long_size;
+  hput(b, "#define __STDC_VERSION_STDBIT_H__ 202311L");
+  hput(b, "#define __STDC_ENDIAN_LITTLE__ 1234");
+  hput(b, "#define __STDC_ENDIAN_BIG__ 4321");
+  hput(b, "#define __STDC_ENDIAN_NATIVE__ 1234");          /* every target of the matrix is little-endian */
+  static const struct { const char *suf, *ty, *b; int w; } T[] = {
+    {"uc", "unsigned char", "", 8}, {"us", "unsigned short", "", 16}, {"ui", "unsigned int", "", 32},
+    {"ul", "unsigned long", "l", 0}, {"ull", "unsigned long long", "ll", 64}};
+  for (size_t t = 0; t < sizeof T / sizeof T[0]; t++) {
+    const char *suf = T[t].suf, *ty = T[t].ty, *bs = T[t].b;
+    int w = T[t].w ? T[t].w : long_bits;
+    int pad = (bs[0] == 0 ? 32 : bs[1] == 0 ? long_bits : 64) - w;
+    char clz[64], ones[64];
+    if (pad) snprintf(clz, sizeof clz, "(unsigned int)__builtin_clz%s(x) - %du", bs, pad);
+    else snprintf(clz, sizeof clz, "(unsigned int)__builtin_clz%s(x)", bs);
+    snprintf(ones, sizeof ones, "((%s)~(%s)0)", ty, ty);
+    for (int k = 0; stdbit_defs[k]; k++) {
+      const char *op = stdbit_defs[k];
+      const char *ret = !strcmp(op, "has_single_bit") ? "_Bool"
+                        : (!strcmp(op, "bit_floor") || !strcmp(op, "bit_ceil")) ? ty : "unsigned int";
+      char body[256];
+      if (!strcmp(op, "leading_zeros")) snprintf(body, sizeof body, "return x ? %s : %du;", clz, w);
+      else if (!strcmp(op, "leading_ones")) snprintf(body, sizeof body, "return stdc_leading_zeros_%s((%s)~x);", suf, ty);
+      else if (!strcmp(op, "trailing_zeros"))
+        snprintf(body, sizeof body, "return x ? (unsigned int)__builtin_ctz%s(x) : %du;", bs, w);
+      else if (!strcmp(op, "trailing_ones")) snprintf(body, sizeof body, "return stdc_trailing_zeros_%s((%s)~x);", suf, ty);
+      else if (!strcmp(op, "first_leading_zero"))
+        snprintf(body, sizeof body, "return x == %s ? 0u : stdc_leading_ones_%s(x) + 1u;", ones, suf);
+      else if (!strcmp(op, "first_leading_one"))
+        snprintf(body, sizeof body, "return x ? stdc_leading_zeros_%s(x) + 1u : 0u;", suf);
+      else if (!strcmp(op, "first_trailing_zero"))
+        snprintf(body, sizeof body, "return x == %s ? 0u : stdc_trailing_ones_%s(x) + 1u;", ones, suf);
+      else if (!strcmp(op, "first_trailing_one"))
+        snprintf(body, sizeof body, "return x ? stdc_trailing_zeros_%s(x) + 1u : 0u;", suf);
+      else if (!strcmp(op, "count_zeros")) snprintf(body, sizeof body, "return %du - stdc_count_ones_%s(x);", w, suf);
+      else if (!strcmp(op, "count_ones")) snprintf(body, sizeof body, "return (unsigned int)__builtin_popcount%s(x);", bs);
+      else if (!strcmp(op, "has_single_bit")) snprintf(body, sizeof body, "return stdc_count_ones_%s(x) == 1u;", suf);
+      else if (!strcmp(op, "bit_width")) snprintf(body, sizeof body, "return %du - stdc_leading_zeros_%s(x);", w, suf);
+      else if (!strcmp(op, "bit_floor"))
+        snprintf(body, sizeof body, "return x ? (%s)((%s)1 << (stdc_bit_width_%s(x) - 1u)) : (%s)0;", ty, ty, suf, ty);
+      else
+        snprintf(body, sizeof body, "return x <= 1u ? (%s)1 : stdc_bit_width_%s((%s)(x - 1u)) >= %du ? (%s)0"
+                 " : (%s)((%s)1 << stdc_bit_width_%s((%s)(x - 1u)));", ty, suf, ty, w, ty, ty, ty, suf, ty);
+      hput(b, "static inline %s stdc_%s_%s(%s x) { %s }", ret, op, suf, ty, body);
+    }
+  }
+  for (int k = 0; stdbit_ops[k]; k++) {
+    const char *op = stdbit_ops[k];
+    hput(b, "#define stdc_%s(x) _Generic((x), unsigned char: stdc_%s_uc, unsigned short: stdc_%s_us,"
+         " unsigned int: stdc_%s_ui, unsigned long: stdc_%s_ul, unsigned long long: stdc_%s_ull)(x)",
+         op, op, op, op, op, op);
+  }
+}
 static void h_math(hbuf *b) {
   hput(b, "#define NAN (__builtin_nanf(\"\"))"); hput(b, "#define INFINITY (__builtin_inff())");
   hput(b, "#define HUGE_VAL (__builtin_huge_val())"); hput(b, "#define HUGE_VALF (__builtin_huge_valf())");
@@ -1190,7 +1257,7 @@ static void h_math(hbuf *b) {
   hput(b, "#define isnormal(x) __builtin_isnormal(x)");
 }
 static const char *const builtin_names[] = {"stdint.h", "stddef.h", "stdbool.h", "limits.h", "float.h", "iso646.h",
-                                            "stdalign.h", "stdckdint.h", "math.h", 0};
+                                            "stdalign.h", "stdckdint.h", "stdbit.h", "math.h", 0};
 static int builtin_known(const char *name) {
   for (int k = 0; builtin_names[k]; k++) if (!strcmp(builtin_names[k], name)) return 1;
   return 0;
@@ -1214,6 +1281,7 @@ static int builtin_header(CppState *st, const char *name) {
   else if (!strcmp(name, "iso646.h")) h_iso646(&b);
   else if (!strcmp(name, "stdalign.h")) h_stdalign(&b);
   else if (!strcmp(name, "stdckdint.h")) h_stdckdint(&b);
+  else if (!strcmp(name, "stdbit.h")) h_stdbit(st, &b);
   else h_math(&b);
   hput(&b, "#endif");
   if (b.full) { cpp_limit(st, "standard header text too large"); return 0; }

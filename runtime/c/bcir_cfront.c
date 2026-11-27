@@ -2724,6 +2724,23 @@ static uint32_t null_pointer(CC *c, uint32_t v, const bcir_ctype *ty){
  * not known at the call -- so this runs once the unit is parsed, reading the callee's definition in the unit,
  * whichever comes first, else its prototype. A variadic callee's extra actuals have no parameter and keep their
  * type. Only the temps' C types move (the oracle's `_null_pointer_args`, CF-NULLARG). */
+/* A `_Generic` whose controlling type no association names and that has no `default`: the oracle's words (CSUB-3) */
+#define CC_GENERIC_NONE "no _Generic association matches the controlling expression's type"
+#define CC_ARGC_FEW "too few arguments to function call"     /* the oracle's `ARGC_FEW` (CF-ARGC) */
+#define CC_ARGC_MANY "too many arguments to function call"   /* the oracle's `ARGC_MANY` */
+/* A call of a function with a prototype passes as many arguments as it has parameters, `np`, and at least as many
+ * where it ends in `...` (C11 6.5.2.2p2; C23 reads `T f()` as `T f(void)`): both rails had lowered `g()` of a
+ * `g(unsigned x)`, an emit no compiler builds, where Clang refuses the source (the oracle's `_check_arity`). */
+static int argc_agrees(CC *c, int na, int np, int variadic){
+  if(na<np){ fail(c,CC_ARGC_FEW); return 0; }
+  if(na>np && !variadic){ fail(c,CC_ARGC_MANY); return 0; }
+  return 1;
+}
+/* `argc_agrees` for a call through a function pointer whose function type is `sig` (1 + its index in `sigs`). */
+static int argc_sig(CC *c, int sig, int na){
+  if(sig<=0 || sig>c->nsig) return 1;
+  return argc_agrees(c,na,c->sigs[sig-1].n_params,c->sigs[sig-1].variadic);
+}
 static void null_pointer_args(CC *c, bcir_unit *u){
   bcir_func *cur=c->fn;
   for(int i=0;i<u->n_funcs;i++){ c->fn=&u->funcs[i];
@@ -2732,11 +2749,13 @@ static void null_pointer_args(CC *c, bcir_unit *u){
       else if(!strncmp(cl->op,"c.call.void:",12)) callee=cl->op+12;
       else if(!strncmp(cl->op,"c.call.tu:",10)) callee=cl->op+10;
       else continue;
-      const bcir_func *def=NULL; const bcir_ctype *pt=NULL; int np=0;
+      const bcir_func *def=NULL; const bcir_ctype *pt=NULL; int np=0, va=0, known=0;
       for(int j=0;j<u->n_funcs && !def;j++) if(!strcmp(u->funcs[j].name,callee)) def=&u->funcs[j];
-      if(def) np=def->n_params;
+      if(def){ np=def->n_params; va=def->variadic; known=1; }
       else for(int j=0;j<c->n_protos;j++)
-        if(!strcmp(c->protos[j].name,callee)){ pt=c->protos[j].params; np=c->protos[j].n_params; break; }
+        if(!strcmp(c->protos[j].name,callee)){ pt=c->protos[j].params; np=c->protos[j].n_params;
+          va=c->protos[j].variadic; known=1; break; }
+      if(known && !argc_agrees(c,cl->n_rd,np,va)){ c->fn=cur; return; }   /* (CF-ARGC) */
       for(int a=0;a<cl->n_rd && a<np;a++){ const bcir_ctype *at=def?&def->params[a].type:pt?&pt[a]:NULL;
         if(at && at->kind!=1 && !at->is_valist && !scalar_value_ok(c,cl->rd[a])){ c->fn=cur; return; }   /* `g(a)` of a
                                                           * struct for a scalar parameter (CF-STRUCTARITH) */
@@ -2750,7 +2769,7 @@ static void null_pointer_args(CC *c, bcir_unit *u){
  * in a direct call, so a null pointer constant passed to a pointer parameter is that parameter's pointer (the
  * oracle's `_null_pointer_args` over the pointer's parameters, CF-NULLCALL). */
 static void null_pointer_sig(CC *c, int sig, const uint32_t *args, int na){
-  if(sig<=0 || sig>c->nsig) return;
+  if(sig<=0 || sig>c->nsig || !argc_sig(c,sig,na)) return;   /* as many arguments as it has parameters (CF-ARGC) */
   const fsig *s=&c->sigs[sig-1];
   for(int k=0;k<na && k<s->n_params;k++){
     if(s->params[k].kind!=1 && !s->params[k].is_valist && !scalar_value_ok(c,args[k])) return;   /* a struct argument
@@ -5620,7 +5639,7 @@ static uint32_t p_generic(CC *c){
   if(!eat(c,")"))return 0;
   int after=c->i;
   if(sel_at<0) sel_at=def_at;
-  if(sel_at<0){ fail(c,"no _Generic association matches the controlling type"); return 0; }
+  if(sel_at<0){ fail(c,CC_GENERIC_NONE); return 0; }
   c->i=sel_at; uint32_t r=p_expr(c); c->i=after;       /* lower ONLY the chosen association, for real */
   return r;
 }

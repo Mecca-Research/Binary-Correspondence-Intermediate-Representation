@@ -22,7 +22,10 @@ from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
 from bcir.frontends.cfront.lower import (
+    ARGC_FEW,
+    ARGC_MANY,
     ATTR_VENDOR,
+    GENERIC_NONE,
     ROW_ADDR,
     ROW_PTR_ELEM,
     ROW_PTR_PLACE,
@@ -9938,12 +9941,27 @@ def _std_probes(abi) -> list:
     return out
 
 
-def _std_probe_unit(probes, libc: bool = True) -> str:
-    """The probe unit: every header included -- but `<math.h>` only where a C library is (`libc`): a freestanding
-    implementation has none, and its constants are checked against the host's -- then one line per probe."""
+#: The headers a compiler's own freestanding headers do not hold, which a hosted C library supplies: `<math.h>`, and
+#: C23's `<stdbit.h>`, freestanding in C23 but in no Clang resource directory -- glibc's spells its type-generic forms
+#: through its own helpers, so its expansions are held to on the glibc host, by value (CSUB-3)
+_LIBC_HEADERS = ("math.h", "stdbit.h")
+
+
+def _std_probe_unit(probes, libc: bool = True, host: bool = False) -> str:
+    """The probe unit: every header included -- but `<math.h>` and `<stdbit.h>` only where a C library is (`libc`):
+    a freestanding implementation has neither, and their macros are checked against the host's -- then one line per
+    probe. For the host's own C library (`host`), `<stdbit.h>` only where it has one: glibc's came in 2.39."""
     from bcir.frontends.cfront import stdheaders
 
-    head = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if libc or h != "math.h")
+    head = "".join(
+        (
+            f"#if __has_include(<{h}>)\n#include <{h}>\n#endif\n"
+            if host and h == "stdbit.h"
+            else f"#include <{h}>\n"
+        )
+        for h in stdheaders.NAMES
+        if libc or h not in _LIBC_HEADERS
+    )
     return head + "".join(f"@ {k} @ {probe}\n" for k, (_h, _n, probe) in enumerate(probes))
 
 
@@ -10011,7 +10029,8 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
     equals Clang's in value and type, read through the target's own headers (`--target`, freestanding), but where C
     types it otherwise than Clang's freestanding headers do (`UINT8_C`, `UINT16_C`, Windows' `wchar_t` and `wint_t`
     limits: value only); every other one expands to Clang's tokens; and on a glibc host, the C library's headers
-    agree on what the freestanding ones leave to it -- `MB_LEN_MAX`, those types, and `<math.h>`'s constants -- for
+    agree on what the freestanding ones leave to it -- `MB_LEN_MAX`, those types, `<math.h>`'s constants and, where
+    it has the header, `<stdbit.h>`'s (its type-generic forms are held to it by value: `test_stdbit_...`) -- for
     the target the host is (`_glibc_host_target`): an AArch64 host's glibc spells an unsigned `wchar_t`'s limits,
     an x86-64 host's a signed one's."""
     from bcir.frontends.cfront import stdheaders
@@ -10043,6 +10062,8 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
         asserts, mismatched = [], []
         for k, (h, macro, probe) in enumerate(probes):
             e = " ".join(ours[k])
+            if h in _LIBC_HEADERS:
+                continue  # the hosted C library's: checked against glibc below
             if _is_int_expansion(ours[k]):
                 if macro == "MB_LEN_MAX":
                     continue  # the hosted C library's: checked against glibc below
@@ -10060,15 +10081,19 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
                         f" && __builtin_types_compatible_p(__typeof__({probe}), __typeof__({e}))"
                     )
                 asserts.append(f'_Static_assert({cond}, "{macro}");')
-            elif h != "math.h" and clang.get(k) != ours[k]:
+            elif clang.get(k) != ours[k]:
                 mismatched.append((macro, ours[k], clang.get(k)))
         assert not mismatched, (name, mismatched)
-        includes = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if h != "math.h")
+        includes = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if h not in _LIBC_HEADERS)
         verdict = _clang_syntax(includes + "\n".join(asserts) + "\n", abi, hosted=False)
         assert not verdict, (name, verdict)
         if name == host:  # the host's C library: what the freestanding headers leave to it
             hosted_checked = True
-            hosted = _clang_expansions(unit, abi, hosted=True)
+            hosted = _clang_expansions(
+                "struct __probe { int a; short b[4]; };\n" + _std_probe_unit(probes, host=True),
+                abi,
+                hosted=True,
+            )
             math = [
                 (n, ours[k], hosted.get(k)) for k, (h, n, _p) in enumerate(probes) if h == "math.h"
             ]
@@ -10079,7 +10104,8 @@ def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_t
                 for k, (_h, n, p) in enumerate(probes)
                 if _is_int_expansion(ours[k])
             ]
-            verdict = _clang_syntax(includes + "\n".join(checks) + "\n", abi, hosted=True)
+            libc = "#if __has_include(<stdbit.h>)\n#include <stdbit.h>\n#endif\n"
+            verdict = _clang_syntax(includes + libc + "\n".join(checks) + "\n", abi, hosted=True)
             assert not verdict, (name, verdict)
     if host is not None and shutil.which("clang"):
         assert hosted_checked, (
@@ -15480,6 +15506,343 @@ def test_checked_arithmetic_is_the_overflow_builtin_on_both_rails():
     for src, why in _CKD_REFUSED:
         assert _clang_c23_accepts(src) in (False, None) or "volatile" in src, src
         _refused_alike(exe, src, why, phase="PARSE")
+
+
+# CSUB-3: C23's bit utilities. Both rails read `<stdbit.h>` (7.18) as one text for the target -- the endian macros
+# and, for each of the five standard unsigned types, its fourteen typed functions as `static inline` functions in the
+# subset's own C over the integer builtins both rails lower verbatim (a narrow type's count taken in the builtin's
+# width and narrowed, a zero argument's the width, `bit_ceil` of a value whose ceiling the type cannot hold 0), and
+# each type-generic form a `_Generic` of them. Neither rail had the header: `stdc_leading_zeros(x)` was a call of an
+# undeclared function on both.
+_STDBIT_TYPES = (
+    ("uc", "unsigned char", 8),
+    ("us", "unsigned short", 16),
+    ("ui", "unsigned int", 32),
+    ("ul", "unsigned long", None),  # the target's `long`
+    ("ull", "unsigned long long", 64),
+)
+
+
+def _stdbit_typed_unit(suf: str, ty: str) -> str:
+    """Each typed function of `ty` over six values -- 0, 1, all ones, two of `k`'s and a single bit -- folded into one
+    result; `bit_ceil` only where the ceiling fits, which C23 leaves to the implementation (glibc's wide forms
+    shift past the width)."""
+    from bcir.frontends.cfront import stdheaders
+
+    vals = (
+        f"({ty})0",
+        f"({ty})1",
+        f"({ty})~({ty})0",
+        f"({ty})k",
+        f"({ty})(k * 2654435761u)",
+        f"({ty})(({ty})1 << (k % (8u * sizeof({ty}))))",
+    )
+    calls = "".join(
+        f"    acc = acc * 31u + (uint64_t)stdc_{op}_{suf}(v[i]);\n"
+        for op in stdheaders._STDBIT_OPS
+        if op != "bit_ceil"
+    )
+    return (
+        "#include <stdint.h>\n#include <stdbit.h>\nuint64_t f(uint32_t k) {\n  uint64_t acc = 0u;\n"
+        f"  {ty} v[6] = {{ {', '.join(vals)} }};\n  for (uint32_t i = 0; i < 6u; i++) {{\n{calls}"
+        f"    if (v[i] <= ((({ty})~({ty})0) >> 1) + 1u) acc = acc * 31u + (uint64_t)stdc_bit_ceil_{suf}(v[i]);\n"
+        "  }\n  return acc;\n}\n"
+    )
+
+
+def _stdbit_generic_unit() -> str:
+    """Each type-generic form of a value of each type, and the endian and version macros."""
+    from bcir.frontends.cfront import stdheaders
+
+    vals = (
+        ("c", "unsigned char"),
+        ("s", "unsigned short"),
+        ("u", "unsigned int"),
+        ("l", "unsigned long"),
+        ("w", "unsigned long long"),
+    )
+    lines = [
+        f"  acc = acc * 31u + (uint64_t)stdc_{op}({v});\n"
+        if op != "bit_ceil"
+        else f"  acc = acc * 31u + (uint64_t)stdc_bit_ceil(({ty})({v} >> 1));\n"
+        for op in stdheaders._STDBIT_OPS
+        for v, ty in vals
+    ]
+    return (
+        "#include <stdint.h>\n#include <stdbit.h>\nuint64_t f(uint32_t k) {\n"
+        "  unsigned char c = (unsigned char)k; unsigned short s = (unsigned short)(k * 7u);"
+        " unsigned int u = k * 2654435761u;\n  unsigned long l = (unsigned long)k << 5;"
+        " unsigned long long w = (unsigned long long)k * 0x9E3779B97F4A7C15ull;\n  uint64_t acc = 0u;\n"
+        + "".join(lines)
+        + "  return acc + __STDC_ENDIAN_NATIVE__ + (__STDC_ENDIAN_NATIVE__ == __STDC_ENDIAN_LITTLE__)"
+        " + __STDC_VERSION_STDBIT_H__ % 7;\n}\n"
+    )
+
+
+# ... and the idioms a runtime unit writes with them: a power-of-two capacity, an integer log2, a scan of a bitmap's set
+# bits, a byte order chosen by the endian macros
+_STDBIT_IDIOMS = tuple(
+    "#include <stdint.h>\n#include <stddef.h>\n#include <stdbit.h>\n" + body
+    for body in (
+        "uint32_t f(uint32_t k){ uint32_t n = k % 5000u; uint32_t cap = stdc_bit_ceil(n | 1u);"
+        " return cap + (stdc_has_single_bit(cap) ? 1u : 0u) + stdc_bit_floor(n); }\n",
+        "uint32_t f(uint32_t k){ uint64_t x = (uint64_t)k * 0x10001u + 1u; return stdc_bit_width(x) - 1u; }\n",
+        "uint32_t f(uint32_t k){ uint64_t m = (uint64_t)k * 0x9E3779B97F4A7C15ull; uint32_t r = 0u;"
+        " while (m) { r = r * 3u + stdc_trailing_zeros(m); m &= m - 1u; } return r; }\n",
+        "uint32_t f(uint32_t k){ uint8_t b[4] = {(uint8_t)k, (uint8_t)(k >> 8), (uint8_t)(k >> 16), (uint8_t)(k >> 24)};"
+        " uint32_t v = 0u;\n#if __STDC_ENDIAN_NATIVE__ == __STDC_ENDIAN_LITTLE__\n"
+        " for (int i = 3; i >= 0; i--) v = v << 8 | b[i];\n#else\n for (int i = 0; i < 4; i++) v = v << 8 | b[i];\n#endif\n"
+        " return v ^ stdc_count_ones(v); }\n",
+        "uint32_t f(uint32_t k){ size_t n = (size_t)k; return (uint32_t)stdc_leading_zeros(n)"
+        " + (uint32_t)stdc_first_leading_one((uint16_t)k) + stdc_count_zeros((uint8_t)k); }\n",
+    )
+)
+# ... and C23's constraint, that a type-generic form's argument is of an unsigned integer type other than `bool`
+# (7.18.1p3), is `_Generic`'s on both rails: a signed, `bool`, floating or pointer argument names no association
+_STDBIT_REFUSED = tuple(
+    "#include <stdint.h>\n#include <stdbool.h>\n#include <stdbit.h>\nuint32_t f(uint32_t k){ "
+    + body
+    + " }\n"
+    for body in (
+        "return stdc_count_ones((int)k);",
+        "return stdc_count_ones((bool)k);",
+        "return stdc_leading_zeros(1);",
+        "return stdc_bit_width(k * 1.0);",
+        "uint32_t x = k; return stdc_count_ones(&x);",
+        "return stdc_bit_floor((int64_t)k);",
+    )
+)
+
+
+def _stdbit_model(op: str, w: int, x: int) -> int:
+    """C23 7.18.3-7.18.16 of the `w`-bit value `x`, in Python: the model the typed functions are held to."""
+    mask = (1 << w) - 1
+    pop = bin(x).count("1")
+
+    def lz(v):
+        return w - v.bit_length()
+
+    def tz(v):
+        return w if v == 0 else (v & -v).bit_length() - 1
+
+    return {
+        "leading_zeros": lz(x),
+        "leading_ones": lz(~x & mask),
+        "trailing_zeros": tz(x),
+        "trailing_ones": tz(~x & mask),
+        "first_leading_zero": 0 if x == mask else lz(~x & mask) + 1,
+        "first_leading_one": 0 if x == 0 else lz(x) + 1,
+        "first_trailing_zero": 0 if x == mask else tz(~x & mask) + 1,
+        "first_trailing_one": 0 if x == 0 else tz(x) + 1,
+        "count_zeros": w - pop,
+        "count_ones": pop,
+        "has_single_bit": int(pop == 1),
+        "bit_width": x.bit_length(),
+        "bit_floor": 0 if x == 0 else 1 << (x.bit_length() - 1),
+        "bit_ceil": 1 if x <= 1 else 0 if (x - 1).bit_length() >= w else 1 << (x - 1).bit_length(),
+    }[op]
+
+
+def _stdbit_model_values(w: int) -> list:
+    """The values each `w`-bit function is run on: every single bit and every run of low ones and their complements,
+    0, the half point and its neighbours, and a few mixed patterns."""
+    mask = (1 << w) - 1
+    vals = {0, 1, 2, 3, mask, mask - 1, 1 << (w - 1), (1 << (w - 1)) + 1, (1 << (w - 1)) - 1}
+    for i in range(w):
+        vals |= {1 << i, (1 << i) - 1, mask ^ (1 << i), mask ^ ((1 << i) - 1)}
+    vals |= {0x5A5A5A5A5A5A5A5A & mask, 0x9E3779B97F4A7C15 & mask, 0x0123456789ABCDEF & mask}
+    return sorted(vals)
+
+
+def test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s():
+    """CSUB-3. `<stdbit.h>` is one text on both rails for each of the five targets -- its seventy typed functions and
+    fourteen type-generic forms' expansions, the version, and the target's byte order in `__STDC_ENDIAN_NATIVE__` -- and its
+    typed functions compute what C23 7.18 says they compute: each, built for the host by the host's compiler, of
+    every single bit, every run of low ones, their complements and the half points of its type, equals a Python
+    model of the clause, `bit_ceil` of a value whose ceiling its type cannot hold 0."""
+    import platform
+
+    from bcir.frontends.cfront import stdheaders
+    from bcir.frontends.cfront.abi import TARGETS
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for name, abi in TARGETS.items():
+        text = stdheaders.header_text("stdbit.h", abi)
+        assert text.count("static inline ") == 70 and text.count("_Generic") == 14, name
+        native = 1234 if abi.endian == "little" else 4321
+        assert f"#define __STDC_ENDIAN_NATIVE__ {native}\n" in text, name
+        # the text, and each macro's expansion: a directive leaves no tokens of its own
+        unit = "#include <stdbit.h>\n" + "".join(
+            f"@ {k} @ {probe}\n"
+            for k, probe in enumerate(
+                (
+                    *(f"stdc_{op}(x)" for op in stdheaders._STDBIT_OPS),
+                    "__STDC_VERSION_STDBIT_H__",
+                    "__STDC_ENDIAN_LITTLE__ __STDC_ENDIAN_BIG__ __STDC_ENDIAN_NATIVE__",
+                )
+            )
+        )
+        ours = _cpp._tokens(_cpp.preprocess(unit, abi=abi))
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "stdbit.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            r = subprocess.run(
+                [exe, "--target", name, "--emit-cpp", path], capture_output=True, text=True
+            )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _cpp._tokens(r.stdout) == ours, name
+    if not _CC:
+        return
+    long_bits = 64 if sys.platform != "win32" and platform.architecture()[0] == "64bit" else 32
+    host = TARGETS[
+        "x86_64-windows"
+        if sys.platform == "win32"
+        else "x86_64-linux"
+        if long_bits == 64
+        else "i386-linux"
+    ]
+    cases, prints = [], []
+    for suf, ty, w in _STDBIT_TYPES:
+        w = 8 * host.long_size if w is None else w
+        for op in stdheaders._STDBIT_OPS:
+            for x in _stdbit_model_values(w):
+                cases.append(_stdbit_model(op, w, x))
+                prints.append(
+                    f'  printf("%llu\\n", (unsigned long long)stdc_{op}_{suf}(({ty}){x}ull));\n'
+                )
+    src = (
+        "#include <stdio.h>\n"
+        + stdheaders.header_text("stdbit.h", host)
+        + "\nint main(void) {\n"
+        + "".join(prints)
+        + "  return 0;\n}\n"
+    )
+    with tempfile.TemporaryDirectory() as d:
+        c, e = os.path.join(d, "m.c"), os.path.join(d, "m")
+        with open(c, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        b = subprocess.run(
+            host_link_args([_CC, "-std=c11", "-O1", c, "-o", e]), capture_output=True, text=True
+        )
+        assert b.returncode == 0, b.stderr[-2000:]
+        got = subprocess.run([e], capture_output=True, text=True).stdout.split()
+    assert [int(g) for g in got] == cases, next(
+        (k, prints[k], got[k], cases[k])
+        for k in range(len(cases))
+        if k >= len(got) or int(got[k]) != cases[k]
+    )
+
+
+def _host_stdbit() -> bool:
+    """Whether the host's C compiler and library have `<stdbit.h>`: glibc's came in 2.39, and a unit's run against its
+    build is the differential the rails' text is held to."""
+    if not _CC:
+        return False
+    r = subprocess.run(
+        [_CC, "-std=c11", "-fsyntax-only", "-x", "c", "-"],
+        input="#include <stdbit.h>\nint x = __STDC_VERSION_STDBIT_H__ > 0;\n",
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0
+
+
+def test_stdbit_lowers_alike_and_runs_as_the_c_librarys():
+    """CSUB-3. A unit of `<stdbit.h>` lowers alike on both rails, R18 clean: each typed function of each type, each
+    type-generic form of each type, the endian and version macros, and the idioms a runtime unit writes -- a
+    power-of-two capacity, an integer log2, a scan of a bitmap's set bits, a byte order chosen by the endian macros.
+    Where the host's C library has the header, each rail's emit runs as the host compiler's build of the source
+    against the library's own `<stdbit.h>` (`_equiv`), and compiles as C11 strictly. A type-generic form of a
+    signed, `bool`, floating or pointer argument, which C23 7.18.1p3 leaves out, is refused alike."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    libc = _host_stdbit()
+    units = (
+        *(_stdbit_typed_unit(suf, ty) for suf, ty, _w in _STDBIT_TYPES),
+        _stdbit_generic_unit(),
+        *_STDBIT_IDIOMS,
+    )
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(units):
+            if libc:
+                assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary and "funcs=71 " in summary, (src[-400:], summary)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"b{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src[-400:], twin_summary, summary)
+            if not libc:
+                continue
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src[-400:])
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    # (glibc's type-generic forms, spelled over its wide functions and `sizeof`, check no argument's type: Clang takes
+    # each of these against them, so the constraint is C23's, witnessed by the rails alone)
+    for src in _STDBIT_REFUSED:
+        _refused_alike(exe, src, GENERIC_NONE, phase="PARSE")
+
+
+# CF-ARGC: a call of a function with a prototype passes as many arguments as it has parameters, and at least as many
+# where it ends in `...` (C11 6.5.2.2p2; C23 reads `T f()` as `T f(void)`). Both rails had lowered `g()` of a
+# `g(unsigned x)` and `g(k, k)` of it -- to an emit no compiler builds, the source one Clang refuses -- through a
+# definition, a prototype, a function pointer object, a member, a table element and a select alike.
+_ARGC_HDR = "#include <stdint.h>\nstatic unsigned h(unsigned a){ return a + 1u; }\nunsigned ext(unsigned a);\n"
+_ARGC_REFUSED = tuple(
+    (_ARGC_HDR + body, why)
+    for body, why in (
+        ("uint32_t f(uint32_t k){ return h(); }\n", ARGC_FEW),
+        ("uint32_t f(uint32_t k){ return h(k, k); }\n", ARGC_MANY),
+        ("uint32_t f(uint32_t k){ return ext(k, 1u); }\n", ARGC_MANY),
+        ("uint32_t f(uint32_t k){ return ext(); }\n", ARGC_FEW),
+        ("static unsigned z(void){ return 1u; }\nuint32_t f(uint32_t k){ return z(k); }\n", ARGC_MANY),
+        ("static unsigned z(){ return 1u; }\nuint32_t f(uint32_t k){ return z(k); }\n", ARGC_MANY),
+        ("static void v(unsigned a){ (void)a; }\nuint32_t f(uint32_t k){ v(); return k; }\n", ARGC_FEW),
+        ("static unsigned va(unsigned a, ...){ return a; }\nuint32_t f(uint32_t k){ return va(); }\n", ARGC_FEW),
+        ("uint32_t f(uint32_t k){ unsigned (*p)(unsigned) = h; return p(k, k); }\n", ARGC_MANY),
+        ("struct o { unsigned (*fn)(unsigned); };\nuint32_t f(uint32_t k){ struct o t = { h }; return t.fn(); }\n",
+         ARGC_FEW),
+        ("struct o { unsigned (*fn)(unsigned); };\nuint32_t f(uint32_t k){ struct o t = { h }; struct o *q = &t;"
+         " return q->fn(k, k); }\n", ARGC_MANY),
+        ("static unsigned (*tab[1])(unsigned) = { h };\nuint32_t f(uint32_t k){ return tab[0](k, 1u); }\n",
+         ARGC_MANY),
+        ("uint32_t f(uint32_t k){ return (k ? h : h)(); }\n", ARGC_FEW),
+        ("uint32_t f(uint32_t k){ return (*h)(k, 1u); }\n", ARGC_MANY),
+        ("typedef unsigned (*fp)(unsigned, ...);\nstatic unsigned va(unsigned a, ...){ return a; }\n"
+         "uint32_t f(uint32_t k){ fp p = va; return p(); }\n", ARGC_FEW),
+        ("uint32_t g(uint32_t k);\nuint32_t f(uint32_t k){ return g(k, k); }\nuint32_t g(uint32_t k){ return k; }\n",
+         ARGC_MANY),
+    )
+)  # fmt: skip
+# ... and what agrees lowers as before: a variadic callee's extra arguments, a callee defined after its caller
+_ARGC_LOWERED = (
+    _ARGC_HDR + "static unsigned va(unsigned a, ...){ return a; }\n"
+    "uint32_t f(uint32_t k){ return va(k) + va(k, 2u, 3u) + h(k); }\n",
+    _ARGC_HDR
+    + "uint32_t g(uint32_t a, uint32_t b);\nuint32_t f(uint32_t k){ return g(k, 2u) + h(k); }\n"
+    "uint32_t g(uint32_t a, uint32_t b){ return a * b; }\n",
+)
+
+
+def test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails():
+    """CF-ARGC. A call of a function with a prototype -- defined, declared, through a function-pointer object, a
+    member, a table element, a select or a dereferenced designator -- passing fewer arguments than it has parameters,
+    or more where it does not end in `...`, is refused alike on both rails, in Clang's words, where both had lowered it
+    to an emit no compiler builds; Clang refuses each. A variadic callee's extra arguments and a callee defined after
+    its caller lower alike, as before."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for src, why in _ARGC_REFUSED:
+        assert _clang_c23_accepts(src) in (False, None), src
+        _refused_alike(exe, src, why, phase="PARSE")
+    for src in _ARGC_LOWERED:
+        assert _clang_c23_accepts(src) in (True, None), src
+        assert " ok=1 " in _lowers_alike(exe, src), src
 
 
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through

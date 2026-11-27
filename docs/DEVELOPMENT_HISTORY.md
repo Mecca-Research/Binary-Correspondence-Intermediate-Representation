@@ -313,6 +313,44 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-27 — CSUB-3b: `<stdbit.h>` on both rails, and a call's arguments counted (CF-ARGC).**
+  - Both rails read `<stdbit.h>` (C23 7.18) as one text for the target:
+    - the version and the endian macros, `__STDC_ENDIAN_NATIVE__` the target's byte order;
+    - for each of the five standard unsigned types, its fourteen typed functions, `static inline` functions in the
+      subset's own C over the integer builtins both rails lower verbatim. A narrow type's count is taken in the
+      builtin's width and narrowed, a zero argument's count is the width, and `bit_ceil` of a value whose ceiling
+      the type cannot hold is 0;
+    - each type-generic form a `_Generic` of them.
+
+    Neither rail had the header: `stdc_leading_zeros(x)` was a call of an undeclared function on both.
+  - What C23 7.18.1p3 leaves out -- a type-generic form of a signed, `bool`, floating or pointer argument -- names no
+    association, refused alike, now in one set of words; the twin had said `the controlling type`. glibc's
+    type-generic forms check no argument's type, so Clang takes each against them.
+  - **On the way, CF-ARGC.** Both rails had lowered a call of a function with a prototype that passed too few
+    arguments, or too many where it does not end in `...` -- `g()` of a `g(unsigned x)`, `g(k, k)` of it -- to an
+    emit no compiler builds, where Clang refuses the source. That covered a definition, a prototype, a
+    function-pointer object, a member, a table element, a select and a dereferenced designator. Each is refused now,
+    in Clang's words: `too few arguments to function call`, `too many arguments to function call`. The twin counts a
+    direct call's arguments once the unit is parsed, as it types their null pointers (CF-NULLARG). The oracle reads
+    the function type a pointer's value points at through `_fn_type`: a designator's value carries no parameters of
+    its own.
+  - **Evidence.**
+    - `test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s`: the text is token-identical on both rails
+      for the five targets. Each of the 70 typed functions, built for the host, equals a Python model of the clause
+      over every single bit, every run of low ones, their complements and the half points of its type.
+    - `test_stdbit_lowers_alike_and_runs_as_the_c_librarys`: 11 units lower alike and R18 clean -- each typed
+      function of each type, each type-generic form of each type, and five idioms (a power-of-two capacity, an
+      integer log2, a bitmap scan, a byte order by the endian macros, a `size_t` count). Each rail's emit runs as the
+      host compiler's build of the source against glibc's own `<stdbit.h>`, and compiles as C11 strictly. 6 forms are
+      refused alike.
+    - `test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails`: 16 calls refused alike
+      as Clang refuses them, 2 units lowered alike.
+  - The standard-header test leaves `<stdbit.h>` to the C library, as it does `<math.h>`: no Clang resource
+    directory has the header, and glibc spells its type-generic forms through its own helpers. On a glibc host its
+    constants are held to the library's by value and type.
+  - The ratchet stays at 46 of 68.
+  - **Standing faults.** `cfront-stdbit.json`, 25, each swept RED.
+
 - **2026-11-21 — N14: budgeted planning in the C planner.**
   - Tier 3 of the native port audit: on-target re-planning under a budget, `min M(pi) s.t. R(pi, Theta) <= B`.
     `bcir_kp_plan_budgeted` (`runtime/c/bcir_kplan.c`) is the twin of `kbcir.rcsp.optimize_constrained`. It runs
