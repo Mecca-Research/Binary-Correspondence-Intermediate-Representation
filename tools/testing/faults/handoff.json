@@ -169,7 +169,7 @@
       "expects": "handoff.shards.mismatches",
       "label": "C layout law: the trace no longer has to follow the segments (S1)",
       "new": "    if (s.err) return 0;",
-      "old": "    if (s.err || rd64(w->d + w->tr_start + (size_t)i * 24u) != claim) return 0;",
+      "old": "    if (s.err || bcir_ld64le(w->d + w->tr_start + (size_t)i * 24u) != claim) return 0;",
       "path": "runtime/c/bcir_shard_manifest.c"
     },
     {

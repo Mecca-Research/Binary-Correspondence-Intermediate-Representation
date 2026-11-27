@@ -6,6 +6,7 @@
  * signatures pin the result (tools/c/sections/plan_sign.sh, bcir/tests/test_plan_sign.py).
  *===----------------------------------------------------------------------===*/
 #include "bcir_ed25519.h"
+#include "bcir_bytes.h"
 
 /* --- SHA-512 (FIPS 180-4) ----------------------------------------------------------------- */
 
@@ -14,17 +15,10 @@ static const uint64_t sha512_iv[8] = {UINT64_C(0x6a09e667f3bcc908), UINT64_C(0xb
 
 static uint64_t ror64(uint64_t x, unsigned n) { return (x >> n) | (x << (64u - n)); }
 
-static uint64_t load64_be(const uint8_t *p) {
-  uint64_t v = 0;
-  unsigned i;
-  for (i = 0; i < 8u; i++) v = (v << 8) | p[i];
-  return v;
-}
-
 static void sha512_block(uint64_t h[8], const uint8_t block[128]) {
   uint64_t w[80], a, b, c, d, e, f, g, k, t1, t2;
   unsigned i;
-  for (i = 0; i < 16u; i++) w[i] = load64_be(block + 8u * i);
+  for (i = 0; i < 16u; i++) w[i] = bcir_ld64be(block + 8u * i);
   for (i = 16; i < 80u; i++) {
     uint64_t s0 = ror64(w[i - 15], 1) ^ ror64(w[i - 15], 8) ^ (w[i - 15] >> 7);
     uint64_t s1 = ror64(w[i - 2], 19) ^ ror64(w[i - 2], 61) ^ (w[i - 2] >> 6);

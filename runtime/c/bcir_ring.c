@@ -26,6 +26,7 @@
  * atomics, reports none).
  *===----------------------------------------------------------------------===*/
 #include "bcir_ring.h"
+#include "bcir_bytes.h"
 
 #include <stdatomic.h>
 
@@ -61,27 +62,6 @@ static void st_rel(uint8_t *r, size_t off, uint64_t v) {
 
 static void st_rlx(uint8_t *r, size_t off, uint64_t v) {
   atomic_store_explicit(word_at(r, off), (unsigned long long)v, memory_order_relaxed);
-}
-
-static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)(p[1] << 8)); }
-
-static uint32_t rd32(const uint8_t *p) {
-  return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
-static uint64_t rd64(const uint8_t *p) { return (uint64_t)rd32(p) | (uint64_t)rd32(p + 4) << 32; }
-
-static void wr16(uint8_t *p, uint16_t v) {
-  p[0] = (uint8_t)v;
-  p[1] = (uint8_t)(v >> 8);
-}
-
-static void wr32(uint8_t *p, uint32_t v) {
-  for (unsigned i = 0; i < 4; i++) p[i] = (uint8_t)(v >> (8u * i));
-}
-
-static void wr64(uint8_t *p, uint64_t v) {
-  for (unsigned i = 0; i < 8; i++) p[i] = (uint8_t)(v >> (8u * i));
 }
 
 static uint64_t owner_word(uint32_t epoch, uint32_t state) {
@@ -130,15 +110,15 @@ uint64_t bcir_ring_region_size(const bcir_ring_geometry *g) {
 static void encode_geometry(uint8_t *line, const bcir_ring_geometry *g, uint64_t region_size) {
   for (unsigned i = 0; i < BCIR_RING_GEOMETRY_SIZE; i++) line[i] = 0;
   for (unsigned i = 0; i < 4; i++) line[i] = (uint8_t)BCIR_RING_MAGIC[i];
-  wr16(line + 4, (uint16_t)BCIR_RING_VERSION);
+  bcir_st16le(line + 4, (uint16_t)BCIR_RING_VERSION);
   line[6] = g->policy;
   line[7] = g->payload;
-  wr32(line + 8, g->slot_size);
-  wr32(line + 12, g->slot_count);
-  wr64(line + 16, g->ring_id);
-  wr64(line + 24, region_size);
-  wr64(line + 32, g->origin);
-  wr32(line + 60, bcir_crc32(line, 60));
+  bcir_st32le(line + 8, g->slot_size);
+  bcir_st32le(line + 12, g->slot_count);
+  bcir_st64le(line + 16, g->ring_id);
+  bcir_st64le(line + 24, region_size);
+  bcir_st64le(line + 32, g->origin);
+  bcir_st32le(line + 60, bcir_crc32(line, 60));
 }
 
 bcir_status bcir_ring_format(uint8_t *region, size_t len, const bcir_ring_geometry *g) {
@@ -161,8 +141,8 @@ bcir_status bcir_ring_decode_geometry(const uint8_t *region, size_t len, bcir_ri
   if (!region || len < BCIR_RING_HEADER_SIZE) return BCIR_ERR_TRUNCATED;
   for (unsigned i = 0; i < 4; i++)
     if (region[i] != (uint8_t)BCIR_RING_MAGIC[i]) return BCIR_ERR_MAGIC;
-  if (rd16(region + 4) != BCIR_RING_VERSION) return BCIR_ERR_VERSION;
-  if (rd32(region + 60) != bcir_crc32(region, 60)) return BCIR_ERR_CRC;
+  if (bcir_ld16le(region + 4) != BCIR_RING_VERSION) return BCIR_ERR_VERSION;
+  if (bcir_ld32le(region + 60) != bcir_crc32(region, 60)) return BCIR_ERR_CRC;
   for (unsigned i = 40; i < 60; i++)
     if (region[i] != 0u) return BCIR_ERR_RESERVED;
   bcir_ring_geometry g;
@@ -170,14 +150,14 @@ bcir_status bcir_ring_decode_geometry(const uint8_t *region, size_t len, bcir_ri
   g.payload = region[7];
   if (g.policy != BCIR_RING_BACKPRESSURE && g.policy != BCIR_RING_OVERWRITE) return BCIR_ERR_RING;
   if (g.payload != BCIR_RING_TELEMETRY && g.payload != BCIR_RING_CONTROL) return BCIR_ERR_RING;
-  g.slot_size = rd32(region + 8);
-  g.slot_count = rd32(region + 12);
-  g.ring_id = rd64(region + 16);
-  g.origin = rd64(region + 32);
+  g.slot_size = bcir_ld32le(region + 8);
+  g.slot_count = bcir_ld32le(region + 12);
+  g.ring_id = bcir_ld64le(region + 16);
+  g.origin = bcir_ld64le(region + 32);
   bcir_status st = bcir_ring_geometry_validate(&g);
   if (st != BCIR_OK) return st;
   g.region_size = bcir_ring_region_size(&g);
-  if (rd64(region + 24) != g.region_size) return BCIR_ERR_RING;
+  if (bcir_ld64le(region + 24) != g.region_size) return BCIR_ERR_RING;
   if (g.region_size > (uint64_t)len) return BCIR_ERR_TRUNCATED;
   if (out) *out = g;
   return BCIR_OK;

@@ -282,7 +282,7 @@ Current work is maintenance and bounded completion, not another breadth sprint:
   which production units compile with R1–R18 clean, and names the rung that lifts each of the
   rest. The ladder from here:
   - CSUB-2, table idioms (most of the blocked units wait on it);
-  - CSUB-3, `<stdbit.h>` and `<stdckdint.h>` (both landed), then one `bcir_bytes.h` on them;
+  - CSUB-3, `<stdbit.h>`, `<stdckdint.h>` and one `bcir_bytes.h` (landed);
   - CSUB-4, `<stdatomic.h>`'s explicit-order calls;
   - CSUB-5, a hosted profile;
   - CSUB-6, AI numerics at the source level.

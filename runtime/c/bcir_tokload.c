@@ -8,14 +8,11 @@
 #include "bcir_digest_hw.h"
 #include "bcir_rng.h"
 #include "bcir_sha256.h"
-
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
-static uint64_t rd64(const uint8_t *p) { return (uint64_t)rd32(p) | (uint64_t)rd32(p + 4) << 32; }
+#include "bcir_bytes.h"
 
 uint32_t bcir_tokshard_token(const bcir_tokshard *shard, uint64_t i) {
   const uint8_t *p = shard->payload + (size_t)i * shard->width;
-  return shard->width == 2u ? rd16(p) : rd32(p);
+  return shard->width == 2u ? bcir_ld16le(p) : bcir_ld32le(p);
 }
 
 uint64_t bcir_tokshard_windows(uint64_t count, uint32_t context) {
@@ -26,9 +23,9 @@ int bcir_tokshard_open(bcir_tokshard *shard, const uint8_t *data, size_t length,
   if (!shard || (!data && length)) return BCIR_TOKLOAD_ERR_ARG;
   if (length < BCIR_TOKSHARD_HEADER || data[0] != 'B' || data[1] != 'T' || data[2] != 'K' || data[3] != 'S')
     return BCIR_TOKLOAD_ERR_FORMAT;
-  uint32_t version = rd16(data + 4), width = rd16(data + 6), vocab = rd32(data + 8);
-  uint64_t count = rd64(data + 16);
-  int reserved = rd32(data + 12) != 0u;
+  uint32_t version = bcir_ld16le(data + 4), width = bcir_ld16le(data + 6), vocab = bcir_ld32le(data + 8);
+  uint64_t count = bcir_ld64le(data + 16);
+  int reserved = bcir_ld32le(data + 12) != 0u;
   for (unsigned i = 24; i < 32; i++) reserved |= data[i] != 0u;
   if (version != 0u || (width != 2u && width != 4u) || reserved) return BCIR_TOKLOAD_ERR_FORMAT;
   if (vocab == 0u || (width == 2u && vocab > 65536u)) return BCIR_TOKLOAD_ERR_FORMAT;

@@ -4,11 +4,8 @@
  * moved verbatim; HMAC is RFC 2104 over them. No libc, no heap.
  *===----------------------------------------------------------------------===*/
 #include "bcir_sha256.h"
+#include "bcir_bytes.h"
 
-static uint32_t rd32be(const uint8_t *p) {
-  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
-         ((uint32_t)p[2] << 8) | (uint32_t)p[3];
-}
 static void zero_bytes(void *pointer, size_t length) {
   volatile uint8_t *p = (volatile uint8_t *)pointer;
   for (size_t i = 0; i < length; ++i) p[i] = 0;
@@ -34,7 +31,7 @@ static uint32_t rotr(uint32_t value, unsigned amount) {
 }
 static void sha_transform(bcir_sha256 *state, const uint8_t *block) {
   uint32_t w[64];
-  for (unsigned i = 0; i < 16; ++i) w[i] = rd32be(block + i * 4u);
+  for (unsigned i = 0; i < 16; ++i) w[i] = bcir_ld32be(block + i * 4u);
   for (unsigned i = 16; i < 64; ++i) {
     uint32_t s0 = rotr(w[i-15],7) ^ rotr(w[i-15],18) ^ (w[i-15] >> 3);
     uint32_t s1 = rotr(w[i-2],17) ^ rotr(w[i-2],19) ^ (w[i-2] >> 10);
@@ -89,8 +86,7 @@ void bcir_sha256_final(bcir_sha256 *state, uint8_t output[32]) {
     state->block[63u-i] = (uint8_t)(bits >> (i*8u));
   sha_transform(state, state->block);
   for (unsigned i = 0; i < 8; ++i) {
-    output[i*4u]=(uint8_t)(state->h[i]>>24); output[i*4u+1]=(uint8_t)(state->h[i]>>16);
-    output[i*4u+2]=(uint8_t)(state->h[i]>>8); output[i*4u+3]=(uint8_t)state->h[i];
+    bcir_st32be(output + i*4u, state->h[i]);
   }
   zero_bytes(state, sizeof(*state));
 }

@@ -1,0 +1,110 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_csub_ratchet:test_the_runtime_has_one_copy_of_its_byte_order_helpers",
+  "bcir.tests.test_csub_ratchet:test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails",
+   "label": "BY1 a little-endian 16-bit load's high octet a bit low",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "return (uint16_t)((uint16_t)p[0] | (uint16_t)(p[1] << 8)); }",
+   "new": "return (uint16_t)((uint16_t)p[0] | (uint16_t)(p[1] << 7)); }"
+  },
+  {
+   "expects": "test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails",
+   "label": "BY2 a little-endian 32-bit load's top octet dropped",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;",
+   "new": "return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16;"
+  },
+  {
+   "expects": "test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails",
+   "label": "BY3 a little-endian 64-bit load's halves swapped",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "return (uint64_t)bcir_ld32le(p) | (uint64_t)bcir_ld32le(p + 4) << 32;",
+   "new": "return (uint64_t)bcir_ld32le(p + 4) | (uint64_t)bcir_ld32le(p) << 32;"
+  },
+  {
+   "expects": "test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails",
+   "label": "BY4 a big-endian 32-bit load read little-endian",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | (uint32_t)p[3];",
+   "new": "return (uint32_t)p[3] << 24 | (uint32_t)p[2] << 16 | (uint32_t)p[1] << 8 | (uint32_t)p[0];"
+  },
+  {
+   "expects": "test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails",
+   "label": "BY5 a big-endian 16-bit load's octets swapped",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "return (uint16_t)((uint16_t)(p[0] << 8) | (uint16_t)p[1]); }",
+   "new": "return (uint16_t)((uint16_t)(p[1] << 8) | (uint16_t)p[0]); }"
+  },
+  {
+   "expects": "test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails",
+   "label": "BY6 a 64-bit store's high half unwritten",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "  bcir_st32le(p, (uint32_t)v);\n  bcir_st32le(p + 4, (uint32_t)(v >> 32));",
+   "new": "  bcir_st32le(p, (uint32_t)v);\n  bcir_st32le(p + 4, (uint32_t)(v >> 31));"
+  },
+  {
+   "expects": "test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails",
+   "label": "BY7 a 16-bit store's high octet the low one",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "  p[0] = (uint8_t)v;\n  p[1] = (uint8_t)(v >> 8);\n}",
+   "new": "  p[0] = (uint8_t)v;\n  p[1] = (uint8_t)v;\n}"
+  },
+  {
+   "expects": "test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails",
+   "label": "BY8 the big-endian store little-endian",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "  p[0] = (uint8_t)(v >> 24);\n  p[1] = (uint8_t)(v >> 16);\n  p[2] = (uint8_t)(v >> 8);\n  p[3] = (uint8_t)v;",
+   "new": "  p[3] = (uint8_t)(v >> 24);\n  p[2] = (uint8_t)(v >> 16);\n  p[1] = (uint8_t)(v >> 8);\n  p[0] = (uint8_t)v;"
+  },
+  {
+   "expects": "test_the_runtime_has_one_copy_of_its_byte_order_helpers",
+   "label": "BY9 a unit's own load back beside the header",
+   "path": "runtime/c/bcir_tokload.c",
+   "old": "#include \"bcir_bytes.h\"\n",
+   "new": "#include \"bcir_bytes.h\"\nstatic uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }\n"
+  },
+  {
+   "expects": "test_the_runtime_has_one_copy_of_its_byte_order_helpers",
+   "label": "BY10 a unit's own big-endian store back",
+   "path": "runtime/c/bcir_sha256.c",
+   "old": "#include \"bcir_bytes.h\"\n",
+   "new": "#include \"bcir_bytes.h\"\nstatic void put32(uint8_t *p, uint32_t v) { bcir_st32be(p, v); }\n"
+  },
+  {
+   "expects": "test_the_runtime_has_one_copy_of_its_byte_order_helpers",
+   "label": "BY11 a unit no longer taking the header",
+   "path": "runtime/c/bcir_jer.c",
+   "old": "#include \"bcir_bytes.h\"\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_runtime_has_one_copy_of_its_byte_order_helpers",
+   "label": "BY12 the scan blind to a `rd` helper",
+   "path": "bcir/tests/test_csub_ratchet.py",
+   "old": "r\"((?:rd|wr|ld|st|load|store|read|write|get|put|le|be)_?u?",
+   "new": "r\"((?:wr|ld|st|load|store|read|write|get|put|le|be)_?u?"
+  },
+  {
+   "expects": "test_the_runtime_has_one_copy_of_its_byte_order_helpers",
+   "label": "BY13 the scan blind to a byte pointer of `unsigned char`",
+   "path": "bcir/tests/test_csub_ratchet.py",
+   "old": "(?:uint8_t|unsigned\\s+char)\\s*\\*\",",
+   "new": "(?:uint8_t)\\s*\\*\","
+  },
+  {
+   "expects": "test_the_runtime_has_one_copy_of_its_byte_order_helpers",
+   "label": "BY14 a header function declared a second time",
+   "path": "runtime/c/bcir_bytes.h",
+   "old": "#endif /* BCIR_BYTES_H */",
+   "new": "static inline uint32_t bcir_ld32be(const uint8_t *p);\n#endif /* BCIR_BYTES_H */"
+  }
+ ]
+}

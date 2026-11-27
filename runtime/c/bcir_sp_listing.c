@@ -8,6 +8,7 @@
  * (runtime/c/fuzz_sp_listing.c).
  *===----------------------------------------------------------------------===*/
 #include "bcir_sp_listing.h"
+#include "bcir_bytes.h"
 
 /* repr(list(strings)) spelled with bcir_lt_quoted: "[" + ", ".join(...) + "]". */
 static void put_quoted_list(bcir_lt_out *o, bcir_sp_strings strings) {
@@ -23,23 +24,13 @@ static void put_quoted_list(bcir_lt_out *o, bcir_sp_strings strings) {
   bcir_lt_c(o, ']');
 }
 
-/* Little-endian loads and stores over the walk's checked octets and the borrowed scratch. */
-static uint32_t ld32(const uint8_t *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-static uint64_t ld64(const uint8_t *p) { return (uint64_t)ld32(p) | ((uint64_t)ld32(p + 4) << 32); }
-static void st32(uint8_t *p, uint32_t v) {
-  p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
-}
-static void st64(uint8_t *p, uint64_t v) { st32(p, (uint32_t)v); st32(p + 4, (uint32_t)(v >> 32)); }
-
 /* _rids(values): "[" + ",".join(f"r{rid}") + "]", over little-endian u32s. */
 static void put_rids(bcir_lt_out *o, const uint8_t *rids, uint16_t count) {
   bcir_lt_c(o, '[');
   for (uint16_t i = 0; i < count; i++) {
     if (i) bcir_lt_c(o, ',');
     bcir_lt_c(o, 'r');
-    bcir_lt_dec(o, ld32(rids + (size_t)i * 4u));
+    bcir_lt_dec(o, bcir_ld32le(rids + (size_t)i * 4u));
   }
   bcir_lt_c(o, ']');
 }
@@ -64,9 +55,9 @@ static const char *const DISPATCH[] = {"core", "pim"};                /* _DISPAT
 #define IX_ENTRY 12u
 
 static int ix_less(const uint8_t *ix, size_t a, size_t b) {
-  uint64_t ca = ld64(ix + a * IX_ENTRY), cb = ld64(ix + b * IX_ENTRY);
+  uint64_t ca = bcir_ld64le(ix + a * IX_ENTRY), cb = bcir_ld64le(ix + b * IX_ENTRY);
   if (ca != cb) return ca < cb;
-  return ld32(ix + a * IX_ENTRY + 8u) < ld32(ix + b * IX_ENTRY + 8u);
+  return bcir_ld32le(ix + a * IX_ENTRY + 8u) < bcir_ld32le(ix + b * IX_ENTRY + 8u);
 }
 static void ix_swap(uint8_t *ix, size_t a, size_t b) {
   for (size_t k = 0; k < IX_ENTRY; k++) {
@@ -98,10 +89,10 @@ static int64_t ix_find(const uint8_t *ix, size_t n, uint64_t claim) {
   size_t lo = 0, hi = n;  /* the first entry whose claim is past `claim` */
   while (lo < hi) {
     size_t mid = lo + (hi - lo) / 2u;
-    if (ld64(ix + mid * IX_ENTRY) <= claim) lo = mid + 1u; else hi = mid;
+    if (bcir_ld64le(ix + mid * IX_ENTRY) <= claim) lo = mid + 1u; else hi = mid;
   }
-  if (lo == 0u || ld64(ix + (lo - 1u) * IX_ENTRY) != claim) return -1;
-  return (int64_t)ld32(ix + (lo - 1u) * IX_ENTRY + 8u);
+  if (lo == 0u || bcir_ld64le(ix + (lo - 1u) * IX_ENTRY) != claim) return -1;
+  return (int64_t)bcir_ld32le(ix + (lo - 1u) * IX_ENTRY + 8u);
 }
 
 /* --- the listing ------------------------------------------------------------------------- */
@@ -120,8 +111,8 @@ static int index_trace(const bcir_sp_record *r, void *ctx) {
   listing_t *l = (listing_t *)ctx;
   if (r->kind != BCIR_SP_RECORD_TRACE) return 0;
   if (r->index == 0u) l->trace0 = r->offset;
-  st64(l->ix + (size_t)r->index * IX_ENTRY, r->trace.claim_id);
-  st32(l->ix + (size_t)r->index * IX_ENTRY + 8u, r->index);
+  bcir_st64le(l->ix + (size_t)r->index * IX_ENTRY, r->trace.claim_id);
+  bcir_st32le(l->ix + (size_t)r->index * IX_ENTRY + 8u, r->index);
   return 0;
 }
 
@@ -153,8 +144,8 @@ static void list_segment(listing_t *l, const bcir_sp_record *r) {
     bcir_lt_s(o, " untraced\n");
   } else {
     const uint8_t *t = l->data + l->trace0 + (size_t)note * 24u;
-    bcir_lt_s(o, " src=0x"); bcir_lt_hex(o, ld64(t + 8), 16);
-    bcir_lt_s(o, " trace=0x"); bcir_lt_hex(o, ld64(t + 16), 16);
+    bcir_lt_s(o, " src=0x"); bcir_lt_hex(o, bcir_ld64le(t + 8), 16);
+    bcir_lt_s(o, " trace=0x"); bcir_lt_hex(o, bcir_ld64le(t + 16), 16);
     bcir_lt_c(o, '\n');
   }
   if (r->fence_before.count || r->fence_after.count) {

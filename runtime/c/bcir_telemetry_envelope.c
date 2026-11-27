@@ -5,27 +5,7 @@
  * written byte by byte, little-endian, so the rails agree on any host.
  *===----------------------------------------------------------------------===*/
 #include "bcir_telemetry_envelope.h"
-
-static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)(p[1] << 8)); }
-
-static uint32_t rd32(const uint8_t *p) {
-  return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
-static uint64_t rd64(const uint8_t *p) { return (uint64_t)rd32(p) | (uint64_t)rd32(p + 4) << 32; }
-
-static void wr16(uint8_t *p, uint16_t v) {
-  p[0] = (uint8_t)v;
-  p[1] = (uint8_t)(v >> 8);
-}
-
-static void wr32(uint8_t *p, uint32_t v) {
-  for (unsigned i = 0; i < 4; i++) p[i] = (uint8_t)(v >> (8u * i));
-}
-
-static void wr64(uint8_t *p, uint64_t v) {
-  for (unsigned i = 0; i < 8; i++) p[i] = (uint8_t)(v >> (8u * i));
-}
+#include "bcir_bytes.h"
 
 static size_t kind_size(uint8_t kind) {
   return kind == BCIR_TEV_SAMPLE ? BCIR_TEV_SAMPLE_SIZE : BCIR_TEV_DATADNA_SIZE;
@@ -65,36 +45,36 @@ bcir_status bcir_tev_decode(const uint8_t *data, size_t len, bcir_tev *out) {
   if (!data || len < BCIR_TEV_HEADER) return BCIR_ERR_TRUNCATED;
   for (unsigned i = 0; i < 4; i++)
     if (data[i] != (uint8_t)BCIR_TEV_MAGIC[i]) return BCIR_ERR_MAGIC;
-  if (rd16(data + 4) != BCIR_TEV_VERSION) return BCIR_ERR_VERSION;
-  uint16_t flags = rd16(data + 6);
+  if (bcir_ld16le(data + 4) != BCIR_TEV_VERSION) return BCIR_ERR_VERSION;
+  uint16_t flags = bcir_ld16le(data + 6);
   if ((flags & (uint16_t)~BCIR_TEV_FLAG_REQUIRED) != 0u) return BCIR_ERR_RESERVED;
   uint8_t kind = data[8];
   if (kind != BCIR_TEV_SAMPLE && kind != BCIR_TEV_DATADNA) return BCIR_ERR_TELEMETRY;
   size_t size = kind_size(kind);
-  if (rd16(data + 12) != size) return BCIR_ERR_TELEMETRY;
+  if (bcir_ld16le(data + 12) != size) return BCIR_ERR_TELEMETRY;
   if (len < size) return BCIR_ERR_TRUNCATED;
   if (len > size) return BCIR_ERR_TRAILING;
-  if (rd32(data + size - BCIR_TEV_CRC) != bcir_crc32(data, size - BCIR_TEV_CRC)) return BCIR_ERR_CRC;
-  if (rd16(data + 14) != 0u || rd64(data + 56) != 0u) return BCIR_ERR_RESERVED;
+  if (bcir_ld32le(data + size - BCIR_TEV_CRC) != bcir_crc32(data, size - BCIR_TEV_CRC)) return BCIR_ERR_CRC;
+  if (bcir_ld16le(data + 14) != 0u || bcir_ld64le(data + 56) != 0u) return BCIR_ERR_RESERVED;
   if (data[9] != 0u) return BCIR_ERR_TELEMETRY; /* schema */
   bcir_tev e;
   e.kind = kind;
   e.clock = data[10];
   e.unit = data[11];
   e.required = (uint8_t)(flags & BCIR_TEV_FLAG_REQUIRED);
-  e.source = rd64(data + 16);
-  e.session = rd64(data + 24);
-  e.generation = rd32(data + 32);
-  e.signal = rd32(data + 36);
-  e.seq = rd32(data + 40);
-  e.lost = rd32(data + 44);
-  e.timestamp = rd64(data + 48);
+  e.source = bcir_ld64le(data + 16);
+  e.session = bcir_ld64le(data + 24);
+  e.generation = bcir_ld32le(data + 32);
+  e.signal = bcir_ld32le(data + 36);
+  e.seq = bcir_ld32le(data + 40);
+  e.lost = bcir_ld32le(data + 44);
+  e.timestamp = bcir_ld64le(data + 48);
   e.value = 0;
   for (unsigned i = 0; i < 7; i++) e.record[i] = 0;
   if (kind == BCIR_TEV_SAMPLE) {
-    e.value = (int64_t)rd64(data + BCIR_TEV_HEADER);
+    e.value = (int64_t)bcir_ld64le(data + BCIR_TEV_HEADER);
   } else {
-    for (unsigned i = 0; i < 7; i++) e.record[i] = (int64_t)rd64(data + BCIR_TEV_HEADER + 8u * i);
+    for (unsigned i = 0; i < 7; i++) e.record[i] = (int64_t)bcir_ld64le(data + BCIR_TEV_HEADER + 8u * i);
   }
   bcir_status st = field_laws(&e);
   if (st != BCIR_OK) return st;
@@ -110,25 +90,25 @@ bcir_status bcir_tev_encode(const bcir_tev *env, uint8_t *out, size_t cap, size_
   if (!out || cap < size) return BCIR_ERR_NOSPACE;
   for (size_t i = 0; i < size; i++) out[i] = 0;
   for (unsigned i = 0; i < 4; i++) out[i] = (uint8_t)BCIR_TEV_MAGIC[i];
-  wr16(out + 4, (uint16_t)BCIR_TEV_VERSION);
-  wr16(out + 6, env->required ? (uint16_t)BCIR_TEV_FLAG_REQUIRED : (uint16_t)0u);
+  bcir_st16le(out + 4, (uint16_t)BCIR_TEV_VERSION);
+  bcir_st16le(out + 6, env->required ? (uint16_t)BCIR_TEV_FLAG_REQUIRED : (uint16_t)0u);
   out[8] = env->kind;
   out[10] = env->clock;
   out[11] = env->unit;
-  wr16(out + 12, (uint16_t)size);
-  wr64(out + 16, env->source);
-  wr64(out + 24, env->session);
-  wr32(out + 32, env->generation);
-  wr32(out + 36, env->signal);
-  wr32(out + 40, env->seq);
-  wr32(out + 44, env->lost);
-  wr64(out + 48, env->timestamp);
+  bcir_st16le(out + 12, (uint16_t)size);
+  bcir_st64le(out + 16, env->source);
+  bcir_st64le(out + 24, env->session);
+  bcir_st32le(out + 32, env->generation);
+  bcir_st32le(out + 36, env->signal);
+  bcir_st32le(out + 40, env->seq);
+  bcir_st32le(out + 44, env->lost);
+  bcir_st64le(out + 48, env->timestamp);
   if (env->kind == BCIR_TEV_SAMPLE) {
-    wr64(out + BCIR_TEV_HEADER, (uint64_t)env->value);
+    bcir_st64le(out + BCIR_TEV_HEADER, (uint64_t)env->value);
   } else {
-    for (unsigned i = 0; i < 7; i++) wr64(out + BCIR_TEV_HEADER + 8u * i, (uint64_t)env->record[i]);
+    for (unsigned i = 0; i < 7; i++) bcir_st64le(out + BCIR_TEV_HEADER + 8u * i, (uint64_t)env->record[i]);
   }
-  wr32(out + size - BCIR_TEV_CRC, bcir_crc32(out, size - BCIR_TEV_CRC));
+  bcir_st32le(out + size - BCIR_TEV_CRC, bcir_crc32(out, size - BCIR_TEV_CRC));
   if (written) *written = size;
   return BCIR_OK;
 }
@@ -180,7 +160,7 @@ const bcir_signal_def *bcir_signal_find(uint32_t id) {
 void bcir_signal_row_encode(const bcir_signal_def *def, uint8_t out[BCIR_SIGNAL_ROW_SIZE]) {
   for (unsigned i = 0; i < BCIR_SIGNAL_ROW_SIZE; i++) out[i] = 0;
   if (!def) return;
-  wr32(out, def->id);
+  bcir_st32le(out, def->id);
   out[4] = def->unit;
   out[5] = def->kind;
   out[6] = def->temporality;
@@ -188,7 +168,7 @@ void bcir_signal_row_encode(const bcir_signal_def *def, uint8_t out[BCIR_SIGNAL_
   out[8] = def->sampling;
   out[9] = def->provenance;
   out[10] = def->cost_dim;
-  wr64(out + 16, def->min_interval_ns);
+  bcir_st64le(out + 16, def->min_interval_ns);
   for (unsigned i = 0; i < BCIR_SIGNAL_NAME_WIDTH && def->name[i] != '\0'; i++)
     out[24u + i] = (uint8_t)def->name[i];
 }

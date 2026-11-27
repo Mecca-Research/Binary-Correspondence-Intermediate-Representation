@@ -313,6 +313,25 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-27 — CSUB-3c: the runtime's one copy of its byte-order helpers, `bcir_bytes.h`.**
+  - Fifteen units had each defined their own fixed-width loads and stores. The spellings were `rd16`, `rd32`, `rd64`,
+    `wr16`, `wr32`, `wr64`, `ld32`, `st32`, `read_u32`, `rd32be` and `load64_be`, of three pointer spellings, one
+    `rd16` returning a `uint32_t`. That is one mechanism with fifteen copies (L14).
+  - `runtime/c/bcir_bytes.h` holds the one copy: little- and big-endian loads of every width, little-endian stores of
+    every width, and the big-endian 32-bit store SHA-256's digest writes. Each is a `static inline` function of
+    `<stdint.h>` alone, in the verified subset. The fifteen units include it.
+  - The bytes are unchanged, as the runtime's byte-identity gates hold them. The machine code is not: GCC inlines
+    the `static inline` helpers where it had kept some plain `static` ones out of line.
+  - **Evidence.**
+    - `test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails`: each function equals Python's
+      `int.from_bytes` or `int.to_bytes` over 64 octet strings. A unit of every function lowers alike on both C
+      front-end rails, R18 clean, and runs as the host compiler's build.
+    - `test_the_runtime_has_one_copy_of_its_byte_order_helpers`: no runtime unit or header but the header defines a
+      static load or store through a byte pointer by the helpers' name shape. The test drivers and fuzzers are out
+      of the scan's declared scope: they keep their own encoders.
+  - The ratchet stays at 46 of 68, each unit at its verdict.
+  - **Standing faults.** `csub-bytes.json`, 14, each swept RED.
+
 - **2026-11-27 — CSUB-3b: `<stdbit.h>` on both rails, and a call's arguments counted (CF-ARGC).**
   - Both rails read `<stdbit.h>` (C23 7.18) as one text for the target:
     - the version and the endian macros, `__STDC_ENDIAN_NATIVE__` the target's byte order;
