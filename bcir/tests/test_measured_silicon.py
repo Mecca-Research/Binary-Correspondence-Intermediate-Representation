@@ -56,15 +56,62 @@ class _FakeSilicon:
         raise FileNotFoundError(base)
 
 
-# --- the honest degrade path (this sandbox) --------------------------------------
+class _NoSilicon:
+    """Patch silicon's PMU and sysfs probes to simulate a sandbox with no real silicon
+    signals, so the honest degrade path is exercised on every host (bare metal, KVM vPMU,
+    or container) regardless of host kernel capabilities."""
+
+    def __enter__(self):
+        self._read = silicon._read
+        self._listdir = silicon.os.listdir
+        self._read_hw = silicon.read_hw_counters
+        self._perf_avail = silicon.perf_counters_available
+        silicon._read = lambda path: None
+        silicon.os.listdir = self._no_listdir
+        silicon.read_hw_counters = lambda work: None
+        silicon.perf_counters_available = lambda: False
+        return self
+
+    def __exit__(self, *exc):
+        silicon._read = self._read
+        silicon.os.listdir = self._listdir
+        silicon.read_hw_counters = self._read_hw
+        silicon.perf_counters_available = self._perf_avail
+
+    @staticmethod
+    def _no_listdir(base):
+        raise FileNotFoundError(base)
+
+
+# --- the honest degrade path (sandbox) -------------------------------------------
 
 
 def test_sandbox_reports_unavailable_not_faked():
-    # no real signals here: probes return None, the certificate is synthetic.
-    assert silicon.read_rapl_uj() is None and silicon.thermal_pressure() is None
-    mc = measured_replan(vector_add(1024), AVX, samples=4)
-    assert not mc.measured and mc.provenance == ("synthetic",) and mc.win == 0
-    assert mc.cert.admissible  # win >= 0 by construction
+    # Without real silicon signals: probes return None and the certificate is synthetic.
+    with _NoSilicon():
+        assert silicon.read_rapl_uj() is None and silicon.thermal_pressure() is None
+        assert not silicon.perf_counters_available()
+        mc = measured_replan(vector_add(1024), AVX, samples=4)
+        assert not mc.measured and mc.provenance == ("synthetic",) and mc.win == 0
+        assert mc.cert.admissible  # win >= 0 by construction
+
+    # On the live host: provenance may only cite signals the host actually exposes.
+    live = measured_replan(vector_add(1024), AVX, samples=4)
+    assert live.cert.admissible
+    available = {
+        tag
+        for tag, ok in (
+            ("pmu", silicon.perf_counters_available()),
+            ("rapl", silicon.rapl_available()),
+            ("thermal", silicon.read_thermal_millideg() is not None),
+        )
+        if ok
+    }
+    if not available:
+        assert not live.measured and live.provenance == ("synthetic",) and live.win == 0
+    else:
+        assert live.measured and "synthetic" not in live.provenance
+        assert (set(live.provenance) - {"os"}) <= available
 
 
 # --- the parsing/sampling logic (faked sysfs) ------------------------------------
@@ -178,8 +225,13 @@ def test_measured_replan_on_cool_silicon_holds_the_plan():
 
 
 def test_summary_reports_the_real_unavailable_split():
-    s = silicon.summary()
-    assert s["rapl_energy"] is False and s["thermal_zone"] is False  # sandbox
+    with _NoSilicon():
+        s = silicon.summary()
+        assert s["hw_pmu"] is False and s["rapl_energy"] is False and s["thermal_zone"] is False
     with _FakeSilicon():
         s2 = silicon.summary()
         assert s2["rapl_energy"] is True and s2["thermal_zone"] is True
+    live = silicon.summary()
+    assert live["hw_pmu"] is silicon.perf_counters_available()
+    assert live["rapl_energy"] is silicon.rapl_available()
+    assert live["thermal_zone"] is (silicon.read_thermal_millideg() is not None)

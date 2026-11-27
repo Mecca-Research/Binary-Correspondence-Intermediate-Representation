@@ -27,7 +27,7 @@ echo "[silicon] capability probe (the three real signals the measured replan is 
 # host exposes ALL THREE -- a hardware PMU (perf_event_open), RAPL energy, and a cpufreq
 # userspace governor. The probe enumerates each, names what is missing, and prints whether
 # the host is rig-ready; the measured number itself still comes only from the real loop below.
-"${PYTHON}" - <<'PY'
+probe_out="$("${PYTHON}" - <<'PY'
 import bcir.silicon as s
 pmu = bool(s.perf_counters_available())
 rapl = bool(s.rapl_available())
@@ -45,16 +45,35 @@ if missing:
 else:
     print("  rig-ready: YES (PMU + RAPL + userspace governor) -- measured win is live")
 PY
+)" || { echo "  FAIL: capability probe errored"; exit 1; }
+printf '%s\n' "${probe_out}"
 
 echo "[silicon] measured replan (bcir.run --silicon):"
 out="$("${PYTHON}" -m bcir.run "${PROGRAM}" --silicon 2>&1)" || { echo "  FAIL: --silicon errored"; echo "${out}"; exit 1; }
-echo "${out}" | sed -n 's/^/  /p' | grep -E "silicon|win=" || true
+printf '%s\n' "${out}" | sed -n 's/^/  /p' | grep -E "silicon|win=" || true
 
-# Parse the provenance + win the loop certified.
-prov_line="$(echo "${out}" | grep -oE "provenance=\([^)]*\)" | sed -n '1p')"
-win="$(echo "${out}" | grep -oE "win=-?[0-9]+" | sed -n '1p' | cut -d= -f2)"
+# Parse the provenance + measured flag + win the loop certified.
+# The CT4 rig contract requires BOTH a rig-ready host (PMU + RAPL + userspace governor)
+# AND genuinely measured non-synthetic telemetry from the loop.
+rig_ready=0
+case "${probe_out}" in
+  *"rig-ready: YES"*) rig_ready=1 ;;
+esac
+prov_line="$(printf '%s\n' "${out}" | grep -E "^\[silicon\] provenance=" | sed -n '1p' || true)"
+win="$(printf '%s\n' "${out}" | grep -oE "win=-?[0-9]+" | sed -n '1p' | cut -d= -f2 || true)"
+measured=0
+case "${prov_line}" in
+  *"measured=True"*)
+    case "${prov_line}" in
+      *"synthetic"*) ;;
+      *) measured=1 ;;
+    esac
+    ;;
+esac
 is_real=0
-echo "${prov_line}" | grep -i "real" >/dev/null && is_real=1
+if [ "${rig_ready}" -eq 1 ] && [ "${measured}" -eq 1 ]; then
+  is_real=1
+fi
 
 echo "[silicon] verdict:"
 if [ "${is_real}" -eq 1 ]; then

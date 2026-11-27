@@ -521,7 +521,7 @@
   "port/verify_tree.py": "6d1183f43ae1dd0ae5a13a4761b9b06a528c5aae28cb061f805f30fc717e3d35"
  },
  "reproduce": [
-  "git archive origin/main docs/research/wedge-pr818 | tar -x -C WORK --strip-components=2  # a fresh copy",
+  "git archive 490f5be0 docs/research/wedge-pr818 | tar -x -C WORK --strip-components=2  # pre-removal commit 490f5be0",
   "rm WORK/results/* WORK/checkpoints/* WORK/bf16/results/* WORK/bf16/checkpoints/*; cp LICENSE WORK/vendor-new/; cp LICENSE WORK/vendor-old/",
   "python3.12 -m venv ENV && ENV/bin/pip install numpy==2.3.5 pyarrow==26.0.0",
   "cd WORK && ENV/bin/python build_upgrade.py && for s in study evaluate_query study_bf16 evaluate_bf16; do ENV/bin/python port/launch.py WORK/$s.py; done",
