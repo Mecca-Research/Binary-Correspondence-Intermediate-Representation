@@ -24,6 +24,8 @@ from bcir.frontends.cfront import compile_unit
 from bcir.frontends.cfront.lower import (
     ARGC_FEW,
     ARGC_MANY,
+    ATOMIC_ORDER_CONST,
+    ATOMIC_ORDER_INVALID,
     ATTR_VENDOR,
     GENERIC_NONE,
     ROW_ADDR,
@@ -46,6 +48,7 @@ from bcir.frontends.cfront.lower import (
     VOLATILE_PTR,
 )
 from bcir.model import Domain
+from bcir.frontends.cfront.emit import _MEMORY_ORDERS
 from bcir.toolchain import BuildFailed, host_link_args
 from bcir.verify import cfront_structural_digest
 
@@ -15843,6 +15846,161 @@ def test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both
     for src in _ARGC_LOWERED:
         assert _clang_c23_accepts(src) in (True, None), src
         assert " ok=1 " in _lowers_alike(exe, src), src
+
+
+# CSUB-4: C11's atomics as `bcir_ring.c` writes them. Both rails read `<stdatomic.h>`'s macros (`ATOMIC_*_LOCK_FREE`,
+# 2 on every target of the matrix, `ATOMIC_FLAG_INIT`, `kill_dependency`) and lower each generic's explicit-order form
+# as its implicit form's claim with its memory orders as the claim's immediates, emitted as the explicit call. Both
+# rails had read the header as nothing (`ATOMIC_LLONG_LOCK_FREE` no constant) and each explicit form as a call of an
+# undefined function.
+_ATOMX_HDR = (
+    "#include <stdint.h>\n#include <stdbool.h>\n#include <stdatomic.h>\n"
+    "_Static_assert(ATOMIC_LLONG_LOCK_FREE == 2 && ATOMIC_INT_LOCK_FREE == 2 && ATOMIC_POINTER_LOCK_FREE == 2,"
+    ' "lock-free");\n'
+)
+_ATOMX_LOWERED = tuple(
+    _ATOMX_HDR + body
+    for body in (
+        "uint32_t f(uint32_t k){ _Atomic uint32_t a = k; uint32_t r = atomic_load_explicit(&a, memory_order_acquire);"
+        " atomic_store_explicit(&a, r + 1u, memory_order_release); return r + atomic_load_explicit(&a,"
+        " memory_order_relaxed) + atomic_load_explicit(&a, memory_order_seq_cst) + atomic_load_explicit(&a,"
+        " memory_order_consume); }\n",
+        "uint64_t f(uint32_t k){ _Atomic unsigned long long w = k; atomic_store_explicit(&w, (unsigned long long)k << 33,"
+        " memory_order_relaxed); atomic_store_explicit(&w, atomic_load_explicit(&w, memory_order_relaxed) | 1u,"
+        " memory_order_seq_cst); return (uint64_t)atomic_load_explicit(&w, memory_order_acquire); }\n",
+        "uint32_t f(uint32_t k){ _Atomic uint32_t a = k; uint32_t r = atomic_fetch_add_explicit(&a, 3u, memory_order_relaxed);"
+        " r += atomic_fetch_sub_explicit(&a, 1u, memory_order_acq_rel); r += atomic_fetch_xor_explicit(&a, k,"
+        " memory_order_release); r += atomic_exchange_explicit(&a, 7u, memory_order_acquire); return r +"
+        " atomic_load_explicit(&a, memory_order_seq_cst); }\n",
+        "uint32_t f(uint32_t k){ _Atomic uint32_t a = k; uint32_t e = k; bool s = atomic_compare_exchange_strong_explicit(&a,"
+        " &e, k + 1u, memory_order_acq_rel, memory_order_acquire); uint32_t e2 = 5u; bool w ="
+        " atomic_compare_exchange_weak_explicit(&a, &e2, 9u, memory_order_seq_cst, memory_order_relaxed);"
+        " return (uint32_t)s + (uint32_t)w * 2u + e2 + atomic_load_explicit(&a, memory_order_relaxed); }\n",
+        "typedef _Atomic unsigned long long word;\nstatic word *at(uint8_t *r, uint32_t off){ return (word *)(void *)(r + off); }\n"
+        "static uint64_t ld_acq(uint8_t *r, uint32_t off){ return (uint64_t)atomic_load_explicit(at(r, off),"
+        " memory_order_acquire); }\nstatic void st_rel(uint8_t *r, uint32_t off, uint64_t v){ atomic_store_explicit(at(r,"
+        " off), (unsigned long long)v, memory_order_release); }\nuint64_t f(uint32_t k){ _Alignas(8) uint8_t buf[16] ="
+        " {0}; st_rel(buf, 8u, k); atomic_thread_fence(memory_order_release); unsigned long long e = k; bool c ="
+        " atomic_compare_exchange_strong_explicit(at(buf, 8u), &e, 3u, memory_order_acq_rel, memory_order_acquire);"
+        " atomic_thread_fence(memory_order_acquire); return ld_acq(buf, 8u) + (uint64_t)c; }\n",
+        "uint32_t f(uint32_t k){ _Atomic uint32_t a = k; return atomic_load_explicit(&a, (memory_order_acquire))"
+        " + atomic_load_explicit(&a, +memory_order_relaxed) + atomic_load_explicit(&a, 5) + atomic_load_explicit(&a,"
+        " __ATOMIC_ACQUIRE) + kill_dependency(k); }\n",
+    )
+)
+# ... and a cast to a pointer to a 64-bit integer the source names `unsigned long long`, which the oracle's emit had
+# spelled `(uint64_t *)` beside a temp declared `unsigned long long *`: on LP64 another type, which GCC 14 refuses
+_CAST64_LOWERED = (
+    "#include <stdint.h>\ntypedef unsigned long long word;\n"
+    "static word *at(uint8_t *r, uint32_t off){ return (word *)(void *)(r + off); }\n"
+    "static unsigned long long *at2(uint8_t *r){ return (unsigned long long *)(void *)r; }\n"
+    "static const long long *at3(const uint8_t *r){ return (const long long *)(const void *)r; }\n"
+    "uint64_t f(uint32_t k){ _Alignas(8) uint8_t buf[16] = {0}; *at(buf, 8u) = k; *at2(buf) = 3u;"
+    " return *at(buf, 8u) + *at2(buf) + (uint64_t)*at3(buf); }\n",
+)
+_ATOMX_REFUSED = tuple(
+    (_ATOMX_HDR + "uint32_t f(uint32_t k){ _Atomic uint32_t a = k; uint32_t e = k; " + body + " }\n", why)
+    for body, why in (
+        ("int mo = (int)(k & 1u); return atomic_load_explicit(&a, mo);", ATOMIC_ORDER_CONST),
+        ("int memory_order_acquire = 2; return atomic_load_explicit(&a, memory_order_acquire);", ATOMIC_ORDER_CONST),
+        ("return atomic_load_explicit(&a, memory_order_acquire | 0);", ATOMIC_ORDER_CONST),
+        ("return atomic_compare_exchange_strong_explicit(&a, &e, 1u, memory_order_seq_cst, (int)k);",
+         ATOMIC_ORDER_CONST),
+        ("return atomic_load_explicit(&a, memory_order_release);", ATOMIC_ORDER_INVALID),
+        ("return atomic_load_explicit(&a, memory_order_acq_rel);", ATOMIC_ORDER_INVALID),
+        ("atomic_store_explicit(&a, 1u, memory_order_acquire); return e;", ATOMIC_ORDER_INVALID),
+        ("atomic_store_explicit(&a, 1u, memory_order_consume); return e;", ATOMIC_ORDER_INVALID),
+        ("atomic_store_explicit(&a, 1u, memory_order_acq_rel); return e;", ATOMIC_ORDER_INVALID),
+        ("return atomic_compare_exchange_weak_explicit(&a, &e, 1u, memory_order_seq_cst, memory_order_release);",
+         ATOMIC_ORDER_INVALID),
+        ("return atomic_compare_exchange_weak_explicit(&a, &e, 1u, memory_order_seq_cst, memory_order_acq_rel);",
+         ATOMIC_ORDER_INVALID),
+        ("return atomic_load_explicit(&a, 6);", ATOMIC_ORDER_INVALID),
+        ("return atomic_load_explicit(&a);", ARGC_FEW),
+        ("atomic_store_explicit(&a, 1u); return e;", ARGC_FEW),
+        ("return atomic_fetch_add_explicit(&a, 1u, memory_order_relaxed, memory_order_relaxed);", ARGC_MANY),
+        ("return atomic_compare_exchange_strong_explicit(&a, &e, 1u, memory_order_seq_cst);", ARGC_FEW),
+        ("return atomic_load();", ARGC_FEW),
+        ("return atomic_load(&a, memory_order_relaxed);", ARGC_MANY),
+        ("atomic_store(&a); return e;", ARGC_FEW),
+        ("return atomic_compare_exchange_strong(&a, &e);", ARGC_FEW),
+    )
+)  # fmt: skip
+
+
+def test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build():
+    """CSUB-4. `<stdatomic.h>`'s lock-free macros are constants on both rails (2 on every target of the matrix, held to
+    Clang's by the standard-header test), and each C11 generic's explicit-order form -- `atomic_load_explicit`,
+    `atomic_store_explicit`, `atomic_exchange_explicit`, the three fetch-ops' and both compare-exchanges' -- lowers
+    alike, R18 clean, as its implicit form's claim with its orders as immediates: of every order each takes, spelled as
+    a name, a parenthesized or `+` name, `__ATOMIC_*` or an integer, through a pointer a function returns, beside the
+    fences, as `bcir_ring.c` writes them. Each rail's emit runs as Clang's build of the source and compiles as C11
+    strictly -- a cast to `word *`, a `unsigned long long *` or a `const long long *` among them, which the oracle's
+    emit had spelled `(uint64_t *)` beside a temp declared as the source names it. And `bcir_ring.c` itself lowers to
+    one digest on both rails, R18 clean."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_ATOMX_LOWERED + _CAST64_LOWERED):
+            assert _clang_c23_accepts(src) in (True, None), src
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src[-300:], summary)
+            explicit = [
+                cl
+                for fn in r.lowered.functions.values()
+                for cl in fn.claims
+                if cl.op.startswith("c.c11atom.") and cl.imm
+            ]
+            assert explicit or src in _CAST64_LOWERED, src[-300:]
+            if exe is None:
+                continue
+            path = os.path.join(d, f"x{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src[-300:], twin_summary, summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            # each explicit call spells the orders its claim holds, by name: a run of one thread cannot tell a
+            # relaxed load from an acquire one, so the spelling is held to the claims (the digest holds their values)
+            spelled = sorted(_MEMORY_ORDERS[o] for cl in explicit for o in cl.imm)
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert "_explicit(" in emit or src in _CAST64_LOWERED, (rail, emit[-400:])
+                found = sorted(
+                    o
+                    for ln in emit.splitlines()
+                    if "_explicit(" in ln
+                    for o in re.findall(r"memory_order_[a-z_]+", ln)
+                )
+                assert found == spelled, (rail, found, spelled)
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src[-300:])
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    ring = open(os.path.join(_C, "bcir_ring.c"), encoding="utf-8").read()
+    rsum = _summary_line(
+        compile_unit(ring, check_clang=False, search_paths=[_C], filename="bcir_ring.c")
+    )
+    assert " ok=1 " in rsum, rsum
+    if _CC:
+        cc = _build_bcir_cc(_session_build_dir())
+        run = subprocess.run(
+            [cc, "-I", _C, os.path.join(_C, "bcir_ring.c")], capture_output=True, text=True
+        )
+        assert run.returncode == 0 and run.stdout.split(": ", 1)[-1].strip() == rsum, (
+            run.stdout,
+            rsum,
+        )
+
+
+def test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong():
+    """CSUB-4. An explicit-order generic's memory order is a constant on both rails -- a variable, a local named as an
+    order and an expression of one are refused, a follow-on -- and one the operation takes (C11 7.17.7): a load no
+    release or acq_rel, a store no consume, acquire or acq_rel, a compare-exchange's failure order no release or
+    acq_rel, no value past seq_cst. Clang only warns of those (`-Watomic-memory-ordering`); their behaviour is
+    undefined. A generic of any other number of operands, explicit or implicit, is refused in CF-ARGC's words: the
+    oracle had raised an `IndexError` at `atomic_load()`, and the twin lowered a claim of no object."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for src, why in _ATOMX_REFUSED:
+        if why in (ARGC_FEW, ARGC_MANY):
+            assert _clang_c23_accepts(src) in (False, None), src
+        _refused_alike(exe, src, why, phase="PARSE")
 
 
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through

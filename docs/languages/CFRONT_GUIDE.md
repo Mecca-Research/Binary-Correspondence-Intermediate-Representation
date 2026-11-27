@@ -613,6 +613,9 @@ _mm_sfence();                      //                   store (release) fence ->
     no association, as C23 7.18.1p3 leaves it out (CSUB-3).
 
   A unit that includes the header defines the seventy functions, as glibc's does.
+- C11's atomics API: `<stdatomic.h>`'s lock-free macros, `ATOMIC_FLAG_INIT` and `kill_dependency`; and each generic's
+  explicit-order form, of constant memory orders the operation takes (C11 7.17.7), lowered as its implicit form with
+  the orders as the claim's immediates. A variable order is a follow-on (CSUB-4).
 - A call of a function with a prototype passes as many arguments as it has parameters, and at least as many where it
   ends in `...` -- through a definition, a prototype, a function-pointer object, a member, a table element or a
   select alike; any other count is refused in Clang's words (CF-ARGC).

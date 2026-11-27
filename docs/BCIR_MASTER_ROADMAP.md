@@ -283,7 +283,7 @@ Current work is maintenance and bounded completion, not another breadth sprint:
   rest. The ladder from here:
   - CSUB-2, table idioms (most of the blocked units wait on it);
   - CSUB-3, `<stdbit.h>`, `<stdckdint.h>` and one `bcir_bytes.h` (landed);
-  - CSUB-4, `<stdatomic.h>`'s explicit-order calls;
+  - CSUB-4, `<stdatomic.h>`'s explicit-order calls (landed);
   - CSUB-5, a hosted profile;
   - CSUB-6, AI numerics at the source level.
 

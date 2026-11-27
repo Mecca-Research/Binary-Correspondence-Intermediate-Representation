@@ -169,6 +169,16 @@ def _atomic_ptr(t: str, vol: bool = False) -> str:
     return f"{t} {q} *" if t.rstrip().endswith("*") else f"{q} {t} *"
 
 
+# A C11 memory order by its value (C11 7.17.3), as an explicit-order atomic's emit spells it (CSUB-4; the twin's
+# `memory_orders`)
+_MEMORY_ORDERS = (
+    "memory_order_relaxed",
+    "memory_order_consume",
+    "memory_order_acquire",
+    "memory_order_release",
+    "memory_order_acq_rel",
+    "memory_order_seq_cst",
+)
 # An increment or decrement of an `_Atomic` object (`c.c11atom.rmw:<kind>`), as the emitted operator.
 _RMW_INCDEC = {"preinc": "++{}", "predec": "--{}", "postinc": "{}++", "postdec": "{}--"}
 
@@ -1085,8 +1095,16 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"({_UNOP[suf]}{ref(c.rd[0])})")
     if c.op.startswith("c.cast:"):  # (type)operand — width cast / reinterpret
         rt = lf.rid_types.get(c.wr[0])
-        # a function pointer, a pointer to one: spelled from the temp's type, which carries it whole (CF-RTFP)
-        to = _qual_type(rt, ()) if _has_fp(rt) else c.op.split(":", 1)[1]
+        # a function pointer, a pointer to one: spelled from the temp's type, which carries it whole (CF-RTFP); a
+        # data pointer as the temp is declared (`_load_ctype`): the op's canonical spelling names an 8-byte unsigned
+        # `uint64_t`, which on an LP64 target is `unsigned long`, another type than the `unsigned long long *` the
+        # temp is declared -- `T *t = (uint64_t *)p;`, which GCC 14 refuses as incompatible pointer types (CSUB-4)
+        if _has_fp(rt):
+            to = _qual_type(rt, ())
+        elif rt is not None and rt.kind == "pointer":
+            to = _load_ctype(lf, c.wr[0])
+        else:
+            to = c.op.split(":", 1)[1]
         return deftmp(c.wr[0], f"({to}){ref(c.rd[0])}")
     if c.op == "c.addrof":  # &lvalue -> a pointer value (T *t = &x;)
         rt = lf.rid_types.get(c.wr[0])
@@ -1379,16 +1397,19 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"({expr})", et)
     if c.op.startswith("c.c11atom."):  # C11 <stdatomic.h> generics on _Atomic objects
         fn = c.op.split(".")[-1]  # fetch_add / fetch_sub / fetch_xor / load / store
+        # an explicit-order form carries its orders as immediates, spelled by name after the operands (CSUB-4)
+        sfx = "_explicit" if c.imm else ""
+        mo = "".join(f", {_MEMORY_ORDERS[o]}" for o in c.imm)
         if fn == "load":
-            return deftmp(c.wr[0], f"atomic_load({ref(c.rd[0])})")
+            return deftmp(c.wr[0], f"atomic_load{sfx}({ref(c.rd[0])}{mo})")
         if fn == "store":
-            return f"atomic_store({ref(c.rd[0])}, {ref(c.rd[1])});"
+            return f"atomic_store{sfx}({ref(c.rd[0])}, {ref(c.rd[1])}{mo});"
         if fn.startswith("cas_"):  # cas_strong/weak -> bool compare_exchange (obj, &exp, des)
             return deftmp(
                 c.wr[0],
-                f"atomic_compare_exchange_{fn[4:]}({ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])})",
+                f"atomic_compare_exchange_{fn[4:]}{sfx}({ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])}{mo})",
             )
-        return deftmp(c.wr[0], f"atomic_{fn}({ref(c.rd[0])}, {ref(c.rd[1])})")
+        return deftmp(c.wr[0], f"atomic_{fn}{sfx}({ref(c.rd[0])}, {ref(c.rd[1])}{mo})")
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
 
 

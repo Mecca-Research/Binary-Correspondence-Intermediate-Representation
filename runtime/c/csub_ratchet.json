@@ -207,10 +207,7 @@
       "rung": "CSUB-5"
     },
     "bcir_ring.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: not an integer constant expression",
-      "construct": "<stdatomic.h>: `ATOMIC_LLONG_LOCK_FREE` in a static assertion, then the explicit-order calls",
-      "rung": "CSUB-4"
+      "verdict": "clean"
     },
     "bcir_rng.c": {
       "verdict": "clean"

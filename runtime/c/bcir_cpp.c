@@ -1181,6 +1181,15 @@ static void h_stdckdint(hbuf *b) {   /* C23's checked arithmetic (7.20) as Clang
   hput(b, "#define ckd_sub(R, A, B) __builtin_sub_overflow((A), (B), (R))");
   hput(b, "#define ckd_mul(R, A, B) __builtin_mul_overflow((A), (B), (R))");
 }
+/* C11's atomics (7.17), the macros, the oracle's `stdheaders._stdatomic` line for line: each standard type always
+ * lock-free on every target of the matrix, the flag's initializer and `kill_dependency` (CSUB-4). */
+static void h_stdatomic(hbuf *b) {
+  static const char *const T[] = {"BOOL", "CHAR", "CHAR16_T", "CHAR32_T", "WCHAR_T", "SHORT", "INT", "LONG",
+                                  "LLONG", "POINTER", 0};
+  for (int k = 0; T[k]; k++) hput(b, "#define ATOMIC_%s_LOCK_FREE 2", T[k]);
+  hput(b, "#define ATOMIC_FLAG_INIT { 0 }");
+  hput(b, "#define kill_dependency(y) (y)");
+}
 /* C23's bit utilities (7.18), the oracle's `stdheaders._stdbit` line for line: each typed function a `static inline`
  * one in the subset's own C over the integer builtins both rails lower verbatim -- a builtin's count taken in its own
  * type's width and narrowed to the argument's, a zero argument's count the width, `bit_ceil` of a value whose ceiling
@@ -1257,7 +1266,8 @@ static void h_math(hbuf *b) {
   hput(b, "#define isnormal(x) __builtin_isnormal(x)");
 }
 static const char *const builtin_names[] = {"stdint.h", "stddef.h", "stdbool.h", "limits.h", "float.h", "iso646.h",
-                                            "stdalign.h", "stdckdint.h", "stdbit.h", "math.h", 0};
+                                            "stdalign.h", "stdckdint.h", "stdatomic.h", "stdbit.h", "math.h",
+                                            0};
 static int builtin_known(const char *name) {
   for (int k = 0; builtin_names[k]; k++) if (!strcmp(builtin_names[k], name)) return 1;
   return 0;
@@ -1281,6 +1291,7 @@ static int builtin_header(CppState *st, const char *name) {
   else if (!strcmp(name, "iso646.h")) h_iso646(&b);
   else if (!strcmp(name, "stdalign.h")) h_stdalign(&b);
   else if (!strcmp(name, "stdckdint.h")) h_stdckdint(&b);
+  else if (!strcmp(name, "stdatomic.h")) h_stdatomic(&b);
   else if (!strcmp(name, "stdbit.h")) h_stdbit(st, &b);
   else h_math(&b);
   hput(&b, "#endif");

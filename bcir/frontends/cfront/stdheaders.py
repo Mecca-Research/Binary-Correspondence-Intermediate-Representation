@@ -44,6 +44,7 @@ NAMES = (
     "iso646.h",
     "stdalign.h",
     "stdckdint.h",
+    "stdatomic.h",
     "stdbit.h",
     "math.h",
 )
@@ -319,6 +320,33 @@ def _stdckdint(abi: TargetABI) -> list[str]:
     ]
 
 
+def _stdatomic(abi: TargetABI) -> list[str]:
+    # C11's atomics (7.17), the macros: each standard type's lock-free property -- 2, always lock-free, of every
+    # type on every target of the matrix, as Clang's `__CLANG_ATOMIC_*_LOCK_FREE` read there -- the flag's
+    # initializer, and `kill_dependency`. The generics themselves, and `memory_order_*`, are both rails' own
+    # (`_C11_EXPLICIT`, the twin's `atomic_kind`); C23 removed `ATOMIC_VAR_INIT`, and Clang 18 has no
+    # `ATOMIC_CHAR8_T_LOCK_FREE` (CSUB-4)
+    return [
+        *(
+            f"#define ATOMIC_{t}_LOCK_FREE 2"
+            for t in (
+                "BOOL",
+                "CHAR",
+                "CHAR16_T",
+                "CHAR32_T",
+                "WCHAR_T",
+                "SHORT",
+                "INT",
+                "LONG",
+                "LLONG",
+                "POINTER",
+            )
+        ),
+        "#define ATOMIC_FLAG_INIT { 0 }",
+        "#define kill_dependency(y) (y)",
+    ]
+
+
 #: <stdbit.h>'s operations (C23 7.18.3-7.18.16), in the standard's order, and each one's result: a count (`unsigned
 #: int`), a `bool`, or a value of the argument's type
 _STDBIT_OPS = (
@@ -438,6 +466,7 @@ _BUILDERS = {
     "iso646.h": _iso646,
     "stdalign.h": _stdalign,
     "stdckdint.h": _stdckdint,
+    "stdatomic.h": _stdatomic,
     "stdbit.h": _stdbit,
     "math.h": _math,
 }

@@ -1,0 +1,180 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+  "bcir.tests.test_c_cfront:test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX1 the oracle's explicit forms undispatched",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if node.callee in self._C11_EXPLICIT:\n",
+   "new": "        if False:\n"
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX2 the oracle's orders dropped from the claim",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "op, oc, (ptr, *vals), (t,), lane=Lane.A, domain=dom, hazard=\"atomic\", imm=orders",
+   "new": "op, oc, (ptr, *vals), (t,), lane=Lane.A, domain=dom, hazard=\"atomic\", imm=()"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX3 the oracle taking a variable order",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if any(o is None for o in orders):\n",
+   "new": "        if False:\n"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX4 the oracle's load taking acq_rel",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "\"c.c11atom.load\": (frozenset({3, 4}),),",
+   "new": "\"c.c11atom.load\": (frozenset({3}),),"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX5 the oracle's weak compare-exchange failing release",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "\"c.c11atom.cas_weak\": (frozenset(), frozenset({3, 4})),",
+   "new": "\"c.c11atom.cas_weak\": (frozenset(), frozenset()),"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX6 the oracle's store taking acquire",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "\"c.c11atom.store\": (frozenset({1, 2, 4}),),",
+   "new": "\"c.c11atom.store\": (frozenset({1, 4}),),"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX7 the oracle's generics' operands uncounted",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if len(actuals) != want:\n",
+   "new": "            if False:\n"
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX8 the oracle's emit the implicit call",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "sfx = \"_explicit\" if c.imm else \"\"",
+   "new": "sfx = \"\""
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX9 the oracle's emit naming the next order",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "mo = \"\".join(f\", {_MEMORY_ORDERS[o]}\" for o in c.imm)",
+   "new": "mo = \"\".join(f\", {_MEMORY_ORDERS[min(o + 1, 5)]}\" for o in c.imm)"
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX10 the twin's explicit forms undispatched",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(c11_explicit(&id,&aop,&aoc,&akind,&an,&ak)) return",
+   "new": "    if(0 && c11_explicit(&id,&aop,&aoc,&akind,&an,&ak)) return"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX11 the twin taking a variable order",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  for(int j=0;j<k;j++) if(!order_peek(c,starts[n+j],&ord[j])){ fail(c,CC_ORDER_CONST); return 0; }",
+   "new": "  for(int j=0;j<k;j++) if(0 && !order_peek(c,starts[n+j],&ord[j])){ fail(c,CC_ORDER_CONST); return 0; }"
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX12 the twin's emit naming the next order",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "memory_orders[ov>=0&&ov<=5?ov:5]",
+   "new": "memory_orders[ov>=0&&ov<5?ov+1:5]"
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX13 the twin's orders dropped from the claim",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  cl->n_imm=(uint8_t)k;\n",
+   "new": "  cl->n_imm=0;\n"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX14 the twin's load taking acq_rel",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "if(!strcmp(op,\"c.c11atom.load\")) return o!=3 && o!=4;",
+   "new": "if(!strcmp(op,\"c.c11atom.load\")) return o!=3;"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX15 the twin's store taking acquire",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "return o!=1 && o!=2 && o!=4;",
+   "new": "return o!=1 && o!=4;"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX16 the twin's compare-exchange failure unchecked",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "if(!strncmp(op,\"c.c11atom.cas_\",14) && j==1) return o!=3 && o!=4;",
+   "new": "if(!strncmp(op,\"c.c11atom.cas_\",14) && j==2) return o!=3 && o!=4;"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX17 the twin taking an order past seq_cst",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(o<0 || o>5) return 0;\n",
+   "new": "  if(o<0 || o>6) return 0;\n"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX18 the twin's implicit generics' operands uncounted",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(arity && na!=arity){ fail(c,na<arity?CC_ARGC_FEW:CC_ARGC_MANY); return 0; }",
+   "new": "  if(0 && arity && na!=arity){ fail(c,na<arity?CC_ARGC_FEW:CC_ARGC_MANY); return 0; }"
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX19 the twin's header without the long long lock-free macro",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "\"LLONG\", \"POINTER\", 0};",
+   "new": "\"POINTER\", 0};"
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX20 the oracle's header saying sometimes lock-free",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "f\"#define ATOMIC_{t}_LOCK_FREE 2\"",
+   "new": "f\"#define ATOMIC_{t}_LOCK_FREE 1\""
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX21 the oracle's header unregistered",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "    \"stdatomic.h\": _stdatomic,\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX22 the oracle's pointer cast spelled canonically again",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "        elif rt is not None and rt.kind == \"pointer\":\n",
+   "new": "        elif False:\n"
+  },
+  {
+   "expects": "test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build",
+   "label": "AX23 the oracle's fences all full",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            5 if order is None else order, \"c.fence\"\n",
+   "new": "            5, \"c.fence\"\n"
+  },
+  {
+   "expects": "test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong",
+   "label": "AX24 the twin's order names unshadowed",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(lookup(c,core) || find_global(c,core->s,core->n)>=0 || callee_ret(c,core)) return 0;\n    return memorder_value(core,v);",
+   "new": "    return memorder_value(core,v);"
+  }
+ ]
+}

@@ -140,7 +140,7 @@ itself forbids, and RED before GREEN.
 | **CSUB-1** Conformance (**landed 2026-11-11**: `bcir-cc` compiles 21 of the runtime's 58 production units with R1–R18 clean, where it compiled 4; the ratchet below holds all 58. Both rails' preprocessors are now one engine, Prosser's algorithm with the argument prescan, one rescan and `#`'s spacing, which also closed four twin miscompiles §4.1 names) | Function-like macro calls whose arguments span lines (C11 6.10.3p10). `static_assert` and `_Static_assert` at file scope. Complete freestanding headers: `<stdint.h>`'s limits and its `INTn_C`/`UINTn_C` macros; `<stddef.h>`'s `NULL`, `offsetof`, `max_align_t` and `PTRDIFF_MAX` (`bcir_host_alloc.h` needs `max_align_t` and `offsetof`, §3.1); `<stdbool.h>`, `<limits.h>` and `<float.h>`; `<math.h>`'s `NAN` and `INFINITY`. | The serialization core: `bcir_asn1.c`, `bcir_binrec.c`, `bcir_encode.c`, `bcir_runtime.c`, `bcir_exec.c`, `bcir_control_plane.c` and `bcir_ai_kernels.c`'s portable path. It is also every program in these domains that includes a standard header. |
 | **CSUB-2** Table idioms (**landed 2026-11-27**: CSUB-2a 2026-11-14; CSUB-2b, CSUB-2c's first two slices, CSUB-2d's two and CSUB-2e's first 2026-11-15, CSUB-2c's third and CSUB-2e's second 2026-11-16, CSUB-2e's third to fifth 2026-11-20, the close-out 2026-11-27, §4.2; 32 of the 58 units compile clean by it, and no unit's first refusal is the rung's) | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. Four more the ratchet found first in units the measurement had not reached: a member read through a local's address, `(&v)->m`, as a macro writes it (`bcir_kplan.c`); a row of a multi-dimensional array used as a value, `f(t[1])` of `fe t[4][10]` (`bcir_ed25519.c`); the address-of, increment and assignment of an lvalue reached through a loaded pointer (`bcir_spm.c`, `bcir_emit.c`, both quarantine units); and a struct returned by a call through a prototype (`bcir_handoff.c`). | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c`, `bcir_handoff.c` and `bcir_ed25519.c`: the table-driven dispatch every codec and catalog reader is written in, and the field arithmetic of the signature code. |
 | **CSUB-3** C23 bits and checked arithmetic (**landed 2026-11-27**: `<stdckdint.h>`, `<stdbit.h>` and the one `bcir_bytes.h`, §4.4) | `<stdbit.h>` (endian queries, bit width, leading and trailing zeros, population count) and `<stdckdint.h>` (`ckd_add`, `ckd_sub`, `ckd_mul`), each with its exact C23 semantics. The master roadmap lists both as near-term gaps (§4.1). One shared `bcir_bytes.h` built on them replaces the nine copies of the endian helpers, byte-identical. | Varints, bitmaps, length fields and every bounds check of the L3 kind ("bounds live where the resource commits") written as checked arithmetic rather than hand-rolled comparisons. |
-| **CSUB-4** The atomics API | `<stdatomic.h>`'s explicit-order calls: `atomic_load_explicit`, `atomic_store_explicit`, `atomic_fetch_add_explicit` and `atomic_compare_exchange_*_explicit`, with `memory_order`. They map onto the memory model the oracle already states (`lower.memory_model`) and the law rail's atomic orderings. | `bcir_ring.c` and the lock-free single-producer, single-consumer structures the AI system's services run on (`BCIR_AI_SYSTEM_ROADMAP.md` §5.2). |
+| **CSUB-4** The atomics API (**landed 2026-11-27**, §4.6) | `<stdatomic.h>`'s explicit-order calls: `atomic_load_explicit`, `atomic_store_explicit`, `atomic_fetch_add_explicit` and `atomic_compare_exchange_*_explicit`, with `memory_order`. They map onto the memory model the oracle already states (`lower.memory_model`) and the law rail's atomic orderings. | `bcir_ring.c` and the lock-free single-producer, single-consumer structures the AI system's services run on (`BCIR_AI_SYSTEM_ROADMAP.md` §5.2). |
 | **CSUB-5** A hosted profile (**first slice landed 2026-11-20**: the `<string.h>` reads, §4.3; 38 of the 58 units compile clean) | A declared hosted class, not part of the freestanding subset: `<stdio.h>` streams and file I/O under the injected-allocator memory class (`../languages/C_MEMORY_DISCIPLINE.md`). Memory mapping goes through a declared host interface. The `<string.h>` reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`, freestanding since C23 -- landed first: `bcir_decoder_gem.c`, `bcir_decoder_pack.c`, `bcir_verify.c`, `bcir_spm.c`, `bcir_bpe.c` and `bcir_diag.c` stopped at one. | The loaders `bcir_q8_model.c` and `bcir_llama.c`, and the quarantine's recovery |
 | **CSUB-6** AI numerics, at the source level | A bf16 storage type and `_Float16` with declared conversion semantics. `#pragma STDC FP_CONTRACT OFF`, so a kernel's no-contraction contract (M17) is stated in its source as well as its flags. C23 `unreachable()` and an assume form feeding verifier facts (the master roadmap's "verifier-fed assume"). A call of more than 16 arguments: the claim graph's bound on a claim's reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS), which an attention kernel's workspace call passes with 18 (`bcir_decoder_train.c`). | The scalar halves of the AI kernels. Threads, vector types and ISA intrinsics stay outside the subset under the fallback contract. The tensor pool and the AVX-512/AMX kernels are measured, parity-held runtime services, not verified-subset code. |
 
@@ -655,6 +655,32 @@ body, which the oracle reads and the twin refuses.
 
 The count stays 38 of 58: no unit's first refusal was an attribute. PORT-4 then added two units: `bcir_etl.c`, the
 event transducer, compiles clean (39 of 60), and `bcir_etl_tool.c`, a hosted CLI, waits on CSUB-5's `<stdio.h>`.
+
+### 4.6 CSUB-4, the atomics API (2026-11-27)
+
+- **Both rails read `<stdatomic.h>`'s macros**: `ATOMIC_*_LOCK_FREE` of each standard type, 2 (always lock-free) on
+  every target of the matrix, as Clang's `__CLANG_ATOMIC_*_LOCK_FREE` read there; `ATOMIC_FLAG_INIT`; and
+  `kill_dependency`. The standard-header test holds each to Clang's on every target. C23 removed `ATOMIC_VAR_INIT`,
+  and Clang 18 has no `ATOMIC_CHAR8_T_LOCK_FREE`, so neither is defined. Both rails had read the header as nothing,
+  and `bcir_ring.c`'s `_Static_assert(ATOMIC_LLONG_LOCK_FREE == 2, ...)` was no constant.
+- **Each generic's explicit-order form lowers as its implicit form's claim**, with its memory orders as the claim's
+  immediates, which the digest holds. The forms are `atomic_load_explicit`, `atomic_store_explicit`,
+  `atomic_exchange_explicit`, the three fetch-ops' and both compare-exchanges'. Each is emitted as the explicit call,
+  each order spelled by name. An order is a constant read as the fence's is: a name, a parenthesized or `+` name,
+  `__ATOMIC_*`, an integer, an enumeration constant. A variable order, a local named as one and an expression of one
+  are refused as a follow-on.
+- **An order the operation does not take is refused alike** (C11 7.17.7): a load's release or acq_rel, a store's
+  consume, acquire or acq_rel, a compare-exchange's failure release or acq_rel, a value past seq_cst. Clang only
+  warns of those (`-Watomic-memory-ordering`); their behaviour is undefined.
+- **A generic of any other number of operands is refused in CF-ARGC's words**, explicit or implicit. The oracle had
+  raised an `IndexError` at `atomic_load()`, and the twin lowered a claim of no object.
+- **On the way, the oracle's pointer casts.** A cast to a pointer to a 64-bit integer the source names `unsigned long
+  long` was emitted `(uint64_t *)`, beside a temp declared as the source names it. On an LP64 target those are
+  different types, which GCC 14 refuses. A data-pointer cast is now spelled as its temp is declared.
+
+`bcir_ring.c` compiles with R1-R18 clean, to one digest on both rails: the count is 47 of 68. The claim graph's LLVM
+lowering still orders an atomic claim by its hazard (`lower.memory_model`); reading the claim's own orders there is a
+follow-on.
 
 ## 5. Subsystems
 

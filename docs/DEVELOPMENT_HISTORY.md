@@ -313,6 +313,29 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-27 — CSUB-4: the atomics API on both rails; `bcir_ring.c` under the verified compiler.**
+  - Both rails read `<stdatomic.h>`'s macros: `ATOMIC_*_LOCK_FREE` (2 on every target of the matrix, held to Clang's),
+    `ATOMIC_FLAG_INIT` and `kill_dependency`. They had read the header as nothing.
+  - Each C11 generic's explicit-order form -- load, store, exchange, the three fetch-ops, both compare-exchanges --
+    lowers as its implicit form's claim, with its memory orders as the claim's immediates, which the digest holds.
+    It is emitted as the explicit call, each order spelled by name.
+  - An order is a constant, read as the fence's is; a variable order is refused as a follow-on. An order the
+    operation does not take (C11 7.17.7) is refused alike; Clang only warns of those.
+  - A generic of any other number of operands is refused in CF-ARGC's words. The oracle had raised an `IndexError`
+    at `atomic_load()`, and the twin lowered a claim of no object.
+  - **On the way, the oracle's pointer casts.** A cast to `unsigned long long *` was emitted `(uint64_t *)` beside a
+    temp declared `unsigned long long *`: on LP64 another type, which GCC 14 refuses. A data-pointer cast is now
+    spelled as its temp is declared.
+  - **Evidence.**
+    - `test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build`: 7 units lower alike, R18 clean, each
+      rail's emit run as Clang's build and compiled as C11 strictly. Each explicit call spells exactly its claim's
+      orders: a run of one thread cannot tell a relaxed load from an acquire one. `bcir_ring.c` lowers to one digest
+      on both rails.
+    - `test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong`: 20 forms refused
+      alike.
+  - The ratchet moves to 47 of 68: `bcir_ring.c` is clean.
+  - **Standing faults.** `cfront-atomics-explicit.json`, 24, each swept RED.
+
 - **2026-11-27 — CSUB-3c: the runtime's one copy of its byte-order helpers, `bcir_bytes.h`.**
   - Fifteen units had each defined their own fixed-width loads and stores. The spellings were `rd16`, `rd32`, `rd64`,
     `wr16`, `wr32`, `wr64`, `ld32`, `st32`, `read_u32`, `rd32be` and `load64_be`, of three pointer spellings, one

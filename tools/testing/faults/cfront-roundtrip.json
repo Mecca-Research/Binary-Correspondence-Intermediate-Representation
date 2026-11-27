@@ -236,8 +236,8 @@
   {
    "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
    "label": "O47 the oracle's emit spells a function-pointer cast by its op",
-   "new": "        to = c.op.split(\":\", 1)[1]",
-   "old": "        to = _qual_type(rt, ()) if _has_fp(rt) else c.op.split(\":\", 1)[1]",
+   "new": "        if False:\n            to = _qual_type(rt, ())\n",
+   "old": "        if _has_fp(rt):\n            to = _qual_type(rt, ())\n",
    "path": "bcir/frontends/cfront/emit.py"
   },
   {

@@ -727,6 +727,12 @@ ARGC_FEW = "too few arguments to function call"
 # signed, `bool` or non-integer argument, which C23 7.18.1p3 leaves out -- in one set of words (the twin's
 # CC_GENERIC_NONE; CSUB-3)
 GENERIC_NONE = "no _Generic association matches the controlling expression's type"
+# A C11 atomic generic's memory order, in its explicit-order form (CSUB-4): a constant, and one the operation takes
+# (C11 7.17.7) -- the twin's CC_ORDER_CONST and CC_ORDER_INVALID
+ATOMIC_ORDER_CONST = (
+    "an atomic operation's memory order is a constant: a variable order is a follow-on"
+)
+ATOMIC_ORDER_INVALID = "a memory order this atomic operation does not take"
 ARGC_MANY = "too many arguments to function call"
 
 # A struct or union object takes only a value of its own type: its initializer, when not a brace list, is
@@ -5255,34 +5261,76 @@ class _FuncLowerer:
         5: "c.fence",
     }
 
-    def _fence_order_kind(self, arg_node) -> str:
-        """Resolve a `memory_order` ARGUMENT AST node to a fence-kind op string (SEG6.1). An integer literal
-        uses its value; a named `memory_order_*` / `__ATOMIC_*` constant uses its mapped value; anything else
-        (a runtime variable, an unrecognized name, a non-constant expression) folds conservatively to the
-        FULL fence (`c.fence`) -- sound (a stronger fence never under-synchronizes) and never crashes. A unary `+`
-        keeps the constant's value (`+(memory_order_acquire)`), as the twin's `fence_order_op` reads it."""
+    def _order_value(self, arg_node) -> "int | None":
+        """The value of a `memory_order` ARGUMENT AST node, or None where it is no constant: an integer literal
+        its value; a named `memory_order_*` / `__ATOMIC_*` constant its mapped value; a unary `+` keeps the
+        constant's value (`+(memory_order_acquire)`). Anything else -- a runtime variable, an unrecognized
+        name, a non-constant expression -- is None. The twin's `order_peek`."""
         while isinstance(arg_node, cast.Unary) and arg_node.op == "+":
             arg_node = arg_node.operand
         if isinstance(arg_node, cast.IntLit):
-            order = arg_node.value
-        elif (
+            return arg_node.value
+        if (
             isinstance(arg_node, cast.Name)
             and arg_node.ident in self._MEMORDER
             and arg_node.ident not in self.env
             and arg_node.ident not in self.func_rets
         ):  # the constant ONLY when NOT shadowed by a real
-            order = self._MEMORDER[arg_node.ident]  #   decl OR a same-named function -- EXACTLY
+            return self._MEMORDER[arg_node.ident]  #   decl OR a same-named function -- EXACTLY
             #   _rvalue's precedence (an env local, then a func name -> a funcptr value, only THEN the _MEMORDER
             #   constant), so the kind rail never disagrees with the value rail on a shadowed name.
-        else:
-            order = 5  # non-constant / shadowed / unknown -> seq_cst (full)
-        return self._ORDER_KIND.get(order, "c.fence")  # an out-of-range int folds to full too
+        return None
+
+    def _fence_order_kind(self, arg_node) -> str:
+        """Resolve a `memory_order` ARGUMENT AST node to a fence-kind op string (SEG6.1) by its value
+        (`_order_value`); one that is no constant folds conservatively to the FULL fence (`c.fence`) -- sound
+        (a stronger fence never under-synchronizes) and never crashes."""
+        order = self._order_value(arg_node)
+        return self._ORDER_KIND.get(
+            5 if order is None else order, "c.fence"
+        )  # out of range -> full too
 
     # Compare-and-swap -> the CMPXCHG opcode: a 3-read claim (ptr, expected, desired). The `val`
     # form returns the pre-swap value, the `bool` form returns whether the swap happened.
     _CMPXCHG = {
         "__sync_val_compare_and_swap": "c.cmpxchg.val",
         "__sync_bool_compare_and_swap": "c.cmpxchg.bool",
+    }
+    # The C11 `<stdatomic.h>` generics' explicit-order forms (CSUB-4), each as its implicit form's claim -- the
+    # op, the opcode, the operands it reads -- with its memory orders as the claim's immediates, emitted as
+    # the explicit call: `atomic_load_explicit(p, memory_order_acquire)`. name -> (op, opcode, the operands
+    # before the orders, the orders).
+    _C11_EXPLICIT = {
+        "atomic_load_explicit": ("c.c11atom.load", Opcode.LOAD, 1, 1),
+        "atomic_store_explicit": ("c.c11atom.store", Opcode.STORE, 2, 1),
+        "atomic_exchange_explicit": ("c.c11atom.exchange", Opcode.ATOMIC_ADD, 2, 1),
+        "atomic_fetch_add_explicit": ("c.c11atom.fetch_add", Opcode.ATOMIC_ADD, 2, 1),
+        "atomic_fetch_sub_explicit": ("c.c11atom.fetch_sub", Opcode.ATOMIC_SUB, 2, 1),
+        "atomic_fetch_xor_explicit": ("c.c11atom.fetch_xor", Opcode.ATOMIC_XOR, 2, 1),
+        "atomic_compare_exchange_strong_explicit": ("c.c11atom.cas_strong", Opcode.CMPXCHG, 3, 2),
+        "atomic_compare_exchange_weak_explicit": ("c.c11atom.cas_weak", Opcode.CMPXCHG, 3, 2),
+    }
+    # ... and the implicit forms' operands: each generic takes its object and its operands, so `atomic_load()`
+    # is refused as a call of any other arity is (CF-ARGC), where it had raised an IndexError
+    _C11_ARITY = {
+        "atomic_load": 1,
+        "atomic_store": 2,
+        "atomic_exchange": 2,
+        "atomic_fetch_add": 2,
+        "atomic_fetch_sub": 2,
+        "atomic_fetch_xor": 2,
+        "atomic_compare_exchange_strong": 3,
+        "atomic_compare_exchange_weak": 3,
+        **{name: n + k for name, (_op, _oc, n, k) in _C11_EXPLICIT.items()},
+    }
+    # The memory orders each operation takes (C11 7.17.7.1p2, 7.17.7.2p2, 7.17.7.4p2): a load no release or
+    # acq_rel, a store no consume, acquire or acq_rel, a compare-exchange's failure order no release or acq_rel;
+    # a read-modify-write any. Clang warns of the others (`-Watomic-memory-ordering`), whose behaviour is undefined.
+    _ORDERS_REFUSED = {
+        "c.c11atom.load": (frozenset({3, 4}),),
+        "c.c11atom.store": (frozenset({1, 2, 4}),),
+        "c.c11atom.cas_strong": (frozenset(), frozenset({3, 4})),
+        "c.c11atom.cas_weak": (frozenset(), frozenset({3, 4})),
     }
     # C11 <stdatomic.h> generics on _Atomic objects -> the same ATOMIC opcodes, but emitted as the C11
     # functions (which accept an _Atomic* -- the __atomic_* builtins do not).
@@ -5305,6 +5353,35 @@ class _FuncLowerer:
         if el is None or el.kind != "scalar" or el.name == "void":
             return scalar("uint32_t")
         return unqualified(el)
+
+    def _c11_explicit(self, node: cast.CallExpr, actuals: tuple) -> int:
+        """A C11 generic's explicit-order form (CSUB-4): its implicit form's claim, reading its object and its
+        operands, with its memory orders as the claim's immediates. Each order is a constant (`_order_value`)
+        the operation takes (`_ORDERS_REFUSED`); a variable order is a follow-on. The twin's `p_atomic`."""
+        op, oc, n, k = self._C11_EXPLICIT[node.callee]
+        orders = tuple(self._order_value(a) for a in node.args[n : n + k])
+        if any(o is None for o in orders):
+            raise CLowerError(ATOMIC_ORDER_CONST)
+        refused = self._ORDERS_REFUSED.get(op, ())
+        if any(
+            o not in range(6) or (j < len(refused) and o in refused[j])
+            for j, o in enumerate(orders)
+        ):
+            raise CLowerError(ATOMIC_ORDER_INVALID)
+        ptr, vals = actuals[0], actuals[1:n]
+        dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
+        if op == "c.c11atom.store":
+            self._emit(
+                op, oc, (ptr, *vals), (), lane=Lane.A, domain=dom, hazard="atomic", imm=orders
+            )
+            return ptr
+        if op.startswith("c.c11atom.cas_"):
+            t = self._temp(scalar("_Bool"), "c11cas")  # the comparison result is _Bool
+        else:
+            t = self._temp(self._atomic_value_type(ptr), "c11")
+        return self._emit(
+            op, oc, (ptr, *vals), (t,), lane=Lane.A, domain=dom, hazard="atomic", imm=orders
+        )
 
     @staticmethod
     def _check_arity(n: int, params: tuple, variadic: bool) -> None:
@@ -5399,6 +5476,12 @@ class _FuncLowerer:
             return self._emit(
                 op, Opcode.CMPXCHG, (ptr, exp, des), (t,), lane=Lane.A, domain=dom, hazard="atomic"
             )
+        if node.callee in self._C11_ARITY:
+            want = self._C11_ARITY[node.callee]
+            if len(actuals) != want:
+                raise CLowerError(ARGC_FEW if len(actuals) < want else ARGC_MANY)
+        if node.callee in self._C11_EXPLICIT:
+            return self._c11_explicit(node, actuals)
         if node.callee in ("atomic_compare_exchange_strong", "atomic_compare_exchange_weak"):
             # C11 bool atomic_compare_exchange_strong/weak(A *obj, C *expected, C desired): if *obj ==
             # *expected set *obj = desired (true), else load *obj into *expected (false). `expected` is a

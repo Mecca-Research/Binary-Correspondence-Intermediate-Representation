@@ -5392,11 +5392,11 @@ static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
  * as the oracle does. The shadow precedence is env (lookup/global) -> func (callee_ret) -> the constant,
  * identical to the rvalue widening, so the kind rail never disagrees with the value rail. Side-effect-free:
  * it only PEEKS (no claim, no cursor move). */
-static const char *fence_order_op(CC *c){
+static int order_peek(CC *c, int i, long long *v){
   /* strip the TRANSPARENT prefixes: balanced redundant parens, which the oracle's parser drops, AND a leading unary
    * `+`, which keeps the constant's value and which the oracle's `_fence_order_kind` peels (`-`/`~`/`!`/a cast fold
    * to the full fence). Only a `(` needs a matching `)`; a `+` is closer-less. */
-  int p=0, i=c->i;
+  int p=0;
   while(tok_is(tat(c,i),"(") || tok_is(tat(c,i),"+")){ if(tok_is(tat(c,i),"(")) p++; i++; }
   const tok *core=tat(c,i);
   /* EXACTLY p closing parens must follow the core token (balancing the leading ones) -- NOT all consecutive
@@ -5404,20 +5404,61 @@ static const char *fence_order_op(CC *c){
   int closed=1; for(int j=0;j<p;j++) if(!tok_is(tat(c,i+1+j),")")){ closed=0; break; }
   const tok *end=tat(c,i+1+p);                             /* the token right after the p redundant closers */
   int bare = closed && (tok_is(end,",")||tok_is(end,")")); /* a single core token under p balanced parens, then arg-end */
-  if(!bare) return "c.fence";                              /* a cast / binary / multi-token order -> full */
-  if(core->k==T_INT) return order_kind(core->v);
+  if(!bare) return 0;                                      /* a cast / binary / multi-token order: no constant */
+  if(core->k==T_INT){ *v=core->v; return 1; }
   if(core->k==T_ID){
     /* match p_primary's value-rail precedence EXACTLY (find_enum -> lookup/global -> func -> memory_order),
      * so the kind rail never disagrees with the value rail or the oracle: an ENUM constant folds to its own
      * value (like the oracle parser's IntLit), a local/param/global/function is a runtime value (-> full),
      * and only THEN does the builtin memory_order name map. */
     int ec=visible_enum(c,core->s,core->n);
-    if(ec>=0) return order_kind(c->ec[ec].val);
-    if(lookup(c,core) || find_global(c,core->s,core->n)>=0 || callee_ret(c,core)) return "c.fence";
-    long long mo;
-    if(memorder_value(core,&mo)) return order_kind(mo);
+    if(ec>=0){ *v=c->ec[ec].val; return 1; }
+    if(lookup(c,core) || find_global(c,core->s,core->n)>=0 || callee_ret(c,core)) return 0;
+    return memorder_value(core,v);
   }
-  return "c.fence";                                        /* non-constant / shadowed / unknown -> full */
+  return 0;                                                /* non-constant / shadowed / unknown */
+}
+/* The fence's kind by its order's value (`order_peek`, at the cursor); an order that is no constant is the FULL
+ * fence. */
+static const char *fence_order_op(CC *c){
+  long long v;
+  return order_peek(c,c->i,&v) ? order_kind(v) : "c.fence";
+}
+/* The C11 generics' explicit-order forms (CSUB-4), each as its implicit form's claim with its memory orders as the
+ * claim's immediates (the oracle's `_C11_EXPLICIT`): `n` operands -- the object first -- then `k` orders. */
+static int c11_explicit(const tok *t,const char **op,bcir_opcode *oc,int *kind,int *n,int *k){
+  static const struct{const char *nm,*op;bcir_opcode oc;int kind,n,k;} X[]={
+    {"atomic_load_explicit","c.c11atom.load",BCIR_OP_LOAD,AK_LOAD,1,1},
+    {"atomic_store_explicit","c.c11atom.store",BCIR_OP_STORE,AK_STORE,2,1},
+    {"atomic_exchange_explicit","c.c11atom.exchange",BCIR_OP_ATOMIC_ADD,AK_RMW,2,1},
+    {"atomic_fetch_add_explicit","c.c11atom.fetch_add",BCIR_OP_ATOMIC_ADD,AK_RMW,2,1},
+    {"atomic_fetch_sub_explicit","c.c11atom.fetch_sub",BCIR_OP_ATOMIC_SUB,AK_RMW,2,1},
+    {"atomic_fetch_xor_explicit","c.c11atom.fetch_xor",BCIR_OP_ATOMIC_XOR,AK_RMW,2,1},
+    {"atomic_compare_exchange_strong_explicit","c.c11atom.cas_strong",BCIR_OP_CMPXCHG,AK_CAS,3,2},
+    {"atomic_compare_exchange_weak_explicit","c.c11atom.cas_weak",BCIR_OP_CMPXCHG,AK_CAS,3,2},{0,0,0,0,0,0}};
+  for(int i=0;X[i].nm;i++) if(tok_is(t,X[i].nm)){ *op=X[i].op; *oc=X[i].oc; *kind=X[i].kind; *n=X[i].n; *k=X[i].k; return 1; }
+  return 0;
+}
+/* The operands an implicit C11 generic takes (the oracle's `_C11_ARITY`), 0 for any other atomic: `atomic_load()` had
+ * lowered to a claim of no object (CF-ARGC). */
+static int c11_arity(const tok *t){
+  if(tok_is(t,"atomic_load")) return 1;
+  if(tok_is(t,"atomic_compare_exchange_strong") || tok_is(t,"atomic_compare_exchange_weak")) return 3;
+  if(tok_is(t,"atomic_store") || tok_is(t,"atomic_exchange") || tok_is(t,"atomic_fetch_add") ||
+     tok_is(t,"atomic_fetch_sub") || tok_is(t,"atomic_fetch_xor")) return 2;
+  return 0;
+}
+#define CC_ORDER_CONST "an atomic operation's memory order is a constant: a variable order is a follow-on"
+#define CC_ORDER_INVALID "a memory order this atomic operation does not take"
+/* Whether order `o` is one the operation `op` takes as its order `j` (C11 7.17.7; the oracle's `_ORDERS_REFUSED`):
+ * a load no release or acq_rel, a store no consume, acquire or acq_rel, a compare-exchange's failure order no release
+ * or acq_rel, a read-modify-write any. */
+static int order_ok(const char *op, int j, long long o){
+  if(o<0 || o>5) return 0;
+  if(!strcmp(op,"c.c11atom.load")) return o!=3 && o!=4;
+  if(!strcmp(op,"c.c11atom.store")) return o!=1 && o!=2 && o!=4;
+  if(!strncmp(op,"c.c11atom.cas_",14) && j==1) return o!=3 && o!=4;
+  return 1;
 }
 /* A temp of the value type of what pointer `ptr` points at (the oracle's `_atomic_value_type`): its pointee,
  * unqualified, when it is a pointer (depth 1) to a scalar or an array of scalars; else the 4-byte temp it was. */
@@ -5432,13 +5473,14 @@ static uint32_t atomic_value_temp(CC *c,uint32_t ptr){
   t.is_bool=p.is_bool; t.is_plain_char=p.is_plain_char; t.bit_width=p.bit_width;
   return ctype_value_temp(c,&t);
 }
-static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordered){
+static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordered,int arity){
   c->i++; uint32_t args[BCIR_CALL_MAX_ARGS]; int na=0;
   /* SEG7: an order-taking fence (`__atomic_thread_fence`/`atomic_thread_fence`) routes its KIND by the
    * first arg's order value -- peeked HERE, BEFORE the arg is lowered, so the arg's const claim (the
    * value rail) is still emitted in sequence, exactly as the oracle does (digest = [const, fence]). */
   if(ordered && kind==AK_FENCE && !is(c,")")) op=fence_order_op(c);
   if(!p_call_args(c,args,&na)) return 0;
+  if(arity && na!=arity){ fail(c,na<arity?CC_ARGC_FEW:CC_ARGC_MANY); return 0; }   /* (CF-ARGC) */
   /* the value an atomic reads through its pointer -- atomic_load, a fetch-op, atomic_exchange, a value CAS --
    * has the pointee's type, unqualified (the oracle's `_atomic_value_type`): a uint32 temp truncated a 64-bit
    * counter and converted an `_Atomic float` to an integer (CF-ATOMIC). The bool forms and a fence stay 4-byte. */
@@ -5456,6 +5498,39 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordere
       cl->n_rd=3; cl->rd[1]=(na>1)?args[1]:args[0]; cl->rd[2]=(na>2)?args[2]:cl->rd[1]; }
     else { cl->n_wr=1; cl->wr[0]=t; cl->n_rd=2; cl->rd[1]=(na>1)?args[1]:args[0]; }   /* RMW: ptr, val */
   }
+  return t;
+}
+/* A C11 generic's explicit-order form (CSUB-4): its object and `n-1` operands, then `k` memory orders, each a constant
+ * (`order_peek`) the operation takes (`order_ok`), as the claim's immediates; the rest is its implicit form's claim.
+ * The orders are lowered as every argument is, the oracle's `_call_args` -- read off their tokens, whose starts are
+ * found first. The oracle's `_c11_explicit`. */
+static uint32_t p_atomic_explicit(CC *c,const char *op,bcir_opcode oc,int kind,int n,int k){
+  c->i++;                                                   /* '(' */
+  int starts[BCIR_CALL_MAX_ARGS], ns=0, d=0;
+  if(!is(c,")")){ starts[ns++]=c->i;
+    for(int j=c->i; j<c->nt; j++){ const tok *t=tat(c,j);
+      if(tok_is(t,"(")||tok_is(t,"[")||tok_is(t,"{")) d++;
+      else if(tok_is(t,")")||tok_is(t,"]")||tok_is(t,"}")){ if(d==0) break; d--; }
+      else if(d==0 && tok_is(t,",") && ns<BCIR_CALL_MAX_ARGS) starts[ns++]=j+1; } }
+  uint32_t args[BCIR_CALL_MAX_ARGS]; int na=0;
+  if(!p_call_args(c,args,&na)) return 0;
+  if(na!=n+k || ns<n+k){ fail(c,na<n+k?CC_ARGC_FEW:CC_ARGC_MANY); return 0; }   /* (CF-ARGC) */
+  long long ord[2]={0,0};
+  for(int j=0;j<k;j++) if(!order_peek(c,starts[n+j],&ord[j])){ fail(c,CC_ORDER_CONST); return 0; }
+  for(int j=0;j<k;j++) if(!order_ok(op,j,ord[j])){ fail(c,CC_ORDER_INVALID); return 0; }
+  uint32_t t = kind==AK_RMW || kind==AK_LOAD ? atomic_value_temp(c,args[0]) : temp(c,4);
+  if(kind==AK_CAS && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* compare_exchange -> _Bool */
+  bcir_claim *cl=new_claim(c,op,oc); if(!cl) return t;
+  cl->lane=BCIR_LANE_A; cl->hazard=BCIR_HZ_ATOMIC;
+  bcir_domain dom=BCIR_DOM_RAM;
+  for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
+  cl->domain=dom; cl->rd[0]=args[0];
+  if(kind==AK_LOAD){ cl->n_rd=1; cl->n_wr=1; cl->wr[0]=t; }
+  else if(kind==AK_STORE){ cl->n_rd=2; cl->rd[1]=args[1]; }
+  else if(kind==AK_CAS){ cl->n_wr=1; cl->wr[0]=t; cl->n_rd=3; cl->rd[1]=args[1]; cl->rd[2]=args[2]; }
+  else { cl->n_wr=1; cl->wr[0]=t; cl->n_rd=2; cl->rd[1]=args[1]; }
+  for(int j=0;j<k;j++) cl->imm[j]=ord[j];
+  cl->n_imm=(uint8_t)k;
   return t;
 }
 
@@ -6145,11 +6220,12 @@ static BCIR_NOINLINE int offsetof_value(CC *c,long long *off){
  * or a direct named call (p_call), a struct or pointer result taking its postfix. `id(x)` -- and `(*id)(x)`, whose `*`
  * of a function names it again (CF-FPTAB). */
 static uint32_t p_named_call(CC *c, tok id){
-    const char *aop;bcir_opcode aoc;int akind;
+    const char *aop;bcir_opcode aoc;int akind, an, ak;
+    if(c11_explicit(&id,&aop,&aoc,&akind,&an,&ak)) return p_atomic_explicit(c,aop,aoc,akind,an,ak);   /* (CSUB-4) */
     if(atomic_kind(&id,&aop,&aoc,&akind)){    /* atomics/fences/CAS */
       int ordered = (id.n==21 && !strncmp("__atomic_thread_fence",id.s,21))   /* SEG6.1/SEG7: the order-taking */
                  || (id.n==19 && !strncmp("atomic_thread_fence",id.s,19));    /* fence forms route by their arg */
-      return p_atomic(c,aop,aoc,akind,ordered);
+      return p_atomic(c,aop,aoc,akind,ordered,c11_arity(&id));
     }
     { venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
       if(fv&&fv->type.kind==3){       /* `fp(x)(y)`: through its value (CF-FPTAB); `fp(x).f`, `fp(x)->v` (CF-FPRET) */
@@ -11392,14 +11468,21 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+EO,on-EO,"%s %s = (%s);\n",et,rname(f,cl->wr[0],d),ex); }
     else if(!strncmp(cl->op,"c.c11atom.",10)){   /* C11 <stdatomic.h> generics on _Atomic objects */
       const char *fn=cl->op+10;                  /* fetch_add / fetch_sub / fetch_xor / load / store */
-      if(!strcmp(fn,"load")) w+=snprintf(o+EO,on-EO,"%s %s = atomic_load(%s);\n",   /* typed by the pointee (CF-ATOMIC) */
-                                         decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
-      else if(!strcmp(fn,"store")) w+=snprintf(o+EO,on-EO,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
+      /* an explicit-order form carries its orders as immediates, spelled by name after the operands (CSUB-4) */
+      static const char *const memory_orders[]={"memory_order_relaxed","memory_order_consume","memory_order_acquire",
+        "memory_order_release","memory_order_acq_rel","memory_order_seq_cst"};
+      const char *sfx=cl->n_imm?"_explicit":"";
+      char mo[64]; mo[0]=0;
+      for(int j=0;j<cl->n_imm && j<2;j++){ size_t ml=strlen(mo); long long ov=cl->imm[j];
+        snprintf(mo+ml,sizeof mo-ml,", %s",memory_orders[ov>=0&&ov<=5?ov:5]); }
+      if(!strcmp(fn,"load")) w+=snprintf(o+EO,on-EO,"%s %s = atomic_load%s(%s%s);\n",   /* typed by the pointee (CF-ATOMIC) */
+                                         decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),sfx,rname(f,cl->rd[0],a),mo);
+      else if(!strcmp(fn,"store")) w+=snprintf(o+EO,on-EO,"atomic_store%s(%s, %s%s);\n",sfx,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),mo);
       else if(!strncmp(fn,"cas_",4))             /* cas_strong/weak -> _Bool atomic_compare_exchange_<...>(obj,&exp,des) */
-        w+=snprintf(o+EO,on-EO,"_Bool %s = atomic_compare_exchange_%s(%s, %s, %s);\n",
-                    rname(f,cl->wr[0],d),fn+4,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
-      else w+=snprintf(o+EO,on-EO,"%s %s = atomic_%s(%s, %s);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),
-                       rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
+        w+=snprintf(o+EO,on-EO,"_Bool %s = atomic_compare_exchange_%s%s(%s, %s, %s%s);\n",
+                    rname(f,cl->wr[0],d),fn+4,sfx,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e),mo);
+      else w+=snprintf(o+EO,on-EO,"%s %s = atomic_%s%s(%s, %s%s);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),
+                       rname(f,cl->wr[0],d),fn,sfx,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),mo); }
     else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
       const char *pt=decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb);
       const bcir_resource *br=res_of(f,cl->rd[0]);

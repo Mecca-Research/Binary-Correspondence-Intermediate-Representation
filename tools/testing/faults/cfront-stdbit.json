@@ -41,8 +41,8 @@
    "expects": "test_stdbit_lowers_alike_and_runs_as_the_c_librarys",
    "label": "SB5 the twin without the header",
    "path": "runtime/c/bcir_cpp.c",
-   "old": "\"stdalign.h\", \"stdckdint.h\", \"stdbit.h\", \"math.h\", 0};",
-   "new": "\"stdalign.h\", \"stdckdint.h\", \"math.h\", 0};"
+   "old": "\"stdckdint.h\", \"stdatomic.h\", \"stdbit.h\", \"math.h\",",
+   "new": "\"stdckdint.h\", \"stdatomic.h\", \"math.h\","
   },
   {
    "expects": "test_stdbit_lowers_alike_and_runs_as_the_c_librarys",
