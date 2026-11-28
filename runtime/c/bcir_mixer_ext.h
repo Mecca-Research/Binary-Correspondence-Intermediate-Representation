@@ -132,6 +132,15 @@ typedef struct bcir_ext_tensor_info {
 BCIR_DT_API size_t bcir_ext_tensor_count(const bcir_ext_model *m);
 BCIR_DT_API int bcir_ext_tensor_info_at(const bcir_ext_model *m, size_t idx, bcir_ext_tensor_info *out);
 
+/* Opt-in Upgrade 1 optimizer controls (AdaGC EMA clip, FP32 Kahan, per-tensor LR & cos telemetry). */
+BCIR_DT_API int bcir_ext_configure_adagc(bcir_ext_model *m, const bcir_adagc_config *cfg);
+BCIR_DT_API int bcir_ext_configure_kahan(bcir_ext_model *m, int enable_embed, int enable_norm);
+BCIR_DT_API int bcir_ext_enable_kahan_tensor(bcir_ext_model *m, size_t idx, int enable);
+BCIR_DT_API int bcir_ext_set_tensor_lr_mult(bcir_ext_model *m, size_t idx, double lr_mult);
+BCIR_DT_API int bcir_ext_enable_tensor_telemetry(bcir_ext_model *m, int enable);
+BCIR_DT_API int bcir_ext_get_tensor_telemetry(const bcir_ext_model *m, size_t idx,
+                                              bcir_tensor_opt_telemetry *out);
+
 BCIR_DT_API int bcir_ext_forward(bcir_ext_model *m, const uint32_t *tokens, uint32_t active_time,
                                  float *out_logits);
 BCIR_DT_API int bcir_ext_evaluate(bcir_ext_model *m, const uint32_t *tokens, const uint32_t *targets,

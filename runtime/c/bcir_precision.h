@@ -201,11 +201,54 @@ typedef struct bcir_opt_state {
   size_t persistent_bytes;
   size_t opt_only_bytes;
   size_t scratch_bytes;
+  /* Upgrade 1 (opt-in, 0-defaulted): per-tensor AdaGC EMA clipping, FP32 Kahan
+   * compensated rounding, and per-tensor cos(g_t, m_{t-1}) telemetry. */
+  int adagc_enable;
+  double adagc_beta;
+  double adagc_lambda;
+  double adagc_abs_floor;
+  uint64_t adagc_warmup_steps;
+  int tensor_tel_enabled;
+  size_t kahan_active_tensors;
+  size_t kahan_bytes;
+  double *adagc_ema;
+  double *tensor_grad_norm;
+  double *tensor_adagc_scale;
+  double *tensor_grad_mom_cos;
+  uint64_t *tensor_clip_hits;
+  uint8_t *kahan_mask;
+  float **kahan_comp;
 } bcir_opt_state;
 
 typedef struct bcir_adamw_params {
   double lr, beta1, beta2, epsilon, weight_decay, grad_clip;
 } bcir_adamw_params;
+
+typedef struct bcir_adagc_config {
+  int enable;            /* 0 = off (bit-identical default), 1 = per-tensor AdaGC EMA clip */
+  double beta;           /* EMA smoothing in (0, 1), e.g., 0.98 (arXiv:2502.11034) */
+  double lambda_mult;    /* spike threshold multiplier > 0, e.g., 1.05 */
+  double abs_floor;      /* minimum absolute clip threshold >= 0 */
+  uint64_t warmup_steps; /* steps before AdaGC clipping activates (0 -> default 1) */
+} bcir_adagc_config;
+
+typedef struct bcir_tensor_opt_telemetry {
+  double last_grad_norm;
+  double ema_grad_norm;
+  double last_adagc_scale;
+  double grad_mom_cos;   /* cos(g_t, m_{t-1}) before update; 0.0 if unavailable */
+  double lr_mult;
+  uint64_t adagc_clip_hits;
+  int kahan_enabled;
+} bcir_tensor_opt_telemetry;
+
+BCIR_DT_API void bcir_adagc_config_default(bcir_adagc_config *cfg);
+BCIR_DT_API int bcir_opt_configure_adagc(bcir_opt_state *opt, const bcir_adagc_config *cfg);
+BCIR_DT_API int bcir_opt_enable_kahan_tensor(bcir_opt_state *opt, size_t shape_idx, int enable);
+BCIR_DT_API int bcir_opt_set_tensor_lr_mult(bcir_opt_state *opt, size_t shape_idx, double lr_mult);
+BCIR_DT_API int bcir_opt_enable_tensor_telemetry(bcir_opt_state *opt, int enable);
+BCIR_DT_API int bcir_opt_get_tensor_telemetry(const bcir_opt_state *opt, size_t shape_idx,
+                                              bcir_tensor_opt_telemetry *out);
 
 BCIR_DT_API bcir_opt_state *bcir_opt_create(int opt_kind, size_t n_params,
                                             const bcir_opt_tensor_shape *shapes, size_t n_shapes);

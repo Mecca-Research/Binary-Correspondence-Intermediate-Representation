@@ -121,6 +121,7 @@ struct bcir_ext_model {
 
   size_t n_tensors;
   bcir_ext_tensor_info *tensors;
+  int *tensor_roles;
   layer_offsets loff[BCIR_EXT_MAX_LAYERS];
   size_t off_embed, off_final_norm, off_lm_head;
 
@@ -171,9 +172,12 @@ static int add_tensor(bcir_ext_model *m, bcir_init_tensor_desc **idescs_p, size_
     size_t ncap = (old_cap == 0u) ? 64u : (old_cap * 2u);
     bcir_host_allocator a = bcir_host_allocator_default();
     void *tptr = m->tensors;
+    void *rptr = m->tensor_roles;
     void *iptr = *idescs_p;
     if (!bcir_host_realloc_array(&a, &tptr, old_cap, ncap, sizeof(*m->tensors), 1)) return 0;
     m->tensors = (bcir_ext_tensor_info *)tptr;
+    if (!bcir_host_realloc_array(&a, &rptr, old_cap, ncap, sizeof(*m->tensor_roles), 1)) return 0;
+    m->tensor_roles = (int *)rptr;
     if (!bcir_host_realloc_array(&a, &iptr, old_cap, ncap, sizeof(**idescs_p), 1)) return 0;
     *idescs_p = (bcir_init_tensor_desc *)iptr;
     *cap = ncap;
@@ -181,6 +185,7 @@ static int add_tensor(bcir_ext_model *m, bcir_init_tensor_desc **idescs_p, size_
   bcir_ext_tensor_info *ti = &m->tensors[idx];
   ti->offset = off; ti->rows = rows; ti->cols = cols; ti->layer = layer; ti->region = region;
   snprintf(ti->name, sizeof(ti->name), "%s", name);
+  m->tensor_roles[idx] = init_role;
   (*idescs_p)[idx].offset = off; (*idescs_p)[idx].rows = rows; (*idescs_p)[idx].cols = cols;
   (*idescs_p)[idx].role = init_role; (*idescs_p)[idx].const_val = const_val;
   m->n_tensors++;
@@ -408,7 +413,8 @@ bcir_ext_model *bcir_ext_create(const bcir_ext_spec *spec, const bcir_prec_polic
   size_t tcap = 4u + (size_t)m->sp.layers * 32u;
   bcir_init_tensor_desc *idescs = (bcir_init_tensor_desc *)ext_zalloc(tcap, sizeof(*idescs));
   m->tensors = (bcir_ext_tensor_info *)ext_zalloc(tcap, sizeof(*m->tensors));
-  if (!idescs || !m->tensors) { ext_dealloc(idescs); bcir_ext_destroy(m); return NULL; }
+  m->tensor_roles = (int *)ext_zalloc(tcap, sizeof(*m->tensor_roles));
+  if (!idescs || !m->tensors || !m->tensor_roles) { ext_dealloc(idescs); bcir_ext_destroy(m); return NULL; }
 
   add_tensor(m, &idescs, &tcap, "embed", -1, 0, V, d, BCIR_ROLE_EMBED, 0.0f, &m->off_embed);
   char nm[48];
@@ -817,7 +823,8 @@ void bcir_ext_destroy(bcir_ext_model *m) {
   if (m->pool) bcir_tensor_pool_stop(m->pool);
   bcir_aligned_free64(m->pool_mem);
   bcir_opt_destroy(m->opt);
-  bcir_aligned_free64(m->weights); bcir_aligned_free64(m->grad_tile); ext_dealloc(m->tensors);
+  bcir_aligned_free64(m->weights); bcir_aligned_free64(m->grad_tile);
+  ext_dealloc(m->tensors); ext_dealloc(m->tensor_roles);
   for (uint32_t l = 0; l < m->sp.layers; ++l) {
     layer_act *a = &m->acts[l];
     bcir_aligned_free64(a->mhc_x1); bcir_aligned_free64(a->mhc_x2);
@@ -875,6 +882,14 @@ void bcir_ext_destroy(bcir_ext_model *m) {
   ext_dealloc(m);
 }
 
+static void ext_sync_opt_mem(bcir_ext_model *m) {
+  if (!m || !m->opt) return;
+  m->mem.opt_only_bytes = m->opt->opt_only_bytes;
+  m->mem.persistent_bytes = m->opt->persistent_bytes;
+  m->mem.total_bytes = m->mem.persistent_bytes + m->mem.activation_bytes +
+                       m->mem.mixer_prob_bytes + m->mem.scratch_bytes;
+}
+
 void bcir_ext_get_mem_stats(const bcir_ext_model *m, bcir_ext_mem_stats *out) { if (m && out) *out = m->mem; }
 void bcir_ext_get_telemetry(const bcir_ext_model *m, bcir_prec_telemetry *out) { if (m && out) *out = m->tel; }
 void bcir_ext_reset_telemetry(bcir_ext_model *m) { if (m) bcir_prec_telemetry_reset(&m->tel); }
@@ -896,6 +911,40 @@ int bcir_ext_tensor_info_at(const bcir_ext_model *m, size_t idx, bcir_ext_tensor
   if (!m || !out || idx >= m->n_tensors) return 1;
   *out = m->tensors[idx];
   return 0;
+}
+int bcir_ext_configure_adagc(bcir_ext_model *m, const bcir_adagc_config *cfg) {
+  return (m && m->opt) ? bcir_opt_configure_adagc(m->opt, cfg) : 1;
+}
+int bcir_ext_enable_kahan_tensor(bcir_ext_model *m, size_t idx, int enable) {
+  if (!m || !m->opt) return 1;
+  int rc = bcir_opt_enable_kahan_tensor(m->opt, idx, enable);
+  if (rc == 0) ext_sync_opt_mem(m);
+  return rc;
+}
+int bcir_ext_configure_kahan(bcir_ext_model *m, int enable_embed, int enable_norm) {
+  if (!m || !m->opt || !m->tensor_roles) return 1;
+  for (size_t s = 0; s < m->n_tensors; ++s) {
+    int role = m->tensor_roles[s];
+    if (role == BCIR_ROLE_EMBED) {
+      int rc = bcir_opt_enable_kahan_tensor(m->opt, s, enable_embed);
+      if (rc != 0) { ext_sync_opt_mem(m); return rc; }
+    } else if (role == BCIR_ROLE_NORM) {
+      int rc = bcir_opt_enable_kahan_tensor(m->opt, s, enable_norm);
+      if (rc != 0) { ext_sync_opt_mem(m); return rc; }
+    }
+  }
+  ext_sync_opt_mem(m);
+  return 0;
+}
+int bcir_ext_set_tensor_lr_mult(bcir_ext_model *m, size_t idx, double lr_mult) {
+  return (m && m->opt) ? bcir_opt_set_tensor_lr_mult(m->opt, idx, lr_mult) : 1;
+}
+int bcir_ext_enable_tensor_telemetry(bcir_ext_model *m, int enable) {
+  return (m && m->opt) ? bcir_opt_enable_tensor_telemetry(m->opt, enable) : 1;
+}
+int bcir_ext_get_tensor_telemetry(const bcir_ext_model *m, size_t idx,
+                                  bcir_tensor_opt_telemetry *out) {
+  return (m && m->opt) ? bcir_opt_get_tensor_telemetry(m->opt, idx, out) : 1;
 }
 
 /* ==================== Linear Dispatch (Region Policy + Pair Fusion) ==================== */

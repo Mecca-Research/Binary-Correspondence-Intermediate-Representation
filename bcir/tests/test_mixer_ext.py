@@ -221,8 +221,92 @@ def test_optimizer_memory_frontier_and_fail_closed():
             raise AssertionError("all-masked target batch was not refused")
 
 
+def test_upgrade1_adagc_kahan_and_tensor_telemetry():
+    lib_path = _get_lib()
+    if lib_path is None:
+        return
+    from bcir.hosted.models.mixer_ext import AdaGCConfig
+
+    spec = MixerExtSpec(
+        vocab=24,
+        width=32,
+        heads=4,
+        kvheads=2,
+        layers=2,
+        ff=64,
+        batch=2,
+        time=10,
+        layer_mixers=("gdn2", "mla"),
+        layer_use_rope=(False, False),
+        gate_mode="g1_headwise",
+        canon_mode="canon_ac",
+        mhc_streams=2,
+        seed=11,
+        threads=2,
+    )
+    pol = PrecisionPolicy(opt_kind="muon_q8_bf16_grad")
+    opt = OptimizerConfig(lr=3e-3, grad_clip=3.0)
+    adagc = AdaGCConfig(enable=True, beta=0.95, lambda_mult=1.05, abs_floor=1e-4, warmup_steps=1)
+    stride = spec.batch * spec.time
+    toks, tgts = _synth_data(4 * stride, spec.vocab, seed=555)
+
+    with NativeMixerExt(lib_path, spec, pol) as model:
+        ms0 = model.mem_stats()
+        model.configure_adagc(adagc)
+        model.configure_kahan(embed=True, norm=True)
+        model.enable_tensor_telemetry(True)
+        model.set_tensor_lr_mult(0, 0.75)
+        ms1 = model.mem_stats()
+        assert ms1["persistent_bytes"] > ms0["persistent_bytes"]
+
+        ev_a = model.train_steps(toks[: 2 * stride], tgts[: 2 * stride], steps=2, opt=opt)
+        assert all(math.isfinite(e["loss"]) and e["status"] == 0 for e in ev_a)
+        tt = model.tensor_telemetry()
+        assert len(tt) == len(model.tensor_layout())
+        assert tt[0]["kahan_enabled"] is True
+        assert tt[0]["lr_mult"] == 0.75
+        assert tt[0]["ema_grad_norm"] > 0.0
+        assert all(-1.0 <= row["grad_mom_cos"] <= 1.0 for row in tt)
+
+        with tempfile.TemporaryDirectory() as td:
+            ckpt = Path(td) / "adagc_step2"
+            model.save_checkpoint(ckpt, step=2)
+            ev_b = model.train_steps(toks[2 * stride :], tgts[2 * stride :], steps=2, opt=opt)
+            w_ref = model.weights_bytes()
+
+            spec_r = MixerExtSpec(
+                vocab=spec.vocab,
+                width=spec.width,
+                heads=spec.heads,
+                kvheads=spec.kvheads,
+                layers=spec.layers,
+                ff=spec.ff,
+                batch=spec.batch,
+                time=spec.time,
+                layer_mixers=spec.layer_mixers,
+                layer_use_rope=spec.layer_use_rope,
+                gate_mode=spec.gate_mode,
+                canon_mode=spec.canon_mode,
+                mhc_streams=spec.mhc_streams,
+                skip_init=True,
+                threads=1,
+            )
+            with NativeMixerExt(lib_path, spec_r, pol) as restored:
+                restored.configure_adagc(adagc)
+                restored.configure_kahan(embed=True, norm=True)
+                restored.enable_tensor_telemetry(True)
+                restored.set_tensor_lr_mult(0, 0.75)
+                restored.load_checkpoint(ckpt)
+                ev_r = restored.train_steps(
+                    toks[2 * stride :], tgts[2 * stride :], steps=2, opt=opt
+                )
+                assert [e["loss"] for e in ev_r] == [e["loss"] for e in ev_b]
+                assert restored.weights_bytes() == w_ref
+
+
 TESTS = (
     test_abi6_verifiers_and_identities,
     test_hybrid_gdn2_gated_mla_train_and_checkpoint_roundtrip,
     test_optimizer_memory_frontier_and_fail_closed,
+    test_upgrade1_adagc_kahan_and_tensor_telemetry,
 )

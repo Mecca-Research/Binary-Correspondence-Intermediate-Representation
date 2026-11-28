@@ -232,6 +232,28 @@ class _TensorInfo(ct.Structure):
     ]
 
 
+class _AdaGCConfig(ct.Structure):
+    _fields_ = [
+        ("enable", ct.c_int),
+        ("beta", ct.c_double),
+        ("lambda_mult", ct.c_double),
+        ("abs_floor", ct.c_double),
+        ("warmup_steps", ct.c_uint64),
+    ]
+
+
+class _TensorOptTelemetry(ct.Structure):
+    _fields_ = [
+        ("last_grad_norm", ct.c_double),
+        ("ema_grad_norm", ct.c_double),
+        ("last_adagc_scale", ct.c_double),
+        ("grad_mom_cos", ct.c_double),
+        ("lr_mult", ct.c_double),
+        ("adagc_clip_hits", ct.c_uint64),
+        ("kahan_enabled", ct.c_int),
+    ]
+
+
 @dataclass(frozen=True)
 class MixerExtSpec:
     vocab: int
@@ -366,6 +388,30 @@ class OptimizerConfig:
         )
 
 
+@dataclass(frozen=True)
+class AdaGCConfig:
+    enable: bool = True
+    beta: float = 0.98
+    lambda_mult: float = 1.05
+    abs_floor: float = 1e-4
+    warmup_steps: int = 1
+
+    def to_c(self) -> _AdaGCConfig:
+        if (
+            not math.isfinite(self.beta)
+            or not math.isfinite(self.lambda_mult)
+            or not math.isfinite(self.abs_floor)
+        ):
+            raise ValueError("AdaGC parameters must be finite")
+        return _AdaGCConfig(
+            1 if self.enable else 0,
+            self.beta,
+            self.lambda_mult,
+            self.abs_floor,
+            max(1, int(self.warmup_steps)),
+        )
+
+
 def _bind_lib(lib: ct.CDLL) -> None:
     lib.bcir_mixer_ext_abi_version.argtypes = []
     lib.bcir_mixer_ext_abi_version.restype = ct.c_uint32
@@ -395,6 +441,22 @@ def _bind_lib(lib: ct.CDLL) -> None:
     lib.bcir_ext_tensor_count.restype = ct.c_size_t
     lib.bcir_ext_tensor_info_at.argtypes = [ct.c_void_p, ct.c_size_t, ct.POINTER(_TensorInfo)]
     lib.bcir_ext_tensor_info_at.restype = ct.c_int
+    lib.bcir_ext_configure_adagc.argtypes = [ct.c_void_p, ct.POINTER(_AdaGCConfig)]
+    lib.bcir_ext_configure_adagc.restype = ct.c_int
+    lib.bcir_ext_configure_kahan.argtypes = [ct.c_void_p, ct.c_int, ct.c_int]
+    lib.bcir_ext_configure_kahan.restype = ct.c_int
+    lib.bcir_ext_enable_kahan_tensor.argtypes = [ct.c_void_p, ct.c_size_t, ct.c_int]
+    lib.bcir_ext_enable_kahan_tensor.restype = ct.c_int
+    lib.bcir_ext_set_tensor_lr_mult.argtypes = [ct.c_void_p, ct.c_size_t, ct.c_double]
+    lib.bcir_ext_set_tensor_lr_mult.restype = ct.c_int
+    lib.bcir_ext_enable_tensor_telemetry.argtypes = [ct.c_void_p, ct.c_int]
+    lib.bcir_ext_enable_tensor_telemetry.restype = ct.c_int
+    lib.bcir_ext_get_tensor_telemetry.argtypes = [
+        ct.c_void_p,
+        ct.c_size_t,
+        ct.POINTER(_TensorOptTelemetry),
+    ]
+    lib.bcir_ext_get_tensor_telemetry.restype = ct.c_int
     lib.bcir_ext_forward.argtypes = [
         ct.c_void_p,
         ct.POINTER(ct.c_uint32),
@@ -569,6 +631,54 @@ class NativeMixerExt:
                     "cols": int(info.cols),
                     "layer": int(info.layer),
                     "region": int(info.region),
+                }
+            )
+        return tuple(out)
+
+    def configure_adagc(self, cfg: AdaGCConfig) -> None:
+        c_cfg = cfg.to_c()
+        rc = self.lib.bcir_ext_configure_adagc(self._handle, ct.byref(c_cfg))
+        if rc != 0:
+            raise ValueError(f"bcir_ext_configure_adagc failed with status {rc}")
+
+    def configure_kahan(self, *, embed: bool = True, norm: bool = True) -> None:
+        rc = self.lib.bcir_ext_configure_kahan(self._handle, 1 if embed else 0, 1 if norm else 0)
+        if rc != 0:
+            raise ValueError(f"bcir_ext_configure_kahan failed with status {rc}")
+
+    def enable_kahan_tensor(self, idx: int, enable: bool = True) -> None:
+        rc = self.lib.bcir_ext_enable_kahan_tensor(self._handle, int(idx), 1 if enable else 0)
+        if rc != 0:
+            raise ValueError(f"bcir_ext_enable_kahan_tensor failed with status {rc}")
+
+    def set_tensor_lr_mult(self, idx: int, lr_mult: float) -> None:
+        rc = self.lib.bcir_ext_set_tensor_lr_mult(self._handle, int(idx), float(lr_mult))
+        if rc != 0:
+            raise ValueError(f"bcir_ext_set_tensor_lr_mult failed with status {rc}")
+
+    def enable_tensor_telemetry(self, enable: bool = True) -> None:
+        rc = self.lib.bcir_ext_enable_tensor_telemetry(self._handle, 1 if enable else 0)
+        if rc != 0:
+            raise ValueError(f"bcir_ext_enable_tensor_telemetry failed with status {rc}")
+
+    def tensor_telemetry(self) -> tuple[dict[str, int | float | str], ...]:
+        layout = self.tensor_layout()
+        out = []
+        tel = _TensorOptTelemetry()
+        for i, meta in enumerate(layout):
+            if self.lib.bcir_ext_get_tensor_telemetry(self._handle, i, ct.byref(tel)) != 0:
+                raise RuntimeError(f"get_tensor_telemetry failed for index {i}")
+            out.append(
+                {
+                    "index": i,
+                    "name": meta["name"],
+                    "last_grad_norm": float(tel.last_grad_norm),
+                    "ema_grad_norm": float(tel.ema_grad_norm),
+                    "last_adagc_scale": float(tel.last_adagc_scale),
+                    "grad_mom_cos": float(tel.grad_mom_cos),
+                    "lr_mult": float(tel.lr_mult),
+                    "adagc_clip_hits": int(tel.adagc_clip_hits),
+                    "kahan_enabled": bool(tel.kahan_enabled),
                 }
             )
         return tuple(out)

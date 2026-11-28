@@ -636,7 +636,29 @@ bcir_opt_state *bcir_opt_create(int opt_kind, size_t n_params,
     memcpy(opt->shapes, shapes, n_shapes * sizeof(*shapes));
   }
 
+  opt->adagc_beta = 0.98;
+  opt->adagc_lambda = 1.05;
+  opt->adagc_abs_floor = 1e-4;
+  opt->adagc_warmup_steps = 1u;
+
   size_t ob = 0u, sb = 0u;
+  if (opt->n_shapes > 0u) {
+    opt->adagc_ema = (double *)prec_zalloc(opt->n_shapes, sizeof(double));
+    opt->tensor_grad_norm = (double *)prec_zalloc(opt->n_shapes, sizeof(double));
+    opt->tensor_adagc_scale = (double *)prec_zalloc(opt->n_shapes, sizeof(double));
+    opt->tensor_grad_mom_cos = (double *)prec_zalloc(opt->n_shapes, sizeof(double));
+    opt->tensor_clip_hits = (uint64_t *)prec_zalloc(opt->n_shapes, sizeof(uint64_t));
+    opt->kahan_mask = (uint8_t *)prec_zalloc(opt->n_shapes, sizeof(uint8_t));
+    opt->kahan_comp = (float **)prec_zalloc(opt->n_shapes, sizeof(float *));
+    if (!opt->adagc_ema || !opt->tensor_grad_norm || !opt->tensor_adagc_scale ||
+        !opt->tensor_grad_mom_cos || !opt->tensor_clip_hits ||
+        !opt->kahan_mask || !opt->kahan_comp) {
+      bcir_opt_destroy(opt);
+      return NULL;
+    }
+    for (size_t s = 0; s < opt->n_shapes; ++s) opt->tensor_adagc_scale[s] = 1.0;
+    sb += opt->n_shapes * (4u * sizeof(double) + sizeof(uint64_t) + sizeof(uint8_t) + sizeof(float *));
+  }
   int use_bf16_grad = (opt_kind == BCIR_OPT_Q8_MOMENTS_BF16_GRAD ||
                        opt_kind == BCIR_OPT_ADAFACTOR_BF16_GRAD ||
                        opt_kind == BCIR_OPT_Q8_MUON_BF16_GRAD);
@@ -783,6 +805,13 @@ void bcir_opt_destroy(bcir_opt_state *opt) {
   if (opt->muon_m1_scale) { for (size_t s = 0; s < opt->n_shapes; ++s) bcir_aligned_free64(opt->muon_m1_scale[s]); prec_dealloc(opt->muon_m1_scale); }
   if (opt->adam_m1_fp32) { for (size_t s = 0; s < opt->n_shapes; ++s) bcir_aligned_free64(opt->adam_m1_fp32[s]); prec_dealloc(opt->adam_m1_fp32); }
   if (opt->adam_m2_fp32) { for (size_t s = 0; s < opt->n_shapes; ++s) bcir_aligned_free64(opt->adam_m2_fp32[s]); prec_dealloc(opt->adam_m2_fp32); }
+  if (opt->kahan_comp) { for (size_t s = 0; s < opt->n_shapes; ++s) bcir_aligned_free64(opt->kahan_comp[s]); prec_dealloc(opt->kahan_comp); }
+  prec_dealloc(opt->kahan_mask);
+  prec_dealloc(opt->adagc_ema);
+  prec_dealloc(opt->tensor_grad_norm);
+  prec_dealloc(opt->tensor_adagc_scale);
+  prec_dealloc(opt->tensor_grad_mom_cos);
+  prec_dealloc(opt->tensor_clip_hits);
   bcir_aligned_free64(opt->muon_ns_x); bcir_aligned_free64(opt->muon_ns_y);
   bcir_aligned_free64(opt->muon_ns_a); bcir_aligned_free64(opt->muon_ns_b);
   bcir_aligned_free64(opt->muon_ns_a2);
@@ -819,7 +848,104 @@ void bcir_opt_reset(bcir_opt_state *opt) {
     if (opt->muon_m1_scale && opt->muon_m1_scale[s]) memset(opt->muon_m1_scale[s], 0, nb * 4u);
     if (opt->adam_m1_fp32 && opt->adam_m1_fp32[s]) memset(opt->adam_m1_fp32[s], 0, len * 4u);
     if (opt->adam_m2_fp32 && opt->adam_m2_fp32[s]) memset(opt->adam_m2_fp32[s], 0, len * 4u);
+    if (opt->kahan_comp && opt->kahan_comp[s]) memset(opt->kahan_comp[s], 0, len * 4u);
+    if (opt->adagc_ema) opt->adagc_ema[s] = 0.0;
+    if (opt->tensor_grad_norm) opt->tensor_grad_norm[s] = 0.0;
+    if (opt->tensor_adagc_scale) opt->tensor_adagc_scale[s] = 1.0;
+    if (opt->tensor_grad_mom_cos) opt->tensor_grad_mom_cos[s] = 0.0;
+    if (opt->tensor_clip_hits) opt->tensor_clip_hits[s] = 0u;
   }
+}
+
+void bcir_adagc_config_default(bcir_adagc_config *cfg) {
+  if (!cfg) return;
+  memset(cfg, 0, sizeof(*cfg));
+  cfg->enable = 0;
+  cfg->beta = 0.98;
+  cfg->lambda_mult = 1.05;
+  cfg->abs_floor = 1e-4;
+  cfg->warmup_steps = 1u;
+}
+
+int bcir_opt_configure_adagc(bcir_opt_state *opt, const bcir_adagc_config *cfg) {
+  if (!opt || !cfg) return 1;
+  if (!cfg->enable) {
+    opt->adagc_enable = 0;
+    if (opt->tensor_adagc_scale) {
+      for (size_t s = 0; s < opt->n_shapes; ++s) opt->tensor_adagc_scale[s] = 1.0;
+    }
+    return 0;
+  }
+  if (!opt->shapes || opt->n_shapes == 0u) return 2;
+  if (!isfinite(cfg->beta) || cfg->beta <= 0.0 || cfg->beta >= 1.0 ||
+      !isfinite(cfg->lambda_mult) || cfg->lambda_mult <= 0.0 ||
+      !isfinite(cfg->abs_floor) || cfg->abs_floor < 0.0) {
+    return 3;
+  }
+  opt->adagc_enable = 1;
+  opt->adagc_beta = cfg->beta;
+  opt->adagc_lambda = cfg->lambda_mult;
+  opt->adagc_abs_floor = cfg->abs_floor;
+  opt->adagc_warmup_steps = cfg->warmup_steps > 0u ? cfg->warmup_steps : 1u;
+  return 0;
+}
+
+int bcir_opt_enable_kahan_tensor(bcir_opt_state *opt, size_t shape_idx, int enable) {
+  if (!opt || !opt->shapes || shape_idx >= opt->n_shapes || !opt->kahan_mask || !opt->kahan_comp) {
+    return 1;
+  }
+  size_t len = opt->shapes[shape_idx].rows * opt->shapes[shape_idx].cols;
+  size_t bytes = len * sizeof(float);
+  if (enable) {
+    if (!opt->kahan_mask[shape_idx]) {
+      float *buf = (float *)bcir_aligned_calloc64(len > 0u ? len : 1u, sizeof(float));
+      if (!buf) return 2;
+      opt->kahan_comp[shape_idx] = buf;
+      opt->kahan_mask[shape_idx] = 1u;
+      opt->kahan_active_tensors++;
+      opt->kahan_bytes += bytes;
+      opt->opt_only_bytes += bytes;
+      opt->persistent_bytes += bytes;
+    }
+  } else if (opt->kahan_mask[shape_idx]) {
+    bcir_aligned_free64(opt->kahan_comp[shape_idx]);
+    opt->kahan_comp[shape_idx] = NULL;
+    opt->kahan_mask[shape_idx] = 0u;
+    opt->kahan_active_tensors--;
+    opt->kahan_bytes -= bytes;
+    opt->opt_only_bytes -= bytes;
+    opt->persistent_bytes -= bytes;
+  }
+  return 0;
+}
+
+int bcir_opt_set_tensor_lr_mult(bcir_opt_state *opt, size_t shape_idx, double lr_mult) {
+  if (!opt || !opt->shapes || shape_idx >= opt->n_shapes ||
+      !isfinite(lr_mult) || lr_mult <= 0.0) {
+    return 1;
+  }
+  opt->shapes[shape_idx].lr_mult = lr_mult;
+  return 0;
+}
+
+int bcir_opt_enable_tensor_telemetry(bcir_opt_state *opt, int enable) {
+  if (!opt) return 1;
+  if (enable && (!opt->shapes || opt->n_shapes == 0u)) return 2;
+  opt->tensor_tel_enabled = enable ? 1 : 0;
+  return 0;
+}
+
+int bcir_opt_get_tensor_telemetry(const bcir_opt_state *opt, size_t shape_idx,
+                                  bcir_tensor_opt_telemetry *out) {
+  if (!opt || !out || !opt->shapes || shape_idx >= opt->n_shapes) return 1;
+  out->last_grad_norm = opt->tensor_grad_norm ? opt->tensor_grad_norm[shape_idx] : 0.0;
+  out->ema_grad_norm = opt->adagc_ema ? opt->adagc_ema[shape_idx] : 0.0;
+  out->last_adagc_scale = opt->tensor_adagc_scale ? opt->tensor_adagc_scale[shape_idx] : 1.0;
+  out->grad_mom_cos = opt->tensor_grad_mom_cos ? opt->tensor_grad_mom_cos[shape_idx] : 0.0;
+  out->lr_mult = (opt->shapes[shape_idx].lr_mult > 0.0) ? opt->shapes[shape_idx].lr_mult : 1.0;
+  out->adagc_clip_hits = opt->tensor_clip_hits ? opt->tensor_clip_hits[shape_idx] : 0u;
+  out->kahan_enabled = (opt->kahan_mask && opt->kahan_mask[shape_idx]) ? 1 : 0;
+  return 0;
 }
 
 void bcir_opt_zero_grad(bcir_opt_state *opt) {
@@ -828,10 +954,17 @@ void bcir_opt_zero_grad(bcir_opt_state *opt) {
   if (opt->grad_bf16) memset(opt->grad_bf16, 0, opt->n_params * 2u);
 }
 
-#define BCIR_OPT_STATE_MAGIC   0x424349524F505431ULL /* "BCIROPT1" */
-#define BCIR_OPT_STATE_VERSION 1ULL
-#define BCIR_OPT_STATE_HDR_U64 10u
-#define BCIR_OPT_STATE_HDR_B   (BCIR_OPT_STATE_HDR_U64 * sizeof(uint64_t))
+#define BCIR_OPT_STATE_MAGIC      0x424349524F505431ULL /* "BCIROPT1" */
+#define BCIR_OPT_STATE_VERSION    1ULL
+#define BCIR_OPT_STATE_VERSION_V2 2ULL
+#define BCIR_OPT_STATE_HDR_U64    10u
+#define BCIR_OPT_STATE_HDR_B      (BCIR_OPT_STATE_HDR_U64 * sizeof(uint64_t))
+#define BCIR_OPT_V2_EXT_U64       5u
+#define BCIR_OPT_V2_EXT_B         (BCIR_OPT_V2_EXT_U64 * sizeof(uint64_t))
+
+static int opt_uses_v2_state(const bcir_opt_state *opt) {
+  return opt && (opt->adagc_enable != 0 || opt->kahan_active_tensors > 0u);
+}
 
 static uint64_t opt_fnv1a_u64(uint64_t h, uint64_t v) {
   for (unsigned b = 0u; b < 8u; ++b) {
@@ -862,16 +995,24 @@ static int opt_f32_buf_finite(const unsigned char *p, size_t count) {
   return 1;
 }
 
-size_t bcir_opt_state_bytes(const bcir_opt_state *opt) {
-  if (!opt) return 0u;
-  size_t total = BCIR_OPT_STATE_HDR_B;
+static int opt_f64_buf_nonneg_finite(const unsigned char *p, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    double v = 0.0;
+    memcpy(&v, p + i * 8u, 8u);
+    if (!isfinite(v) || v < 0.0) return 0;
+  }
+  return 1;
+}
+
+static size_t opt_v1_payload_bytes(const bcir_opt_state *opt) {
+  size_t total = 0u;
   int k = opt->opt_kind;
   if (k == BCIR_OPT_FP32) {
-    total += 2u * opt->n_params * 4u;
+    total = 2u * opt->n_params * 4u;
   } else if (k == BCIR_OPT_Q8_MOMENTS || k == BCIR_OPT_Q8_MOMENTS_BF16_GRAD) {
-    total += 2u * opt->n_params + 3u * opt->n_blocks * 4u;
+    total = 2u * opt->n_params + 3u * opt->n_blocks * 4u;
   } else if (k == BCIR_OPT_ADAFACTOR_M2 || k == BCIR_OPT_ADAFACTOR_BF16_GRAD) {
-    total += opt->n_params * 4u;
+    total = opt->n_params * 4u;
     for (size_t s = 0; s < opt->n_shapes; ++s) {
       size_t r = opt->shapes[s].rows, c = opt->shapes[s].cols;
       total += (c <= 1u || r <= 1u) ? (r * c * 4u) : ((r + c) * 4u);
@@ -898,6 +1039,23 @@ size_t bcir_opt_state_bytes(const bcir_opt_state *opt) {
   return total;
 }
 
+size_t bcir_opt_state_bytes(const bcir_opt_state *opt) {
+  if (!opt) return 0u;
+  size_t v1_pay = opt_v1_payload_bytes(opt);
+  if (v1_pay == 0u) return 0u;
+  size_t total = BCIR_OPT_STATE_HDR_B + v1_pay;
+  if (opt_uses_v2_state(opt)) {
+    total += BCIR_OPT_V2_EXT_B;
+    if (opt->adagc_enable) {
+      total += opt->n_shapes * (sizeof(double) + sizeof(uint64_t));
+    }
+    if (opt->kahan_active_tensors > 0u) {
+      total += opt->n_shapes + opt->kahan_bytes;
+    }
+  }
+  return total;
+}
+
 int bcir_opt_save_state(const bcir_opt_state *opt, void *dst, size_t dst_bytes) {
   if (!opt || !dst) return 1;
   size_t need = bcir_opt_state_bytes(opt);
@@ -906,9 +1064,10 @@ int bcir_opt_save_state(const bcir_opt_state *opt, void *dst, size_t dst_bytes) 
   uint64_t b1_bits = 0u, b2_bits = 0u;
   memcpy(&b1_bits, &opt->beta1_power, sizeof(uint64_t));
   memcpy(&b2_bits, &opt->beta2_power, sizeof(uint64_t));
+  int v2 = opt_uses_v2_state(opt);
   uint64_t hdr[BCIR_OPT_STATE_HDR_U64] = {
     BCIR_OPT_STATE_MAGIC,
-    BCIR_OPT_STATE_VERSION,
+    v2 ? BCIR_OPT_STATE_VERSION_V2 : BCIR_OPT_STATE_VERSION,
     (uint64_t)opt->opt_kind,
     (uint64_t)opt->n_params,
     (uint64_t)opt->n_blocks,
@@ -966,6 +1125,33 @@ int bcir_opt_save_state(const bcir_opt_state *opt, void *dst, size_t dst_bytes) 
   } else {
     return 3;
   }
+  if (v2) {
+    uint64_t ext_flags = (opt->adagc_enable ? 1ULL : 0ULL) |
+                         (opt->kahan_active_tensors > 0u ? 2ULL : 0ULL);
+    uint64_t beta_b = 0u, lam_b = 0u, flr_b = 0u;
+    memcpy(&beta_b, &opt->adagc_beta, sizeof(uint64_t));
+    memcpy(&lam_b, &opt->adagc_lambda, sizeof(uint64_t));
+    memcpy(&flr_b, &opt->adagc_abs_floor, sizeof(uint64_t));
+    uint64_t ehdr[BCIR_OPT_V2_EXT_U64] = {
+      ext_flags, opt->adagc_warmup_steps, beta_b, lam_b, flr_b
+    };
+    memcpy(p, ehdr, BCIR_OPT_V2_EXT_B); p += BCIR_OPT_V2_EXT_B;
+    if (ext_flags & 1ULL) {
+      size_t eb = opt->n_shapes * sizeof(double);
+      size_t hb = opt->n_shapes * sizeof(uint64_t);
+      memcpy(p, opt->adagc_ema, eb); p += eb;
+      memcpy(p, opt->tensor_clip_hits, hb); p += hb;
+    }
+    if (ext_flags & 2ULL) {
+      memcpy(p, opt->kahan_mask, opt->n_shapes); p += opt->n_shapes;
+      for (size_t s = 0; s < opt->n_shapes; ++s) {
+        if (opt->kahan_mask[s]) {
+          size_t kb = opt->shapes[s].rows * opt->shapes[s].cols * sizeof(float);
+          memcpy(p, opt->kahan_comp[s], kb); p += kb;
+        }
+      }
+    }
+  }
   return ((size_t)(p - (unsigned char *)dst) == need) ? 0 : 4;
 }
 
@@ -976,7 +1162,9 @@ int bcir_opt_load_state(bcir_opt_state *opt, const void *src, size_t src_bytes) 
   const unsigned char *p = (const unsigned char *)src;
   uint64_t hdr[BCIR_OPT_STATE_HDR_U64];
   memcpy(hdr, p, BCIR_OPT_STATE_HDR_B);
-  if (hdr[0] != BCIR_OPT_STATE_MAGIC || hdr[1] != BCIR_OPT_STATE_VERSION ||
+  int v2 = opt_uses_v2_state(opt);
+  uint64_t exp_ver = v2 ? BCIR_OPT_STATE_VERSION_V2 : BCIR_OPT_STATE_VERSION;
+  if (hdr[0] != BCIR_OPT_STATE_MAGIC || hdr[1] != exp_ver ||
       hdr[2] != (uint64_t)opt->opt_kind || hdr[3] != (uint64_t)opt->n_params ||
       hdr[4] != (uint64_t)opt->n_blocks || hdr[5] != (uint64_t)opt->n_shapes ||
       hdr[6] != opt_shapes_hash(opt)) {
@@ -988,20 +1176,23 @@ int bcir_opt_load_state(bcir_opt_state *opt, const void *src, size_t src_bytes) 
   if (!isfinite(b1p) || !isfinite(b2p) || b1p < 0.0 || b1p > 1.0 || b2p < 0.0 || b2p > 1.0) {
     return 4;
   }
-  /* Pass 1: validate finiteness of all float payload buffers before mutating opt. */
+  /* Pass 1: validate finiteness of all float/double payload buffers before mutating opt. */
   const unsigned char *q = p + BCIR_OPT_STATE_HDR_B;
+  size_t v1_pay = opt_v1_payload_bytes(opt);
   int k = opt->opt_kind;
   if (k == BCIR_OPT_FP32) {
     if (!opt_f32_buf_finite(q, 2u * opt->n_params)) return 5;
+    q += v1_pay;
   } else if (k == BCIR_OPT_Q8_MOMENTS || k == BCIR_OPT_Q8_MOMENTS_BF16_GRAD) {
     size_t np = opt->n_params, blk = opt->n_blocks * 4u;
     q += np;
     if (!opt_f32_buf_finite(q, opt->n_blocks)) return 5;
     q += blk + np;
     if (!opt_f32_buf_finite(q, 2u * opt->n_blocks)) return 5;
+    q += 2u * blk;
   } else if (k == BCIR_OPT_ADAFACTOR_M2 || k == BCIR_OPT_ADAFACTOR_BF16_GRAD) {
-    size_t n_floats = (need - BCIR_OPT_STATE_HDR_B) / 4u;
-    if (!opt_f32_buf_finite(q, n_floats)) return 5;
+    if (!opt_f32_buf_finite(q, v1_pay / 4u)) return 5;
+    q += v1_pay;
   } else if (k == BCIR_OPT_MUON_FP32 || k == BCIR_OPT_Q8_MUON_BF16_GRAD) {
     int q8_m = (k == BCIR_OPT_Q8_MUON_BF16_GRAD);
     for (size_t s = 0; s < opt->n_shapes; ++s) {
@@ -1025,6 +1216,37 @@ int bcir_opt_load_state(bcir_opt_state *opt, const void *src, size_t src_bytes) 
   } else {
     return 3;
   }
+  uint64_t ehdr[BCIR_OPT_V2_EXT_U64] = {0u};
+  double v2_beta = 0.0, v2_lam = 0.0, v2_flr = 0.0;
+  if (v2) {
+    uint64_t exp_flags = (opt->adagc_enable ? 1ULL : 0ULL) |
+                         (opt->kahan_active_tensors > 0u ? 2ULL : 0ULL);
+    memcpy(ehdr, q, BCIR_OPT_V2_EXT_B); q += BCIR_OPT_V2_EXT_B;
+    if (ehdr[0] != exp_flags) return 3;
+    memcpy(&v2_beta, &ehdr[2], sizeof(double));
+    memcpy(&v2_lam, &ehdr[3], sizeof(double));
+    memcpy(&v2_flr, &ehdr[4], sizeof(double));
+    if (exp_flags & 1ULL) {
+      if (!isfinite(v2_beta) || v2_beta <= 0.0 || v2_beta >= 1.0 ||
+          !isfinite(v2_lam) || v2_lam <= 0.0 || !isfinite(v2_flr) || v2_flr < 0.0) {
+        return 4;
+      }
+      if (!opt_f64_buf_nonneg_finite(q, opt->n_shapes)) return 5;
+      q += opt->n_shapes * (sizeof(double) + sizeof(uint64_t));
+    }
+    if (exp_flags & 2ULL) {
+      if (memcmp(q, opt->kahan_mask, opt->n_shapes) != 0) return 3;
+      q += opt->n_shapes;
+      for (size_t s = 0; s < opt->n_shapes; ++s) {
+        if (opt->kahan_mask[s]) {
+          size_t len = opt->shapes[s].rows * opt->shapes[s].cols;
+          if (!opt_f32_buf_finite(q, len)) return 5;
+          q += len * sizeof(float);
+        }
+      }
+    }
+  }
+  if ((size_t)(q - (const unsigned char *)src) != need) return 6;
 
   /* Pass 2: commit validated state atomically. */
   p += BCIR_OPT_STATE_HDR_B;
@@ -1071,6 +1293,28 @@ int bcir_opt_load_state(bcir_opt_state *opt, const void *src, size_t src_bytes) 
       }
     }
   }
+  if (v2) {
+    p += BCIR_OPT_V2_EXT_B;
+    if (ehdr[0] & 1ULL) {
+      size_t eb = opt->n_shapes * sizeof(double);
+      size_t hb = opt->n_shapes * sizeof(uint64_t);
+      opt->adagc_warmup_steps = ehdr[1] > 0u ? ehdr[1] : 1u;
+      opt->adagc_beta = v2_beta;
+      opt->adagc_lambda = v2_lam;
+      opt->adagc_abs_floor = v2_flr;
+      memcpy(opt->adagc_ema, p, eb); p += eb;
+      memcpy(opt->tensor_clip_hits, p, hb); p += hb;
+    }
+    if (ehdr[0] & 2ULL) {
+      p += opt->n_shapes;
+      for (size_t s = 0; s < opt->n_shapes; ++s) {
+        if (opt->kahan_mask[s]) {
+          size_t kb = opt->shapes[s].rows * opt->shapes[s].cols * sizeof(float);
+          memcpy(opt->kahan_comp[s], p, kb); p += kb;
+        }
+      }
+    }
+  }
   if ((size_t)(p - (const unsigned char *)src) != need) return 6;
   opt->step = hdr[7];
   opt->beta1_power = b1p;
@@ -1102,8 +1346,18 @@ static inline float opt_read_grad(const bcir_opt_state *opt, const float *gw, si
   return gw ? gw[i] : (opt->grad_fp32 ? opt->grad_fp32[i] : bf16_to_f32(opt->grad_bf16[i]));
 }
 
-static void fill_tensor_lr_wd(const bcir_opt_state *opt, size_t idx, size_t *cursor, double *lr_mult, int *apply_wd) {
-  *lr_mult = 1.0; *apply_wd = 1;
+static inline void opt_kahan_add_delta(float *w_ptr, float *comp_ptr, double delta) {
+  double w = (double)(*w_ptr);
+  double y = delta - (double)(*comp_ptr);
+  float t = (float)(w + y);
+  *comp_ptr = (float)(((double)t - w) - y);
+  *w_ptr = t;
+}
+
+static void fill_tensor_meta(const bcir_opt_state *opt, size_t idx, size_t *cursor,
+                             double *lr_mult, int *apply_wd, double *t_scale,
+                             float **kcomp, size_t *k_local) {
+  *lr_mult = 1.0; *apply_wd = 1; *t_scale = 1.0; *kcomp = NULL; *k_local = 0u;
   if (!opt->shapes || opt->n_shapes == 0u) return;
   while (*cursor + 1u < opt->n_shapes &&
          idx >= opt->shapes[*cursor].offset + opt->shapes[*cursor].rows * opt->shapes[*cursor].cols) (*cursor)++;
@@ -1111,6 +1365,11 @@ static void fill_tensor_lr_wd(const bcir_opt_state *opt, size_t idx, size_t *cur
   if (idx >= sh->offset && idx < sh->offset + sh->rows * sh->cols) {
     *lr_mult = (sh->lr_mult > 0.0) ? sh->lr_mult : 1.0;
     *apply_wd = sh->apply_wd;
+    if (opt->adagc_enable && opt->tensor_adagc_scale) *t_scale = opt->tensor_adagc_scale[*cursor];
+    if (opt->kahan_comp && opt->kahan_comp[*cursor]) {
+      *kcomp = opt->kahan_comp[*cursor];
+      *k_local = idx - sh->offset;
+    }
   }
 }
 
@@ -1147,6 +1406,85 @@ static void opt_norm_worker(void *vctx, size_t task) {
   c->partials[task] = ss; c->bad_flags[task] = bad;
 }
 
+typedef struct opt_tensor_stats_ctx {
+  bcir_opt_state *opt;
+  const float *gw;
+  double grad_scale;
+} opt_tensor_stats_ctx;
+
+/* One task per shape -> strictly ascending reduction order, 0 bit drift 1T..NT. */
+static void opt_tensor_stats_worker(void *vctx, size_t task) {
+  opt_tensor_stats_ctx *c = (opt_tensor_stats_ctx *)vctx;
+  bcir_opt_state *opt = c->opt;
+  size_t s = task;
+  const bcir_opt_tensor_shape *sh = &opt->shapes[s];
+  size_t off = sh->offset, len = sh->rows * sh->cols;
+  double g_ss = 0.0, m_ss = 0.0, dot_gm = 0.0;
+  int want_cos = opt->tensor_tel_enabled && (opt->step > 0u);
+  int k = opt->opt_kind;
+  int is_muon_t = (k == BCIR_OPT_MUON_FP32 || k == BCIR_OPT_Q8_MUON_BF16_GRAD) && tensor_uses_muon(sh);
+
+  for (size_t j = 0; j < len; ++j) {
+    size_t idx = off + j;
+    double g = (double)opt_read_grad(opt, c->gw, idx) * c->grad_scale;
+    g_ss += g * g;
+    if (want_cos) {
+      double mprev = 0.0;
+      if (k == BCIR_OPT_FP32 || k == BCIR_OPT_ADAFACTOR_M2 || k == BCIR_OPT_ADAFACTOR_BF16_GRAD) {
+        mprev = (double)opt->m1_fp32[idx];
+      } else if (k == BCIR_OPT_Q8_MOMENTS || k == BCIR_OPT_Q8_MOMENTS_BF16_GRAD) {
+        size_t b = idx / BCIR_OPT_Q8_BLOCK;
+        mprev = (double)opt->m1_q8[idx] * (double)opt->m1_scale[b];
+      } else if (k == BCIR_OPT_MUON_FP32) {
+        mprev = is_muon_t ? (double)opt->muon_m1_fp32[s][j] : (double)opt->adam_m1_fp32[s][j];
+      } else if (k == BCIR_OPT_Q8_MUON_BF16_GRAD) {
+        if (is_muon_t) {
+          size_t b = j / BCIR_OPT_Q8_BLOCK;
+          mprev = (double)opt->muon_m1_q8[s][j] * (double)opt->muon_m1_scale[s][b];
+        } else {
+          mprev = (double)opt->adam_m1_fp32[s][j];
+        }
+      }
+      m_ss += mprev * mprev;
+      dot_gm += g * mprev;
+    }
+  }
+  double gn = sqrt(g_ss);
+  opt->tensor_grad_norm[s] = gn;
+  if (want_cos && g_ss > 1e-30 && m_ss > 1e-30) {
+    double cosv = dot_gm / sqrt(g_ss * m_ss);
+    if (cosv > 1.0) cosv = 1.0;
+    else if (cosv < -1.0) cosv = -1.0;
+    opt->tensor_grad_mom_cos[s] = cosv;
+  } else {
+    opt->tensor_grad_mom_cos[s] = 0.0;
+  }
+
+  if (opt->adagc_enable) {
+    double beta = opt->adagc_beta, obeta = 1.0 - beta;
+    uint64_t warmup = opt->adagc_warmup_steps > 0u ? opt->adagc_warmup_steps : 1u;
+    double ema = opt->adagc_ema[s];
+    double scale_s = 1.0;
+    if (opt->step < warmup || ema <= 0.0) {
+      ema = (ema <= 0.0) ? gn : (beta * ema + obeta * gn);
+    } else {
+      double thr = opt->adagc_lambda * ema;
+      if (thr < opt->adagc_abs_floor) thr = opt->adagc_abs_floor;
+      double g_clip = gn;
+      if (gn > thr && gn > 0.0) {
+        scale_s = thr / gn;
+        g_clip = thr;
+        opt->tensor_clip_hits[s]++;
+      }
+      ema = beta * ema + obeta * g_clip;
+    }
+    opt->adagc_ema[s] = ema;
+    opt->tensor_adagc_scale[s] = scale_s;
+  } else {
+    opt->tensor_adagc_scale[s] = 1.0;
+  }
+}
+
 typedef struct opt_fp32_ctx {
   bcir_opt_state *opt; float *weights; const float *gw;
   double lr, b1, b2, bc1, bc2, eps, wd, clip_scale; size_t chunk;
@@ -1171,24 +1509,41 @@ static void opt_fp32_worker(void *vctx, size_t task) {
   double inv_bc1 = 1.0 / c->bc1, inv_bc2 = 1.0 / c->bc2, eps = c->eps, wd = c->wd, cs = c->clip_scale;
   size_t i = s;
   while (i < e) {
-    double lrm = 1.0; int awd = 1; size_t seg_end = e;
+    double lrm = 1.0, t_scale = 1.0; int awd = 1; size_t seg_end = e, sh_off = 0u;
+    float *kcomp = NULL;
     if (c->opt->shapes && cur < c->opt->n_shapes) {
       const bcir_opt_tensor_shape *sh = &c->opt->shapes[cur];
       size_t sh_end = sh->offset + sh->rows * sh->cols;
       if (i >= sh->offset && i < sh_end) {
         lrm = (sh->lr_mult > 0.0) ? sh->lr_mult : 1.0; awd = sh->apply_wd;
+        sh_off = sh->offset;
+        if (c->opt->adagc_enable && c->opt->tensor_adagc_scale) t_scale = c->opt->tensor_adagc_scale[cur];
+        if (c->opt->kahan_comp) kcomp = c->opt->kahan_comp[cur];
         if (sh_end < seg_end) seg_end = sh_end;
       }
       if (seg_end >= sh_end) cur++;
     }
     double lr_eff = c->lr * lrm, step_c = lr_eff * inv_bc1;
     double wd_fac = (awd && wd > 0.0) ? (1.0 - lr_eff * wd) : 1.0;
-    for (; i < seg_end; ++i) {
-      double g = (double)gp[i] * cs;
-      double m1 = b1 * (double)m1p[i] + ob1 * g;
-      double m2 = b2 * (double)m2p[i] + ob2 * g * g;
-      m1p[i] = (float)m1; m2p[i] = (float)m2;
-      wp[i] = (float)((double)wp[i] * wd_fac - step_c * m1 / (sqrt(m2 * inv_bc2) + eps));
+    double g_mul = cs * t_scale;
+    if (!kcomp) {
+      for (; i < seg_end; ++i) {
+        double g = (double)gp[i] * g_mul;
+        double m1 = b1 * (double)m1p[i] + ob1 * g;
+        double m2 = b2 * (double)m2p[i] + ob2 * g * g;
+        m1p[i] = (float)m1; m2p[i] = (float)m2;
+        wp[i] = (float)((double)wp[i] * wd_fac - step_c * m1 / (sqrt(m2 * inv_bc2) + eps));
+      }
+    } else {
+      for (; i < seg_end; ++i) {
+        double g = (double)gp[i] * g_mul;
+        double m1 = b1 * (double)m1p[i] + ob1 * g;
+        double m2 = b2 * (double)m2p[i] + ob2 * g * g;
+        m1p[i] = (float)m1; m2p[i] = (float)m2;
+        double delta = (awd && wd > 0.0 ? -lr_eff * wd * (double)wp[i] : 0.0) -
+                       step_c * m1 / (sqrt(m2 * inv_bc2) + eps);
+        opt_kahan_add_delta(&wp[i], &kcomp[i - sh_off], delta);
+      }
     }
   }
 }
@@ -1223,10 +1578,10 @@ static void opt_q8_worker(void *vctx, size_t task) {
     double max_abs_m1 = 0.0, max_log_m2 = -1e30, min_log_m2 = 1e30;
     int any_pos_m2 = 0;
     for (size_t j = 0; j < len; ++j) {
-      size_t i = s + j; double lrm; int awd;
-      fill_tensor_lr_wd(c->opt, i, &cur, &lrm, &awd);
+      size_t i = s + j, k_local = 0u; double lrm, t_scale; int awd; float *kcomp = NULL;
+      fill_tensor_meta(c->opt, i, &cur, &lrm, &awd, &t_scale, &kcomp, &k_local);
       double lr_eff = c->lr * lrm;
-      double g = (double)opt_read_grad(c->opt, c->gw, i) * cs;
+      double g = (double)opt_read_grad(c->opt, c->gw, i) * (cs * t_scale);
       double prev_m1 = (double)c->opt->m1_q8[i] * s1;
       uint8_t c2 = c->opt->m2_q8[i];
       double prev_m2 = (c2 == 0u) ? 0.0 : exp2(lmin + (double)(c2 - 1u) * lstep);
@@ -1239,10 +1594,16 @@ static void opt_q8_worker(void *vctx, size_t task) {
         if (lm < min_log_m2) min_log_m2 = lm;
         any_pos_m2 = 1;
       }
-      double w = (double)c->weights[i];
-      if (awd && wd > 0.0) w -= lr_eff * wd * w;
-      w -= lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
-      c->weights[i] = (float)w;
+      if (!kcomp) {
+        double w = (double)c->weights[i];
+        if (awd && wd > 0.0) w -= lr_eff * wd * w;
+        w -= lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
+        c->weights[i] = (float)w;
+      } else {
+        double delta = (awd && wd > 0.0 ? -lr_eff * wd * (double)c->weights[i] : 0.0) -
+                       lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
+        opt_kahan_add_delta(&c->weights[i], &kcomp[k_local], delta);
+      }
     }
     if (max_abs_m1 > 0.0) {
       double sc = max_abs_m1 / 127.0, inv = 127.0 / max_abs_m1;
@@ -1290,17 +1651,26 @@ static void opt_af_worker(void *vctx, size_t task) {
   size_t off = sh->offset, R = sh->rows, C = sh->cols;
   double lr_eff = c->lr * ((sh->lr_mult > 0.0) ? sh->lr_mult : 1.0);
   double b1 = c->b1, b2 = c->b2, ob1 = 1.0 - b1, ob2 = 1.0 - b2;
-  double inv_bc1 = 1.0 / c->bc1, inv_bc2 = 1.0 / c->bc2, eps = c->eps, wd = c->wd, cs = c->clip_scale;
+  double inv_bc1 = 1.0 / c->bc1, inv_bc2 = 1.0 / c->bc2, eps = c->eps, wd = c->wd;
+  double t_scale = (c->opt->adagc_enable && c->opt->tensor_adagc_scale) ? c->opt->tensor_adagc_scale[s] : 1.0;
+  double cs = c->clip_scale * t_scale;
+  float *kcomp = c->opt->kahan_comp ? c->opt->kahan_comp[s] : NULL;
   if (R <= 1u || C <= 1u) {
     size_t len = R * C; float *v = c->opt->af_row[s];
     for (size_t k = 0; k < len; ++k) {
       size_t i = off + k; double g = (double)opt_read_grad(c->opt, c->gw, i) * cs;
       double m1 = b1 * (double)c->opt->m1_fp32[i] + ob1 * g, m2 = b2 * (double)v[k] + ob2 * g * g;
       c->opt->m1_fp32[i] = (float)m1; v[k] = (float)m2;
-      double w = (double)c->weights[i];
-      if (sh->apply_wd && wd > 0.0) w -= lr_eff * wd * w;
-      w -= lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
-      c->weights[i] = (float)w;
+      if (!kcomp) {
+        double w = (double)c->weights[i];
+        if (sh->apply_wd && wd > 0.0) w -= lr_eff * wd * w;
+        w -= lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
+        c->weights[i] = (float)w;
+      } else {
+        double delta = (sh->apply_wd && wd > 0.0 ? -lr_eff * wd * (double)c->weights[i] : 0.0) -
+                       lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
+        opt_kahan_add_delta(&c->weights[i], &kcomp[k], delta);
+      }
     }
   } else {
     float *vr = c->opt->af_row[s], *vc = c->opt->af_col[s];
@@ -1327,14 +1697,20 @@ static void opt_af_worker(void *vctx, size_t task) {
     for (size_t r = 0; r < R; ++r) {
       double rfac = (double)vr[r] / mean_vr;
       for (size_t col = 0; col < C; ++col) {
-        size_t i = off + r * C + col;
+        size_t k = r * C + col, i = off + k;
         double g = (double)opt_read_grad(c->opt, c->gw, i) * cs;
         double m1 = b1 * (double)c->opt->m1_fp32[i] + ob1 * g, m2 = rfac * (double)vc[col];
         c->opt->m1_fp32[i] = (float)m1;
-        double w = (double)c->weights[i];
-        if (sh->apply_wd && wd > 0.0) w -= lr_eff * wd * w;
-        w -= lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
-        c->weights[i] = (float)w;
+        if (!kcomp) {
+          double w = (double)c->weights[i];
+          if (sh->apply_wd && wd > 0.0) w -= lr_eff * wd * w;
+          w -= lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
+          c->weights[i] = (float)w;
+        } else {
+          double delta = (sh->apply_wd && wd > 0.0 ? -lr_eff * wd * (double)c->weights[i] : 0.0) -
+                         lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
+          opt_kahan_add_delta(&c->weights[i], &kcomp[k], delta);
+        }
       }
     }
   }
@@ -1356,18 +1732,27 @@ static void opt_muon_adam_worker(void *vctx, size_t task) {
   size_t off = sh->offset, len = sh->rows * sh->cols;
   double lr_eff = c->lr * ((sh->lr_mult > 0.0) ? sh->lr_mult : 1.0);
   double b1 = c->b1, b2 = c->b2, ob1 = 1.0 - b1, ob2 = 1.0 - b2;
-  double inv_bc1 = 1.0 / c->bc1, inv_bc2 = 1.0 / c->bc2, eps = c->eps, wd = c->wd, cs = c->clip_scale;
+  double inv_bc1 = 1.0 / c->bc1, inv_bc2 = 1.0 / c->bc2, eps = c->eps, wd = c->wd;
+  double t_scale = (c->opt->adagc_enable && c->opt->tensor_adagc_scale) ? c->opt->tensor_adagc_scale[s] : 1.0;
+  double cs = c->clip_scale * t_scale;
   float *m1p = c->opt->adam_m1_fp32[s], *m2p = c->opt->adam_m2_fp32[s];
+  float *kcomp = c->opt->kahan_comp ? c->opt->kahan_comp[s] : NULL;
   for (size_t k = 0; k < len; ++k) {
     size_t i = off + k;
     double g = (double)opt_read_grad(c->opt, c->gw, i) * cs;
     double m1 = b1 * (double)m1p[k] + ob1 * g;
     double m2 = b2 * (double)m2p[k] + ob2 * g * g;
     m1p[k] = (float)m1; m2p[k] = (float)m2;
-    double w = (double)c->weights[i];
-    if (sh->apply_wd && wd > 0.0) w -= lr_eff * wd * w;
-    w -= lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
-    c->weights[i] = (float)w;
+    if (!kcomp) {
+      double w = (double)c->weights[i];
+      if (sh->apply_wd && wd > 0.0) w -= lr_eff * wd * w;
+      w -= lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
+      c->weights[i] = (float)w;
+    } else {
+      double delta = (sh->apply_wd && wd > 0.0 ? -lr_eff * wd * (double)c->weights[i] : 0.0) -
+                     lr_eff * (m1 * inv_bc1) / (sqrt(m2 * inv_bc2) + eps);
+      opt_kahan_add_delta(&c->weights[i], &kcomp[k], delta);
+    }
   }
 }
 
@@ -1385,13 +1770,16 @@ static void opt_muon_2d_update(bcir_tensor_pool *pool, bcir_opt_state *opt, floa
     size_t p = trans ? C : R;
     size_t q = trans ? R : C;
     float *xbuf = opt->muon_ns_x;
+    double t_scale = (opt->adagc_enable && opt->tensor_adagc_scale) ? opt->tensor_adagc_scale[s] : 1.0;
+    double cs = clip_scale * t_scale;
+    float *kcomp = opt->kahan_comp ? opt->kahan_comp[s] : NULL;
 
     if (!q8_m) {
       float *m1p = opt->muon_m1_fp32[s];
       for (size_t r = 0; r < R; ++r) {
         for (size_t col = 0; col < C; ++col) {
           size_t k = r * C + col;
-          double g = (double)opt_read_grad(opt, gw, off + k) * clip_scale;
+          double g = (double)opt_read_grad(opt, gw, off + k) * cs;
           double m1 = mu * (double)m1p[k] + omu * g;
           m1p[k] = (float)m1;
           float nest = (float)(mu * m1 + omu * g);
@@ -1411,7 +1799,7 @@ static void opt_muon_2d_update(bcir_tensor_pool *pool, bcir_opt_state *opt, floa
         double max_abs = 0.0;
         for (size_t j = 0; j < blen; ++j) {
           size_t k = st + j;
-          double g = (double)opt_read_grad(opt, gw, off + k) * clip_scale;
+          double g = (double)opt_read_grad(opt, gw, off + k) * cs;
           double m_prev = (double)mq[k] * sc_old;
           double m1 = mu * m_prev + omu * g;
           tmp_m1[j] = m1;
@@ -1447,11 +1835,23 @@ static void opt_muon_2d_update(bcir_tensor_pool *pool, bcir_opt_state *opt, floa
     double rms_scale = 0.2 * sqrt((double)q);
     double step_scale = lr_eff * rms_scale;
     double wd_fac = (sh->apply_wd && cfg->weight_decay > 0.0) ? (1.0 - lr_eff * cfg->weight_decay) : 1.0;
-    for (size_t r = 0; r < R; ++r) {
-      for (size_t col = 0; col < C; ++col) {
-        size_t k = r * C + col;
-        float upd = trans ? xbuf[col * R + r] : xbuf[k];
-        weights[off + k] = (float)((double)weights[off + k] * wd_fac - step_scale * (double)upd);
+    if (!kcomp) {
+      for (size_t r = 0; r < R; ++r) {
+        for (size_t col = 0; col < C; ++col) {
+          size_t k = r * C + col;
+          float upd = trans ? xbuf[col * R + r] : xbuf[k];
+          weights[off + k] = (float)((double)weights[off + k] * wd_fac - step_scale * (double)upd);
+        }
+      }
+    } else {
+      for (size_t r = 0; r < R; ++r) {
+        for (size_t col = 0; col < C; ++col) {
+          size_t k = r * C + col;
+          float upd = trans ? xbuf[col * R + r] : xbuf[k];
+          double delta = (sh->apply_wd && cfg->weight_decay > 0.0 ? -lr_eff * cfg->weight_decay * (double)weights[off + k] : 0.0) -
+                         step_scale * (double)upd;
+          opt_kahan_add_delta(&weights[off + k], &kcomp[k], delta);
+        }
       }
     }
   }
@@ -1480,7 +1880,26 @@ int bcir_opt_step(bcir_tensor_pool *pool, bcir_opt_state *opt, float *weights,
   }
 
   double gnorm = sqrt(sum_sq), clip_scale = grad_scale; int clipped = 0;
-  if (cfg->grad_clip > 0.0 && gnorm > cfg->grad_clip) {
+  if ((opt->adagc_enable || opt->tensor_tel_enabled) && opt->shapes && opt->n_shapes > 0u) {
+    opt_tensor_stats_ctx sctx = { opt, grad_work_or_null, grad_scale };
+    bcir_tensor_pool_run(pool, opt_tensor_stats_worker, &sctx, opt->n_shapes);
+    if (opt->adagc_enable) {
+      double post_sq = 0.0;
+      for (size_t s = 0; s < opt->n_shapes; ++s) {
+        double gn_s = opt->tensor_grad_norm[s] * opt->tensor_adagc_scale[s];
+        post_sq += gn_s * gn_s;
+        if (opt->tensor_adagc_scale[s] < 1.0) clipped = 1;
+      }
+      double post_gnorm = sqrt(post_sq);
+      if (cfg->grad_clip > 0.0 && post_gnorm > cfg->grad_clip) {
+        clip_scale = grad_scale * (cfg->grad_clip / post_gnorm);
+        clipped = 1;
+      }
+    } else if (cfg->grad_clip > 0.0 && gnorm > cfg->grad_clip) {
+      clip_scale = grad_scale * (cfg->grad_clip / gnorm);
+      clipped = 1;
+    }
+  } else if (cfg->grad_clip > 0.0 && gnorm > cfg->grad_clip) {
     clip_scale = grad_scale * (cfg->grad_clip / gnorm);
     clipped = 1;
   }

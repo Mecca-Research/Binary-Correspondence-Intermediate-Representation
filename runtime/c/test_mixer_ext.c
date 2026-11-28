@@ -319,6 +319,165 @@ static int check_fail_closed(void) {
   return 0;
 }
 
+static int check_adagc_kahan_and_telemetry(void) {
+  /* 1. Sub-ULP FP32 Kahan precision proof (update -1e-8 < ULP(1.0f)=5.96e-8) */
+  bcir_opt_tensor_shape sh = { 0u, 1u, 4u, 1.0, 0, 0 };
+  bcir_opt_state *opt_plain = bcir_opt_create(BCIR_OPT_FP32, 4u, &sh, 1u);
+  bcir_opt_state *opt_kahan = bcir_opt_create(BCIR_OPT_FP32, 4u, &sh, 1u);
+  CHECK(opt_plain && opt_kahan);
+  CHECK(bcir_opt_enable_kahan_tensor(opt_kahan, 0u, 1) == 0);
+  float w_plain[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  float w_kahan[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  float g_const[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+  bcir_adamw_params tiny_cfg = { 1e-8, 0.9, 0.99, 1e-8, 0.0, 0.0 };
+  for (int it = 0; it < 1000; ++it) {
+    CHECK(bcir_opt_step(NULL, opt_plain, w_plain, g_const, &tiny_cfg, 1.0, NULL, NULL, NULL) == 0);
+    CHECK(bcir_opt_step(NULL, opt_kahan, w_kahan, g_const, &tiny_cfg, 1.0, NULL, NULL, NULL) == 0);
+  }
+  /* Plain FP32 loses 100% of sub-ULP updates; Kahan accumulates ~1e-5 accurately */
+  CHECK(w_plain[0] == 1.0f);
+  CHECK(fabs((double)w_kahan[0] - (1.0 - 1e-5)) < 1e-7);
+  bcir_opt_destroy(opt_plain);
+  bcir_opt_destroy(opt_kahan);
+
+  /* 2. Per-tensor AdaGC spike isolation + cos(g_t, m_{t-1}) sign test */
+  bcir_opt_tensor_shape two_sh[2] = {
+    { 0u, 1u, 4u, 1.0, 0, 0 },
+    { 4u, 1u, 4u, 0.5, 0, 0 },
+  };
+  bcir_opt_state *os = bcir_opt_create(BCIR_OPT_FP32, 8u, two_sh, 2u);
+  CHECK(os != NULL);
+  bcir_adagc_config acfg;
+  bcir_adagc_config_default(&acfg);
+  acfg.enable = 1; acfg.beta = 0.9; acfg.lambda_mult = 1.5; acfg.warmup_steps = 1u;
+  CHECK(bcir_opt_configure_adagc(os, &acfg) == 0);
+  CHECK(bcir_opt_enable_tensor_telemetry(os, 1) == 0);
+  /* Fail-closed checks */
+  bcir_adagc_config bad_cfg = acfg; bad_cfg.beta = 1.2;
+  CHECK(bcir_opt_configure_adagc(os, &bad_cfg) != 0);
+  CHECK(bcir_opt_set_tensor_lr_mult(os, 0u, -1.0) != 0);
+
+  float w8[8] = {0};
+  float g8[8] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+  bcir_adamw_params ncfg = { 1e-3, 0.9, 0.95, 1e-8, 0.0, 0.0 };
+  CHECK(bcir_opt_step(NULL, os, w8, g8, &ncfg, 1.0, NULL, NULL, NULL) == 0);
+  CHECK(bcir_opt_step(NULL, os, w8, g8, &ncfg, 1.0, NULL, NULL, NULL) == 0);
+  bcir_tensor_opt_telemetry t0, t1;
+  CHECK(bcir_opt_get_tensor_telemetry(os, 0u, &t0) == 0);
+  CHECK(t0.grad_mom_cos > 0.99);
+  /* Inject 20x spike on tensor 0 only, flip sign on tensor 1 */
+  float g_spike[8] = { 20.0f, 20.0f, 20.0f, 20.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+  int clipped = 0;
+  CHECK(bcir_opt_step(NULL, os, w8, g_spike, &ncfg, 1.0, NULL, &clipped, NULL) == 0);
+  CHECK(clipped == 1);
+  CHECK(bcir_opt_get_tensor_telemetry(os, 0u, &t0) == 0);
+  CHECK(bcir_opt_get_tensor_telemetry(os, 1u, &t1) == 0);
+  CHECK(t0.adagc_clip_hits == 1u && t0.last_adagc_scale < 0.1);
+  CHECK(t1.adagc_clip_hits == 0u && t1.last_adagc_scale == 1.0);
+  CHECK(t1.grad_mom_cos < -0.99);
+  bcir_opt_destroy(os);
+
+  /* 2b. Enabling AdaGC mid-training (step > 0, ema == 0) must seed EMA rather than clip to floor */
+  bcir_opt_state *os_mid = bcir_opt_create(BCIR_OPT_FP32, 8u, two_sh, 2u);
+  CHECK(os_mid != NULL);
+  float w8_mid[8] = {0};
+  CHECK(bcir_opt_step(NULL, os_mid, w8_mid, g8, &ncfg, 1.0, NULL, NULL, NULL) == 0);
+  CHECK(bcir_opt_step(NULL, os_mid, w8_mid, g8, &ncfg, 1.0, NULL, NULL, NULL) == 0);
+  CHECK(bcir_opt_configure_adagc(os_mid, &acfg) == 0);
+  clipped = 0;
+  CHECK(bcir_opt_step(NULL, os_mid, w8_mid, g8, &ncfg, 1.0, NULL, &clipped, NULL) == 0);
+  CHECK(clipped == 0);
+  CHECK(bcir_opt_get_tensor_telemetry(os_mid, 0u, &t0) == 0);
+  CHECK(t0.last_adagc_scale == 1.0 && t0.adagc_clip_hits == 0u && fabs(t0.ema_grad_norm - 2.0) < 1e-9);
+  size_t mid_bytes = bcir_opt_state_bytes(os_mid);
+  unsigned char *mid_buf = (unsigned char *)malloc(mid_bytes);
+  if (!mid_buf) { bcir_opt_destroy(os_mid); return 1; }
+  int save_rc = bcir_opt_save_state(os_mid, mid_buf, mid_bytes);
+  double neg_ema = -1.0;
+  size_t ema_off = mid_bytes - 2u * (sizeof(double) + sizeof(uint64_t));
+  memcpy(mid_buf + ema_off, &neg_ema, sizeof(double));
+  int bad_load_rc = bcir_opt_load_state(os_mid, mid_buf, mid_bytes);
+  free(mid_buf);
+  bcir_opt_destroy(os_mid);
+  CHECK(save_rc == 0 && bad_load_rc != 0);
+
+  /* 3. End-to-end 1T==2T parity + v2 checkpoint 0-bit-drift resume with AdaGC+Kahan+PerGroupLR */
+  bcir_ext_spec sp1 = base_spec(BCIR_MIXER_GDN2, 2u);
+  sp1.width = 32u; sp1.heads = 4u; sp1.kvheads = 2u; sp1.ff = 64u;
+  sp1.layer_mixer[1] = BCIR_MIXER_MLA; sp1.layer_use_rope[1] = 0u;
+  sp1.gate_mode = BCIR_GATE_G1_HEADWISE; sp1.canon_mode = BCIR_CANON_AC; sp1.mhc_streams = 2u;
+  sp1.threads = 1u;
+  bcir_ext_spec sp2 = sp1; sp2.threads = 2u;
+
+  size_t N = (size_t)sp1.batch * sp1.time;
+  uint32_t *tok = (uint32_t *)malloc(4u * N * sizeof(uint32_t));
+  uint32_t *tgt = (uint32_t *)malloc(4u * N * sizeof(uint32_t));
+  if (!tok || !tgt) { free(tok); free(tgt); return 1; }
+  fill_batch(tok, tgt, 4u * N, sp1.vocab, 424242ULL);
+
+  bcir_prec_policy pol;
+  bcir_prec_policy_default(&pol);
+  pol.opt_kind = BCIR_OPT_Q8_MUON_BF16_GRAD;
+  bcir_adamw_params opt_cfg = { 3e-3, 0.9, 0.95, 1e-8, 0.01, 3.0 };
+  acfg.enable = 1; acfg.beta = 0.95; acfg.lambda_mult = 1.05; acfg.warmup_steps = 1u;
+
+  bcir_ext_model *m1 = bcir_ext_create(&sp1, &pol);
+  bcir_ext_model *m2 = bcir_ext_create(&sp2, &pol);
+  bcir_ext_model *m3 = bcir_ext_create(&sp1, &pol);
+  CHECK(m1 && m2 && m3);
+  bcir_ext_mem_stats ms_before, ms_after;
+  bcir_ext_get_mem_stats(m1, &ms_before);
+  bcir_ext_model *ms_arr[3] = { m1, m2, m3 };
+  for (int i = 0; i < 3; ++i) {
+    CHECK(bcir_ext_configure_adagc(ms_arr[i], &acfg) == 0);
+    CHECK(bcir_ext_configure_kahan(ms_arr[i], 1, 1) == 0);
+    CHECK(bcir_ext_enable_tensor_telemetry(ms_arr[i], 1) == 0);
+    CHECK(bcir_ext_set_tensor_lr_mult(ms_arr[i], 0u, 0.75) == 0);
+  }
+  bcir_ext_get_mem_stats(m1, &ms_after);
+  CHECK(ms_after.persistent_bytes > ms_before.persistent_bytes);
+
+  bcir_ext_step_metrics ev1[4], ev2[4], ev3a[2], ev3b[2];
+  CHECK(bcir_ext_train_loop(m1, tok, tgt, NULL, NULL, 4u, &opt_cfg, ev1) == 0);
+  CHECK(bcir_ext_train_loop(m2, tok, tgt, NULL, NULL, 4u, &opt_cfg, ev2) == 0);
+  size_t np = bcir_ext_param_count(m1);
+  CHECK(memcmp(bcir_ext_weights_ptr(m1), bcir_ext_weights_ptr(m2), np * sizeof(float)) == 0);
+
+  CHECK(bcir_ext_train_loop(m3, tok, tgt, NULL, NULL, 2u, &opt_cfg, ev3a) == 0);
+  size_t ob = bcir_ext_opt_state_bytes(m3);
+  float *ws = (float *)malloc(np * sizeof(float));
+  unsigned char *osb = (unsigned char *)malloc(ob);
+  if (!ws || !osb) {
+    free(ws); free(osb); free(tok); free(tgt);
+    bcir_ext_destroy(m1); bcir_ext_destroy(m2); bcir_ext_destroy(m3);
+    return 1;
+  }
+  memcpy(ws, bcir_ext_weights_ptr(m3), np * sizeof(float));
+  CHECK(bcir_ext_save_opt_state(m3, osb, ob) == 0);
+  bcir_ext_destroy(m3);
+
+  bcir_ext_spec spr = sp1; spr.skip_init = 1;
+  bcir_ext_model *m4 = bcir_ext_create(&spr, &pol);
+  CHECK(m4 != NULL);
+  CHECK(bcir_ext_configure_adagc(m4, &acfg) == 0);
+  CHECK(bcir_ext_configure_kahan(m4, 1, 1) == 0);
+  CHECK(bcir_ext_enable_tensor_telemetry(m4, 1) == 0);
+  CHECK(bcir_ext_set_tensor_lr_mult(m4, 0u, 0.75) == 0);
+  memcpy(bcir_ext_weights_ptr(m4), ws, np * sizeof(float));
+  CHECK(bcir_ext_load_opt_state(m4, osb, ob) == 0);
+  CHECK(bcir_ext_train_loop(m4, tok + 2u * N, tgt + 2u * N, NULL, NULL, 2u, &opt_cfg, ev3b) == 0);
+  CHECK(memcmp(bcir_ext_weights_ptr(m1), bcir_ext_weights_ptr(m4), np * sizeof(float)) == 0);
+
+  bcir_tensor_opt_telemetry tt0;
+  CHECK(bcir_ext_get_tensor_telemetry(m1, 0u, &tt0) == 0);
+  CHECK(tt0.kahan_enabled == 1 && tt0.lr_mult == 0.75 && tt0.ema_grad_norm > 0.0);
+
+  printf("PASS upgrade1.adagc_kahan_telemetry kahan_subulp=ok 1T==2T_bits=0 v2_resume_bits=0\n");
+  free(ws); free(osb); free(tok); free(tgt);
+  bcir_ext_destroy(m1); bcir_ext_destroy(m2); bcir_ext_destroy(m4);
+  return 0;
+}
+
 int main(void) {
   CHECK(bcir_mixer_ext_abi_version() == 6u);
   printf("PASS abi_version=%u\n", bcir_mixer_ext_abi_version());
@@ -375,6 +534,9 @@ int main(void) {
 
   /* All 7 optimizers + 1T vs 2T bit-exact thread parity */
   CHECK(check_thread_parity_and_optimizers() == 0);
+
+  /* Upgrade 1: per-tensor AdaGC + FP32 Kahan + cos(g,m) telemetry + v2 resume */
+  CHECK(check_adagc_kahan_and_telemetry() == 0);
 
   /* Fail-closed contract checks */
   CHECK(check_fail_closed() == 0);
