@@ -638,6 +638,40 @@ such an element, each rail's emit running as Clang's build and compiled as C11 s
 `struct stat` itself. Laying out POSIX's `struct stat` and `struct dirent` for each target, with a witness per target,
 is the slice's remainder.
 
+**CSUB-5f: `<sys/stat.h>` and `<dirent.h>` (2026-11-28).**
+- **What the rails supply.** Both headers are one text on both rails for each target:
+  - `struct stat` and `struct dirent`, each laid out as glibc lays it out;
+  - `S_IFMT`, `S_IFDIR`, `S_IFREG` and `S_IFLNK`, and the `S_ISDIR`, `S_ISREG` and `S_ISLNK` classifiers;
+  - `stat`, `lstat` and `fstat`;
+  - an opaque `DIR`, with `opendir`, `readdir` and `closedir`.
+
+  `time_t` and `struct timespec` are one guarded definition that `<time.h>` and `<sys/stat.h>` share. On Windows
+  neither header is supplied: the UCRT has no `<dirent.h>`, and its `<sys/stat.h>` is another interface (`_stat`, no
+  `lstat`). Each call is a typed external edge, and the artifact carries the structures' definitions as the rails
+  laid them out.
+- **The layouts.** glibc has two:
+  - its x86 one, a single header on x86-64 and i386, where `__x86_64__` chooses the members' widths;
+  - its generic Linux one, on aarch64 and riscv64.
+
+  Both rails choose the layout from facts they already share: a 4-byte pointer means i386, an x87 `long double`
+  x86-64, and a quad one the generic layout.
+- **Witnesses.** The emit reads a member at its offset, so each layout must be the C library's exactly, and
+  `test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target` holds it three ways:
+  - On every target, Clang's layout of the rails' text is asserted in a unit both rails compile for it: each
+    structure's size and alignment, and each member's offset.
+  - On a glibc host, Clang's view of the rails' text matches the library's own headers for the host's target, member
+    sizes and the mode classifiers included. On an x86-64 host it matches for i386 too, through the same biarch x86
+    headers. An empty `gnu/stubs-32.h` stands in for the 32-bit library's list of unimplemented calls, which lays
+    nothing out.
+  - riscv64's text is aarch64's, so the aarch64 runner's witness covers riscv64 as well.
+
+  A tree walk written as `bcir_make.c` writes one, over a directory the test lays out, lowers alike on both rails,
+  R18 clean, and runs as the host compiler's build. Its emit reads a file's size and an entry's name. The artifact of
+  each call compiles alone, with implicit declarations refused.
+
+`bcir_make.c` now stops at `bf->targets[i]->name`: a member through a pointer element (CF-IDXARROW), which both rails
+refuse alike, as `unsupported base expression Index`. The count stays **64 of 68**.
+
 ### 4.4 CSUB-3, slice by slice
 
 **CSUB-3a: `<stdckdint.h>` (2026-11-20).**

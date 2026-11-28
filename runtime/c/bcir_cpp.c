@@ -1306,9 +1306,16 @@ static void h_errno(const CppState *st, hbuf *b) {    /* the codes both librarie
   hput(b, "#define errno (*%s())", loc);
   for (int k = 0; codes[k].n; k++) hput(b, "#define %s %d", codes[k].n, codes[k].v);
 }
-static void h_time(const CppState *st, hbuf *b) {
+/* `time_t` and `struct timespec`, once however many headers declare them: `<time.h>` and `<sys/stat.h>`, whose times
+ * are three of them (the oracle's `_timespec`, CSUB-5f). */
+static void h_timespec(const CppState *st, hbuf *b) {
+  hput(b, "#ifndef __BCIR_TIMESPEC"); hput(b, "#define __BCIR_TIMESPEC 1");
   hput(b, "%s", st->msvc ? "typedef long long time_t;" : "typedef long time_t;");
   hput(b, "struct timespec { time_t tv_sec; long tv_nsec; };");
+  hput(b, "#endif");
+}
+static void h_time(const CppState *st, hbuf *b) {
+  h_timespec(st, b);
   hput(b, "#define TIME_UTC 1");
   hput(b, "int timespec_get(struct timespec *, int);");
   hput(b, "time_t time(time_t *);");
@@ -1337,6 +1344,45 @@ static void h_unistd(const CppState *st, hbuf *b) {  /* POSIX's, as glibc declar
   hput(b, "%s", st->pointer_size == 8 ? "typedef long ssize_t;" : "typedef int ssize_t;");
   for (int k = 0; D[k]; k++) hput(b, "%s", D[k]);
 }
+/* POSIX's file status and directory reading, as glibc lays them out (the oracle's `_sys_stat` and `_dirent`, CSUB-5f;
+ * never on Windows: the caller). The emit reads a member at its offset, so each layout is the C library's exactly:
+ * glibc's x86 one where pointers are 4 bytes (i386) or `long double` is x87 (x86-64), its generic Linux one where
+ * `long double` is a quad (aarch64, riscv64) -- read off the facts both rails share, so they choose it alike. */
+static void h_sys_stat(const CppState *st, hbuf *b) {
+  static const char *const x86_64 =
+    "unsigned long st_dev; unsigned long st_ino; unsigned long st_nlink; unsigned int st_mode; "
+    "unsigned int st_uid; unsigned int st_gid; int __pad0; unsigned long st_rdev; long st_size; "
+    "long st_blksize; long st_blocks; struct timespec st_atim; struct timespec st_mtim; "
+    "struct timespec st_ctim; long __glibc_reserved[3];";
+  static const char *const i386 =
+    "unsigned long long st_dev; unsigned short __pad1; unsigned long st_ino; unsigned int st_mode; "
+    "unsigned int st_nlink; unsigned int st_uid; unsigned int st_gid; unsigned long long st_rdev; "
+    "unsigned short __pad2; long st_size; long st_blksize; long st_blocks; struct timespec st_atim; "
+    "struct timespec st_mtim; struct timespec st_ctim; unsigned long __glibc_reserved4; "
+    "unsigned long __glibc_reserved5;";
+  static const char *const generic =
+    "unsigned long st_dev; unsigned long st_ino; unsigned int st_mode; unsigned int st_nlink; "
+    "unsigned int st_uid; unsigned int st_gid; unsigned long st_rdev; unsigned long __pad1; long st_size; "
+    "int st_blksize; int __pad2; long st_blocks; struct timespec st_atim; struct timespec st_mtim; "
+    "struct timespec st_ctim; int __glibc_reserved[2];";
+  static const char *const D[] = {"#define S_IFMT 0170000", "#define S_IFDIR 0040000", "#define S_IFREG 0100000",
+    "#define S_IFLNK 0120000", "#define S_ISDIR(m) ((((m)) & 0170000) == (0040000))",
+    "#define S_ISREG(m) ((((m)) & 0170000) == (0100000))", "#define S_ISLNK(m) ((((m)) & 0170000) == (0120000))",
+    "int stat(const char *, struct stat *);", "int lstat(const char *, struct stat *);",
+    "int fstat(int, struct stat *);", 0};
+  h_timespec(st, b);
+  hput(b, "typedef unsigned int mode_t;");
+  hput(b, "struct stat { %s };", st->pointer_size == 4 ? i386 : st->long_double == 1 ? x86_64 : generic);
+  for (int k = 0; D[k]; k++) hput(b, "%s", D[k]);
+}
+static void h_dirent(hbuf *b) {
+  hput(b, "typedef struct __dirstream DIR;");
+  hput(b, "struct dirent { unsigned long d_ino; long d_off; unsigned short d_reclen; unsigned char d_type; "
+          "char d_name[256]; };");
+  hput(b, "DIR *opendir(const char *);");
+  hput(b, "struct dirent *readdir(DIR *);");
+  hput(b, "int closedir(DIR *);");
+}
 static void h_math(hbuf *b) {
   hput(b, "#define NAN (__builtin_nanf(\"\"))"); hput(b, "#define INFINITY (__builtin_inff())");
   hput(b, "#define HUGE_VAL (__builtin_huge_val())"); hput(b, "#define HUGE_VALF (__builtin_huge_valf())");
@@ -1348,7 +1394,7 @@ static void h_math(hbuf *b) {
 static const char *const builtin_names[] = {"stdint.h", "stddef.h", "stdbool.h", "limits.h", "float.h", "iso646.h",
                                             "stdalign.h", "stdckdint.h", "stdatomic.h", "stdbit.h", "math.h",
                                             "stdio.h", "stdlib.h", "errno.h", "time.h", "inttypes.h", "unistd.h",
-                                            0};
+                                            "sys/stat.h", "dirent.h", 0};
 static int builtin_known(const char *name) {
   for (int k = 0; builtin_names[k]; k++) if (!strcmp(builtin_names[k], name)) return 1;
   return 0;
@@ -1357,11 +1403,13 @@ static int builtin_known(const char *name) {
  * include reads nothing: 1, or 0 for a header the preprocessor does not supply (or, never, one past the buffer). */
 static int builtin_header(CppState *st, const char *name) {
   if (!builtin_known(name)) return 0;
-  if (st->msvc && !strcmp(name, "unistd.h")) return 0;   /* the UCRT has none: read as nothing (CSUB-5c) */
+  if (st->msvc && (!strcmp(name, "unistd.h") || !strcmp(name, "sys/stat.h") || !strcmp(name, "dirent.h")))
+    return 0;   /* the UCRT has none of these: read as nothing (CSUB-5c, CSUB-5f) */
   hbuf b = {st->builtin_text, sizeof st->builtin_text, 0, 0};
   char guard[32]; size_t g = 0;
   g += (size_t)snprintf(guard, sizeof guard, "__BCIR_");
-  for (const char *q = name; *q && g + 1 < sizeof guard; q++) guard[g++] = *q == '.' ? '_' : (char)(*q >= 'a' && *q <= 'z' ? *q - 32 : *q);
+  for (const char *q = name; *q && g + 1 < sizeof guard; q++)
+    guard[g++] = (*q == '.' || *q == '/') ? '_' : (char)(*q >= 'a' && *q <= 'z' ? *q - 32 : *q);
   guard[g] = 0;
   st->builtin_text[0] = 0;
   hput(&b, "#ifndef %s", guard); hput(&b, "#define %s 1", guard);
@@ -1381,6 +1429,8 @@ static int builtin_header(CppState *st, const char *name) {
   else if (!strcmp(name, "time.h")) h_time(st, &b);
   else if (!strcmp(name, "inttypes.h")) h_inttypes(st, &b);
   else if (!strcmp(name, "unistd.h")) h_unistd(st, &b);
+  else if (!strcmp(name, "sys/stat.h")) h_sys_stat(st, &b);
+  else if (!strcmp(name, "dirent.h")) h_dirent(&b);
   else h_math(&b);
   hput(&b, "#endif");
   if (b.full) { cpp_limit(st, "standard header text too large"); return 0; }

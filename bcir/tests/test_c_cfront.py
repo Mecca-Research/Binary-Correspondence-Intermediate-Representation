@@ -10030,7 +10030,8 @@ def _std_probes(abi) -> list:
 #: The headers a compiler's own freestanding headers do not hold, which a hosted C library supplies: `<math.h>`;
 #: C23's `<stdbit.h>`, freestanding in C23 but in no Clang resource directory -- glibc's spells its type-generic forms
 #: through its own helpers, so its expansions are held to on the glibc host, by value (CSUB-3); and the hosted
-#: profile's `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` (CSUB-5), and POSIX's `<unistd.h>`
+#: profile's `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` (CSUB-5), and POSIX's `<unistd.h>`,
+#: `<sys/stat.h>` and `<dirent.h>`
 _LIBC_HEADERS = (
     "math.h",
     "stdbit.h",
@@ -10040,6 +10041,8 @@ _LIBC_HEADERS = (
     "time.h",
     "inttypes.h",
     "unistd.h",
+    "sys/stat.h",
+    "dirent.h",
 )
 
 
@@ -13201,6 +13204,16 @@ _LINKABLE_HEADERS = {
         " return (uint32_t)(isalpha(c) != 0) + (uint32_t)(isdigit(c) != 0) + (uint32_t)tolower(c); }\n",
         "#include <ctype.h>",
         ("#include <math.h>", "#include <stdlib.h>", "#include <string.h>"),
+    ),
+    # ... and POSIX's file status and directory reading, whose structures the artifact carries as the rails laid them
+    # out, each call a typed declaration beside them (CSUB-5f)
+    "file status": (
+        "#include <stdint.h>\n#include <sys/stat.h>\n#include <dirent.h>\nuint32_t f(const char *p) { struct stat st;"
+        " DIR *d = opendir(p); struct dirent *e = d ? readdir(d) : 0; uint32_t n = e ? (uint32_t)e->d_name[0] : 0u;"
+        " if (d) closedir(d); return n + (uint32_t)(stat(p, &st) == 0 && S_ISDIR(st.st_mode))"
+        " + (uint32_t)(lstat(p, &st) == 0) + (uint32_t)(fstat(0, &st) == 0); }\n",
+        "struct stat {",
+        ("#include <sys/stat.h>", "#include <dirent.h>", "#include <math.h>"),
     ),
     "aligned_alloc": (
         "#include <stdint.h>\n#include <stdlib.h>\nuint32_t f(uint32_t n) { uint32_t *p = aligned_alloc(16, 16);"
@@ -16583,6 +16596,206 @@ _ATOMIC_FLAG_REFUSED = tuple(
 )  # fmt: skip
 #: The runtime's units the flag brings under the verified compiler: each lowers to one digest on both rails
 _ATOMIC_FLAG_UNITS = ("bcir_quarantine.c", "bcir_quarantine_recover.c")
+
+
+#: `<sys/stat.h>`'s and `<dirent.h>`'s structures, and the members of each the witness lays out (CSUB-5f)
+_POSIX_FILE_TYPES = (
+    (
+        "stat",
+        (
+            "st_dev", "st_ino", "st_mode", "st_nlink", "st_uid", "st_gid", "st_rdev", "st_size", "st_blksize",
+            "st_blocks", "st_atim", "st_mtim", "st_ctim",
+        ),
+    ),
+    ("dirent", ("d_ino", "d_off", "d_reclen", "d_type", "d_name")),
+)  # fmt: skip
+
+
+def _posix_file_exprs() -> dict:
+    """Each structure's size and alignment, and each member's offset and size, by name."""
+    exprs = {}
+    for tag, members in _POSIX_FILE_TYPES:
+        exprs[f"s_{tag}"] = f"sizeof(struct {tag})"
+        exprs[f"a_{tag}"] = f"_Alignof(struct {tag})"
+        for m in members:
+            exprs[f"o_{tag}_{m}"] = f"offsetof(struct {tag}, {m})"
+            exprs[f"z_{tag}_{m}"] = f"sizeof(((struct {tag} *)0)->{m})"
+    # ... and the file types' macros, each classifier over a mode of every type (directory, regular file, link, the
+    # character and block devices, a FIFO, a socket)
+    for m in ("S_IFMT", "S_IFDIR", "S_IFREG", "S_IFLNK"):
+        exprs[f"m_{m}"] = m
+    for k, mode in enumerate(
+        ("0040755", "0100644", "0120777", "0020666", "0060660", "0010644", "0140755")
+    ):
+        for m in ("S_ISDIR", "S_ISREG", "S_ISLNK"):
+            exprs[f"m_{m}_{k}"] = f"{m}({mode})"
+    return exprs
+
+
+def _clang_posix_layout(clang: str, abi, head: str, *flags: str) -> dict:
+    """The layout Clang gives `struct stat` and `struct dirent` for `abi`'s target, as declared by `head`."""
+    exprs = _posix_file_exprs()
+    src = head + "".join(f"int {k} = {e};\n" for k, e in exprs.items())
+    r = subprocess.run(
+        [
+            clang,
+            *abi.clang_target,
+            "-std=c23",
+            *flags,
+            "-S",
+            "-emit-llvm",
+            "-o",
+            "-",
+            "-x",
+            "c",
+            "-",
+        ],
+        input=src,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, (abi.name, r.stderr[-1500:])
+    values = {
+        k: int(v)
+        for k, v in re.findall(r"^@(\w+) = (?:dso_local )?global i32 (\d+)", r.stdout, re.M)
+    }
+    assert set(values) == set(exprs), (abi.name, sorted(set(exprs) - set(values)))
+    return values
+
+
+#: A tree walk as `bcir_make.c` walks one, over a directory the test lays out (`ROOT`): a regular file of 1234 octets,
+#: a hidden one and a subdirectory; each member it reads is one the C library's own build reads at its offset
+_CSUB5F_WALK = (
+    "#define _XOPEN_SOURCE 700\n#include <stdint.h>\n#include <string.h>\n#include <time.h>\n#include <sys/stat.h>\n"
+    "#include <dirent.h>\nstatic uint32_t kind(const char *p) { struct stat st; if (lstat(p, &st) != 0) return 0u;\n"
+    "  return S_ISDIR(st.st_mode) ? 1u : S_ISREG(st.st_mode) ? 2u : 3u; }\n"
+    'uint32_t f(uint32_t x) {\n  struct stat st; uint32_t n = 0u;\n  DIR *dir = opendir("ROOT");\n'
+    "  if (!dir) return 9999u;\n  for (;;) {\n    struct dirent *e = readdir(dir);\n    if (!e) break;\n"
+    "    if (e->d_name[0] != '.') n += 1u;\n    if (!strcmp(e->d_name, \"sub\")) n += 100u;\n  }\n"
+    '  closedir(dir);\n  if (stat("ROOT/a.txt", &st) != 0) return 8888u;\n'
+    '  return n + (uint32_t)st.st_size * 1000u + kind("ROOT") * 10u + kind("ROOT/a.txt") + (x & 0u);\n}\n'
+)
+
+
+def test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target():
+    """CSUB-5f. `<sys/stat.h>` and `<dirent.h>` are one text on both rails for each of the five targets: `struct stat`
+    and `struct dirent` as glibc lays them out -- its x86 layout on x86-64 and i386, its generic Linux one on aarch64
+    and riscv64, chosen on each rail from the target's pointer size and `long double` -- with `S_ISDIR` and its kin,
+    `stat`, `lstat`, `fstat`, an opaque `DIR` and its three calls. On Windows, whose UCRT has no `<dirent.h>` and
+    another `<sys/stat.h>`, neither is a header the rails supply. The emit reads a member at its offset, so each
+    layout is held three ways:
+    - on every target, Clang's layout of the rails' text is asserted (`_Static_assert`) in a unit both rails compile
+      for it, so the rails lay their text out as Clang does;
+    - on a glibc host, Clang's layout of the C library's own headers is the rails' layout for the host's target -- and
+      on an x86-64 one for i386 too, through the same biarch x86 headers (`__x86_64__` choosing), an empty
+      `gnu/stubs-32.h` standing in for the 32-bit library's list of unimplemented calls, which lays nothing out;
+      riscv64's text is aarch64's, so the aarch64 runner's witness is riscv64's as well;
+    - a tree walk as `bcir_make.c` walks one lowers alike, R18 clean, and each rail's emit runs as the host compiler's
+      build over a directory laid out for it, reading a file's size and a directory entry's name."""
+    from bcir.frontends.cfront import stdheaders
+    from bcir.frontends.cfront.abi import TARGETS
+
+    clang = shutil.which("clang")
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <time.h>\n#include <sys/stat.h>\n#include <dirent.h>\n@ S_ISDIR(m) @ DIR @\n"
+    layouts = {}
+    for name, abi in TARGETS.items():
+        ours = _cpp._tokens(_cpp.preprocess(unit, abi=abi))
+        windows = name.endswith("windows")
+        assert ("st_mode" in ours and "d_name" in ours) == (not windows), (name, ours[:40])
+        if exe is not None:
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "posix.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(unit)
+                r = subprocess.run(
+                    [exe, "--target", name, "--emit-cpp", path], capture_output=True, text=True
+                )
+            assert r.returncode == 0, r.stdout + r.stderr
+            assert _cpp._tokens(r.stdout) == ours, name
+        if windows or clang is None:
+            continue
+        text = "".join(
+            stdheaders.clang_source(stdheaders.header_text(h, abi))
+            for h in ("sys/stat.h", "dirent.h")
+        )
+        layouts[name] = values = _clang_posix_layout(
+            clang, abi, "#include <stddef.h>\n" + text, "-ffreestanding"
+        )
+        # each structure's size and alignment and each member's offset, asserted where both rails fold them; a
+        # member's own size, `sizeof` through a null pointer, is no constant the subset folds, and is held below
+        check = (
+            "#include <stdint.h>\n#include <stddef.h>\n#include <sys/stat.h>\n#include <dirent.h>\n"
+            + "".join(
+                f'_Static_assert({e} == {values[k]}, "{k}");\n'
+                for k, e in _posix_file_exprs().items()
+                if not k.startswith("z_")
+            )
+            + "uint32_t f(uint32_t x) { return x + (uint32_t)sizeof(struct stat); }\n"
+        )
+        oracle = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "bcir.frontends.cfront",
+                "--target",
+                name,
+                "-fsyntax-only",
+                "/dev/stdin",
+            ],
+            input=check,
+            capture_output=True,
+            text=True,
+        )
+        assert oracle.returncode == 0, (name, oracle.stdout + oracle.stderr)
+        if exe is not None:
+            assert _twin_line(exe, check, "--target", name)[0] == 0, (
+                name,
+                _twin_line(exe, check, "--target", name),
+            )
+    for h in ("sys/stat.h", "dirent.h"):
+        assert stdheaders.header_text(h, TARGETS["riscv64-linux"]) == stdheaders.header_text(
+            h, TARGETS["aarch64-linux"]
+        ), h
+        # its guard a macro name, the path's `/` spelled `_`: `__BCIR_SYS/STAT_H` would define `__BCIR_SYS`
+        first = stdheaders.header_text(h, TARGETS["x86_64-linux"]).splitlines()[0]
+        assert re.fullmatch(r"#ifndef __BCIR_[A-Z0-9_]+", first), first
+    host = _glibc_host_target()
+    if clang is None or host is None:
+        return
+    real = "#define _XOPEN_SOURCE 700\n#include <stddef.h>\n#include <sys/stat.h>\n#include <dirent.h>\n"
+    assert _clang_posix_layout(clang, TARGETS[host], real) == layouts[host], host
+    biarch = "/usr/include/x86_64-linux-gnu"
+    if host == "x86_64-linux" and os.path.exists(os.path.join(biarch, "bits", "struct_stat.h")):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "gnu"))
+            open(os.path.join(d, "gnu", "stubs-32.h"), "w").close()
+            i386 = _clang_posix_layout(
+                clang, TARGETS["i386-linux"], real, "-isystem", d, "-isystem", biarch
+            )
+        assert i386 == layouts["i386-linux"], i386
+    if exe is None:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        root = os.path.join(d, "w")
+        os.makedirs(os.path.join(root, "sub"))
+        with open(os.path.join(root, "a.txt"), "wb") as fh:
+            fh.write(b"x" * 1234)
+        open(os.path.join(root, ".hidden"), "w").close()
+        src = _CSUB5F_WALK.replace("ROOT", root)
+        summary, r, entry = _oracle(src)
+        assert " ok=1 " in summary, summary
+        path = os.path.join(d, "walk.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        twin_summary, twin_emit = _c_run(exe, path)
+        assert twin_summary == summary, (twin_summary, summary)
+        oracle_emit = "\n".join(r.emitted.values())
+        # the rails' own text, which declares what the walk calls, beside the harness's headers: the source's
+        # `_XOPEN_SOURCE` would come after them, too late for the library's to declare `lstat` under a strict -std
+        for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+            assert _equiv(r.source, emit, entry) == "MATCH", (rail, emit[-600:])
+        _emits_compile_strictly(d, r.source, {"oracle": oracle_emit, "twin": twin_emit})
 
 
 def test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails():

@@ -1,0 +1,109 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF1 the oracle's x86-64 st_nlink a 32-bit field, every member after it four octets early",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"unsigned long st_dev; unsigned long st_ino; unsigned long st_nlink; unsigned int st_mode; \"",
+   "new": "\"unsigned long st_dev; unsigned long st_ino; unsigned int st_nlink; unsigned int st_mode; \""
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF2 the oracle lays x86-64 out as glibc's generic layout",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "return \"x86_64\" if _facts(abi)[\"ldbl\"] == \"x87\" else \"generic\"",
+   "new": "return \"generic\""
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF3 the oracle's i386 layout without the pad after st_dev",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"unsigned long long st_dev; unsigned short __pad1; unsigned long st_ino; unsigned int st_mode; \"",
+   "new": "\"unsigned long long st_dev; unsigned long st_ino; unsigned int st_mode; \""
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF4 the oracle's d_ino 64 bits wide where pointers are 32",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"struct dirent { unsigned long d_ino; long d_off;",
+   "new": "\"struct dirent { unsigned long long d_ino; long d_off;"
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF5 the oracle's S_ISDIR a directory's bit alone, a socket a directory",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"#define S_ISDIR(m) ((((m)) & 0170000) == (0040000))\",",
+   "new": "\"#define S_ISDIR(m) ((((m)) & 0070000) == (0040000))\","
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF6 the oracle supplies <sys/stat.h> on Windows",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "def _sys_stat(abi: TargetABI) -> list[str] | None:\n    if _windows(abi):\n        return None\n",
+   "new": "def _sys_stat(abi: TargetABI) -> list[str] | None:\n"
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF7 the oracle's guard keeps the path's /, a guard that is no macro name",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "guard = \"__BCIR_\" + name.replace(\".\", \"_\").replace(\"/\", \"_\").upper()",
+   "new": "guard = \"__BCIR_\" + name.replace(\".\", \"_\").upper()"
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF8 the oracle defines struct timespec in each header that names it",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "        \"#ifndef __BCIR_TIMESPEC\",\n        \"#define __BCIR_TIMESPEC 1\",\n",
+   "new": "        \"#if 1\",\n"
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF9 the twin's x86-64 st_nlink a 32-bit field",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "\"unsigned long st_dev; unsigned long st_ino; unsigned long st_nlink; unsigned int st_mode; \"",
+   "new": "\"unsigned long st_dev; unsigned long st_ino; unsigned int st_nlink; unsigned int st_mode; \""
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF10 the twin lays x86-64 out as glibc's generic layout",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "st->long_double == 1 ? x86_64 : generic",
+   "new": "st->long_double == 2 ? x86_64 : generic"
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF11 the twin supplies <sys/stat.h> and <dirent.h> on Windows",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "(!strcmp(name, \"unistd.h\") || !strcmp(name, \"sys/stat.h\") || !strcmp(name, \"dirent.h\"))",
+   "new": "(!strcmp(name, \"unistd.h\"))"
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF12 the twin's d_type two octets",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "unsigned short d_reclen; unsigned char d_type; ",
+   "new": "unsigned short d_reclen; unsigned short d_type; "
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF13 the twin defines struct timespec in each header that names it",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "hput(b, \"#ifndef __BCIR_TIMESPEC\"); hput(b, \"#define __BCIR_TIMESPEC 1\");",
+   "new": "hput(b, \"#if 1\");"
+  },
+  {
+   "expects": "test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target",
+   "label": "SF14 the twin's i386 layout without the pad after st_dev",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "\"unsigned long long st_dev; unsigned short __pad1; unsigned long st_ino; unsigned int st_mode; \"",
+   "new": "\"unsigned long long st_dev; unsigned long st_ino; unsigned int st_mode; \""
+  }
+ ]
+}

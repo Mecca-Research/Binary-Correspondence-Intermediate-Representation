@@ -53,6 +53,8 @@ NAMES = (
     "time.h",
     "inttypes.h",
     "unistd.h",
+    "sys/stat.h",
+    "dirent.h",
 )
 
 _I8, _I16, _I32 = 127, 32767, 2147483647
@@ -549,10 +551,21 @@ def _errno(abi: TargetABI) -> list[str]:
     ]
 
 
-def _time(abi: TargetABI) -> list[str]:
-    out = [
+def _timespec(abi: TargetABI) -> list[str]:
+    """`time_t` and `struct timespec`, once however many headers declare them: `<time.h>` and `<sys/stat.h>`, whose
+    times are three of them (CSUB-5f)."""
+    return [
+        "#ifndef __BCIR_TIMESPEC",
+        "#define __BCIR_TIMESPEC 1",
         "typedef long long time_t;" if _windows(abi) else "typedef long time_t;",
         "struct timespec { time_t tv_sec; long tv_nsec; };",
+        "#endif",
+    ]
+
+
+def _time(abi: TargetABI) -> list[str]:
+    out = [
+        *_timespec(abi),
         "#define TIME_UTC 1",
         "int timespec_get(struct timespec *, int);",
         "time_t time(time_t *);",
@@ -600,6 +613,75 @@ def _unistd(abi: TargetABI) -> list[str] | None:
     ]
 
 
+# POSIX's file status and directory reading, which the runtime's build tool walks a tree by (`bcir_make.c`), as glibc
+# lays them out and spells them, its classifiers token for token as its `__S_ISTYPE` expands (CSUB-5f). The emit reads a member at its offset, so each layout is the C library's exactly, witnessed
+# against it per target: glibc's x86 layout on x86-64 and on i386 (one header, `__x86_64__` choosing), and its generic
+# Linux one where `long double` is a quad and pointers are 64 bits (aarch64, riscv64). The rails read the layout off
+# the target's facts they already share -- its pointer size and its `long double` -- so they choose it alike. The
+# UCRT has no `<dirent.h>`, and its `<sys/stat.h>` is another interface (`_stat`, no `lstat`), so on Windows neither
+# is a header this module supplies, as `<unistd.h>` is not.
+def _stat_layout(abi: TargetABI) -> str:
+    if abi.pointer_size == 4:
+        return "i386"
+    return "x86_64" if _facts(abi)["ldbl"] == "x87" else "generic"
+
+
+_STAT_FIELDS = {
+    "x86_64": (
+        "unsigned long st_dev; unsigned long st_ino; unsigned long st_nlink; unsigned int st_mode; "
+        "unsigned int st_uid; unsigned int st_gid; int __pad0; unsigned long st_rdev; long st_size; "
+        "long st_blksize; long st_blocks; struct timespec st_atim; struct timespec st_mtim; "
+        "struct timespec st_ctim; long __glibc_reserved[3];"
+    ),
+    "i386": (
+        "unsigned long long st_dev; unsigned short __pad1; unsigned long st_ino; unsigned int st_mode; "
+        "unsigned int st_nlink; unsigned int st_uid; unsigned int st_gid; unsigned long long st_rdev; "
+        "unsigned short __pad2; long st_size; long st_blksize; long st_blocks; struct timespec st_atim; "
+        "struct timespec st_mtim; struct timespec st_ctim; unsigned long __glibc_reserved4; "
+        "unsigned long __glibc_reserved5;"
+    ),
+    "generic": (
+        "unsigned long st_dev; unsigned long st_ino; unsigned int st_mode; unsigned int st_nlink; "
+        "unsigned int st_uid; unsigned int st_gid; unsigned long st_rdev; unsigned long __pad1; long st_size; "
+        "int st_blksize; int __pad2; long st_blocks; struct timespec st_atim; struct timespec st_mtim; "
+        "struct timespec st_ctim; int __glibc_reserved[2];"
+    ),
+}
+
+
+def _sys_stat(abi: TargetABI) -> list[str] | None:
+    if _windows(abi):
+        return None
+    return [
+        *_timespec(abi),
+        "typedef unsigned int mode_t;",
+        f"struct stat {{ {_STAT_FIELDS[_stat_layout(abi)]} }};",
+        "#define S_IFMT 0170000",
+        "#define S_IFDIR 0040000",
+        "#define S_IFREG 0100000",
+        "#define S_IFLNK 0120000",
+        "#define S_ISDIR(m) ((((m)) & 0170000) == (0040000))",
+        "#define S_ISREG(m) ((((m)) & 0170000) == (0100000))",
+        "#define S_ISLNK(m) ((((m)) & 0170000) == (0120000))",
+        "int stat(const char *, struct stat *);",
+        "int lstat(const char *, struct stat *);",
+        "int fstat(int, struct stat *);",
+    ]
+
+
+def _dirent(abi: TargetABI) -> list[str] | None:
+    if _windows(abi):
+        return None
+    return [
+        "typedef struct __dirstream DIR;",
+        "struct dirent { unsigned long d_ino; long d_off; unsigned short d_reclen; unsigned char d_type; "
+        "char d_name[256]; };",
+        "DIR *opendir(const char *);",
+        "struct dirent *readdir(DIR *);",
+        "int closedir(DIR *);",
+    ]
+
+
 def _math(abi: TargetABI) -> list[str]:
     # the constants and the classification macros, spelled as glibc spells them: `isinf` its sign-returning builtin
     return [
@@ -634,6 +716,8 @@ _BUILDERS = {
     "time.h": _time,
     "inttypes.h": _inttypes,
     "unistd.h": _unistd,
+    "sys/stat.h": _sys_stat,
+    "dirent.h": _dirent,
 }
 
 
@@ -650,7 +734,9 @@ def header_text(name: str, abi: TargetABI) -> str | None:
     a header this module does not supply."""
     build = _BUILDERS.get(name)
     lines = None if build is None else build(abi)
-    if lines is None:  # not one, or not on this target (`<unistd.h>` on Windows)
+    if (
+        lines is None
+    ):  # not one, or not on this target (`<unistd.h>`, `<sys/stat.h>`, `<dirent.h>` on Windows)
         return None
-    guard = "__BCIR_" + name.replace(".", "_").upper()
+    guard = "__BCIR_" + name.replace(".", "_").replace("/", "_").upper()
     return "\n".join([f"#ifndef {guard}", f"#define {guard} 1", *lines, "#endif"]) + "\n"

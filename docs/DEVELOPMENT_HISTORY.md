@@ -313,6 +313,20 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-28 — CSUB-5f: `<sys/stat.h>` and `<dirent.h>` on both rails.**
+  - `struct stat` and `struct dirent` are laid out as glibc lays them out: its x86 layout on x86-64 and i386, and its
+    generic Linux one on aarch64 and riscv64. Both rails choose the layout from the target's pointer size and its
+    `long double`.
+  - The headers also carry the mode classifiers, `stat`, `lstat` and `fstat`, an opaque `DIR` and its three calls.
+    `struct timespec` is one guarded definition that `<time.h>` and `<sys/stat.h>` share. Neither header is supplied
+    on Windows.
+  - **Evidence.** `test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target`:
+    - every target's layout of the rails' text is asserted on both rails;
+    - the host's glibc headers give the same layout, and so do the biarch x86 headers for i386;
+    - a tree walk runs as Clang's build on both rails.
+  - `bcir_make.c` now stops at `bf->targets[i]->name` (CF-IDXARROW); the count stays **64 of 68**.
+  - **Standing faults.** `cfront-posix-files.json`, 14; HC18 re-anchored.
+
 - **2026-11-28 — CSUB-6a: a call of 24 arguments, and a call through a member of a member; the tensor kernels under the verified compiler.**
   - A call carries 24 arguments on both rails, and a twenty-fifth is refused alike. The limit was 16, and the
     attention kernels' workspace calls pass 18. The freeze's mirror of a claim's reads (`CLAIM_MAX_RD`) and its

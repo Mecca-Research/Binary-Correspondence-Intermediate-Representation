@@ -118,8 +118,8 @@
     },
     "bcir_make.c": {
       "verdict": "blocked",
-      "blocker": "parse error: unknown struct",
-      "construct": "<sys/stat.h>'s `struct stat` and <dirent.h>'s `struct dirent`: POSIX's host interface past the C library, whose layouts differ by target; past them, a member through a pointer element (`bf->targets[i]->name`), which both rails refuse by design today (CF-IDXARROW)",
+      "blocker": "parse error: unsupported base expression Index",
+      "construct": "a member through a pointer element (`bf->targets[i]->name`, CF-IDXARROW), which both rails refuse alike; the file-status and directory headers before it are CSUB-5f's",
       "rung": "CSUB-5"
     },
     "bcir_microbench.c": {
