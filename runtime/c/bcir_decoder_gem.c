@@ -351,6 +351,8 @@ int bcir_dgem_load(bcir_dgem *g, const bcir_q8_model *model, const uint8_t *pack
 /* --- run: GEM dispatches, each claim runs its operation ---------------------------------- */
 
 static uint64_t q8_octets(const bcir_q8_tensor *t) {
+  if (t->encoding == BCIR_Q8_TENSOR_ENC_LUT4_1B)
+    return (uint64_t)t->lut4_scales_bytes + (uint64_t)t->lut4_packed_bytes;
   return (uint64_t)t->element_count + 2ull * t->group_count;
 }
 

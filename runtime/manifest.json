@@ -103,6 +103,13 @@
       "link": ["m", "pthread"],
       "options": ["-ffp-contract=off", "-fno-math-errno", "-O3"]
     },
+    "bcir_mixer_ext": {
+      "class": "hosted_tool",
+      "sources": ["bcir_precision.c", "bcir_mixer_ext.c"],
+      "libraries": ["bcir_decoder_training"],
+      "link": ["m", "pthread"],
+      "options": ["-ffp-contract=off", "-fno-math-errno", "-O3"]
+    },
     "bcir_decoder_pack": {
       "class": "hosted_tool",
       "sources": ["bcir_decoder_pack.c"],
@@ -160,6 +167,7 @@
   },
   "harnesses": {
     "test_decoder_train": {"sources": ["test_decoder_train.c"], "libraries": ["bcir_decoder_training"], "options": ["-ffp-contract=off"]},
+    "test_mixer_ext": {"sources": ["test_mixer_ext.c"], "libraries": ["bcir_mixer_ext"], "options": ["-ffp-contract=off"]},
     "test_runtime": {"sources": ["test_runtime.c"], "libraries": ["bcir_base"]},
     "test_sha256": {"sources": ["test_sha256.c"], "libraries": ["bcir_base"]},
     "test_execution_plan": {"sources": ["test_execution_plan.c"], "libraries": ["bcir_base"]},
@@ -251,6 +259,7 @@
   },
   "variants": {
     "test_decoder_train_c11": {"of": "test_decoder_train", "standard": 11},
+    "test_mixer_ext_c11": {"of": "test_mixer_ext", "standard": 11},
     "test_decoder_train_portable": {"of": "test_decoder_train", "options": ["-DBCIR_TENSOR_NO_DISPATCH"]},
     "test_decoder_train_avx2": {"of": "test_decoder_train", "options": ["-DBCIR_TENSOR_MAX_VARIANT=2"]},
     "test_decoder_train_tsan": {"of": "test_decoder_train", "standard": 11, "sanitizer": "thread", "options": ["-O1", "-g", "-DBCIR_ATT_CONTIG_FROM=1", "-DBCIR_ATT_STRIP_FROM=1", "-DBCIR_MM_KSPLIT_BLOCKS=1"]},
@@ -321,6 +330,7 @@
   },
   "sections": {
     "decoder_train": {"script": "tools/c/sections/decoder_train.sh", "harnesses": ["test_decoder_train_c11", "test_decoder_train", "test_decoder_train_portable", "test_decoder_train_avx2"]},
+    "mixer_ext": {"script": "tools/c/sections/mixer_ext.sh", "harnesses": ["test_mixer_ext_c11", "test_mixer_ext"]},
     "decoder_train_tsan": {"script": "tools/c/sections/decoder_train_tsan.sh", "harnesses": ["test_decoder_train_tsan", "test_decoder_train_race"]},
     "freestanding": {"script": "tools/c/sections/freestanding.sh", "harnesses": [], "compiler_only": true},
     "x86_interrupt": {"script": "tools/c/sections/x86_interrupt.sh", "harnesses": ["test_x86_interrupt_c11", "test_x86_interrupt"]},

@@ -177,6 +177,100 @@ BCIR_AI_API int bcir_ai_q15_topk(
     size_t top_k, bcir_ai_match *matches, size_t match_capacity,
     size_t *match_count);
 
+/* LUT4-LANES (COMP-1): deterministic packed-1-bit factorized matrix-vector and
+ * 4-token micro-batched (mb4) kernels over exact 1.0-bit/weight 2-nibbles-per-byte
+ * binary matrices with finite IEEE-754 binary16 scales (g, l, h):
+ *
+ *   y[j] = sum_{p=0}^{paths-1} h_p[j] * (U_p @ (l_p * (V_p @ (g_p * x))))[j]
+ *
+ * Packing layout for binary matrix B[rows x cols] in {+1, -1} (bit=1 => -1, bit=0 => +1):
+ *   groups4 = ceil(cols / 4), rows32 = ceil(rows / 32) * 32, bytes_per_group = rows32 / 2.
+ *   For group g = c / 4, block blk = r / 32, lane = r & 15, byte offset is
+ *   g * bytes_per_group + blk * 16 + lane: low nibble = row 32*blk + lane,
+ *   high nibble = row 32*blk + 16 + lane; bit (c & 3) is sign of B[r, c].
+ *   Padding rows (r >= rows) and padding columns (c >= cols) must have zero bits.
+ *
+ * Instances match Q8-LANES (1 portable, 2 AVX2, 4 AVX-512; 0 widest admitted):
+ * every admitted instance, every DECODE-THREADS column slice [column_begin, column_end),
+ * and every mb4 micro-batch produce bit-for-bit identical IEEE-754 outputs (0 bit drift,
+ * -ffp-contract=off, zero heap allocations). */
+#define BCIR_AI_LUT4_MAX_PATHS UINT32_C(2)
+#define BCIR_AI_LUT4_MAX_RANK UINT32_C(1024)
+
+typedef struct bcir_ai_lut4_path {
+  size_t rank;
+  const uint8_t *v_packed;   /* [rank x input_count] packed 1-bit LUT4 */
+  size_t v_packed_bytes;
+  const uint8_t *u_packed;   /* [output_count x rank] packed 1-bit LUT4 */
+  size_t u_packed_bytes;
+  const uint8_t *g_fp16_le;  /* input_count * 2 bytes, finite binary16 LE */
+  const uint8_t *l_fp16_le;  /* rank * 2 bytes, finite binary16 LE */
+  const uint8_t *h_fp16_le;  /* output_count * 2 bytes, finite binary16 LE */
+} bcir_ai_lut4_path;
+
+BCIR_AI_API int bcir_ai_lut4_instances(void);
+
+BCIR_AI_API int bcir_ai_lut4_packed_bytes(size_t rows, size_t cols, size_t *out_bytes);
+
+BCIR_AI_API int bcir_ai_lut4_pack_signs(
+    const int8_t *signs, size_t rows, size_t cols,
+    uint8_t *packed, size_t packed_capacity);
+
+BCIR_AI_API int bcir_ai_lut4_validate_packed(
+    const uint8_t *packed, size_t packed_size, size_t rows, size_t cols);
+
+BCIR_AI_API int bcir_ai_lut4_paths_validate(
+    size_t input_count, size_t output_count,
+    const bcir_ai_lut4_path *paths, size_t path_count);
+
+BCIR_AI_API int bcir_ai_lut4_matvec_f64(
+    const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, double *output);
+
+BCIR_AI_API int bcir_ai_lut4_matvec_f64_prevalidated(
+    const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, double *output);
+
+BCIR_AI_API int bcir_ai_lut4_matvec_f64_instance(
+    int instance, const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, double *output);
+
+BCIR_AI_API int bcir_ai_lut4_matvec_f64_columns(
+    const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, size_t column_begin, size_t column_end,
+    double *output);
+
+BCIR_AI_API int bcir_ai_lut4_matvec_f64_columns_instance(
+    int instance, const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, size_t column_begin, size_t column_end,
+    double *output);
+
+BCIR_AI_API int bcir_ai_lut4_matmul_mb4_f64_instance(
+    int instance, const double *inputs, size_t token_count, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, double *outputs);
+
+BCIR_AI_API int bcir_ai_lut4_matvec_f32_instance(
+    int instance, const float *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, float *output);
+
+BCIR_AI_API int bcir_ai_lut4_matvec_f32_columns_instance(
+    int instance, const float *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, size_t column_begin, size_t column_end,
+    float *output);
+
+BCIR_AI_API int bcir_ai_lut4_matmul_mb4_f32_instance(
+    int instance, const float *inputs, size_t token_count, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, float *outputs);
+
 #ifdef __cplusplus
 }
 #endif

@@ -146,6 +146,7 @@ static int tensor_checked(const bcir_q8_model *model, const bcir_q8_tensor *tens
   if (address < base) return 0;
   delta = (size_t)(address - base);
   if (delta >= tensor_bytes || delta % sizeof *model->tensors) return 0;
+  if (tensor->encoding != BCIR_Q8_TENSOR_ENC_Q8) return 0;
   if (!tensor->element_count) return 0;
   groups = ((uint64_t)tensor->element_count + model->group_size - 1u) /
            model->group_size;
@@ -318,6 +319,125 @@ static int canonical_tensor_at(const bcir_q8_model *m, uint32_t index,
   return -1;
 }
 
+static int load_lut4_tensor(const bcir_q8_model *m, bcir_q8_tensor *t,
+                            const unsigned char *p, uint16_t path_count,
+                            uint64_t payload_offset, uint64_t recorded_size,
+                            uint32_t entry_index, uint64_t *scales_end,
+                            uint64_t *packed_end, char *error, size_t cap) {
+  uint64_t expected_count, scales_total = 0u, packed_total = 0u;
+  uint64_t scales_cursor = 0u, packed_cursor = 0u;
+  uint16_t ranks[BCIR_AI_LUT4_MAX_PATHS];
+  uint32_t actual_crc;
+  size_t k;
+  if (m->version != BCIR_Q8_VERSION_V2 || !(m->flags & BCIR_Q8_FLAG_HYBRID_LUT4_MLP)) {
+    set_error(error, cap, "LUT4_1B tensor refused outside BCIRQ8 v2 hybrid container at entry %u",
+              entry_index);
+    return -1;
+  }
+  if (!bcir_q8_tensor_is_mlp(t->tensor_id) || t->rank != 2u) {
+    set_error(error, cap, "LUT4_1B encoding permitted only on MLP tensors (entry %u id=%u)",
+              entry_index, (unsigned)t->tensor_id);
+    return -1;
+  }
+  if (path_count < 1u || path_count > BCIR_AI_LUT4_MAX_PATHS) {
+    set_error(error, cap, "invalid LUT4_1B path count %u at entry %u",
+              (unsigned)path_count, entry_index);
+    return -1;
+  }
+  ranks[0] = (uint16_t)(t->group_count & 0xFFFFu);
+  ranks[1] = (uint16_t)((t->group_count >> 16) & 0xFFFFu);
+  if (ranks[0] < 1u || ranks[0] > BCIR_AI_LUT4_MAX_RANK) {
+    set_error(error, cap, "invalid LUT4_1B primary rank %u at entry %u",
+              (unsigned)ranks[0], entry_index);
+    return -1;
+  }
+  if (path_count == 1u) {
+    if (ranks[1] != 0u) {
+      set_error(error, cap, "nonzero secondary rank for 1-path LUT4_1B tensor at entry %u",
+                entry_index);
+      return -1;
+    }
+  } else if (ranks[1] < 1u || ranks[1] > BCIR_AI_LUT4_MAX_RANK) {
+    set_error(error, cap, "invalid LUT4_1B residual rank %u at entry %u",
+              (unsigned)ranks[1], entry_index);
+    return -1;
+  }
+  expected_count = (uint64_t)t->dim0 * (uint64_t)t->dim1;
+  if (expected_count != (uint64_t)t->element_count) {
+    set_error(error, cap, "bad LUT4_1B element count at entry %u", entry_index);
+    return -1;
+  }
+  for (k = 0u; k < (size_t)path_count; ++k) {
+    uint64_t path_scales =
+        2ull * ((uint64_t)t->dim0 + (uint64_t)ranks[k] + (uint64_t)t->dim1);
+    size_t v_bytes = 0u, u_bytes = 0u;
+    uint64_t next_total;
+    if (bcir_ai_lut4_packed_bytes(ranks[k], t->dim0, &v_bytes) != BCIR_AI_OK ||
+        bcir_ai_lut4_packed_bytes(t->dim1, ranks[k], &u_bytes) != BCIR_AI_OK ||
+        add_overflows_u64(scales_total, path_scales, &next_total) ||
+        next_total > UINT32_MAX) {
+      set_error(error, cap, "LUT4_1B scale span overflow at entry %u", entry_index);
+      return -1;
+    }
+    scales_total = next_total;
+    if (add_overflows_u64(packed_total, (uint64_t)v_bytes, &next_total) ||
+        add_overflows_u64(next_total, (uint64_t)u_bytes, &next_total) ||
+        next_total > UINT32_MAX) {
+      set_error(error, cap, "LUT4_1B packed span overflow at entry %u", entry_index);
+      return -1;
+    }
+    packed_total = next_total;
+  }
+  if ((t->exponent_offset & 7u) || (t->code_offset & 7u) ||
+      !span_ok(t->exponent_offset, scales_total, payload_offset, recorded_size, scales_end) ||
+      !span_ok(t->code_offset, packed_total, payload_offset, recorded_size, packed_end)) {
+    set_error(error, cap, "bad LUT4_1B tensor span at entry %u", entry_index);
+    return -1;
+  }
+  t->encoding = BCIR_Q8_TENSOR_ENC_LUT4_1B;
+  t->lut4_path_count = (uint8_t)path_count;
+  t->lut4_ranks[0] = ranks[0];
+  t->lut4_ranks[1] = ranks[1];
+  t->lut4_scales_bytes = (uint32_t)scales_total;
+  t->lut4_packed_bytes = (uint32_t)packed_total;
+  t->exponents = p + t->exponent_offset;
+  t->codes = p + t->code_offset;
+  for (k = 0u; k < (size_t)path_count; ++k) {
+    size_t g_bytes = (size_t)t->dim0 * 2u;
+    size_t l_bytes = (size_t)ranks[k] * 2u;
+    size_t h_bytes = (size_t)t->dim1 * 2u;
+    size_t v_bytes = 0u, u_bytes = 0u;
+    (void)bcir_ai_lut4_packed_bytes(ranks[k], t->dim0, &v_bytes);
+    (void)bcir_ai_lut4_packed_bytes(t->dim1, ranks[k], &u_bytes);
+    t->lut4_paths[k].rank = (size_t)ranks[k];
+    t->lut4_paths[k].g_fp16_le = t->exponents + (size_t)scales_cursor;
+    scales_cursor += g_bytes;
+    t->lut4_paths[k].l_fp16_le = t->exponents + (size_t)scales_cursor;
+    scales_cursor += l_bytes;
+    t->lut4_paths[k].h_fp16_le = t->exponents + (size_t)scales_cursor;
+    scales_cursor += h_bytes;
+    t->lut4_paths[k].v_packed = t->codes + (size_t)packed_cursor;
+    t->lut4_paths[k].v_packed_bytes = v_bytes;
+    packed_cursor += v_bytes;
+    t->lut4_paths[k].u_packed = t->codes + (size_t)packed_cursor;
+    t->lut4_paths[k].u_packed_bytes = u_bytes;
+    packed_cursor += u_bytes;
+  }
+  if (bcir_ai_lut4_paths_validate(t->dim0, t->dim1, t->lut4_paths, t->lut4_path_count) !=
+      BCIR_AI_OK) {
+    set_error(error, cap, "invalid LUT4_1B scales or non-canonical padding at entry %u",
+              entry_index);
+    return -1;
+  }
+  actual_crc = crc_update(0xFFFFFFFFu, t->exponents, (size_t)t->lut4_scales_bytes);
+  actual_crc = crc_update(actual_crc, t->codes, (size_t)t->lut4_packed_bytes) ^ 0xFFFFFFFFu;
+  if (actual_crc != t->tensor_crc32) {
+    set_error(error, cap, "BCIRQ8 LUT4_1B tensor CRC mismatch at entry %u", entry_index);
+    return -1;
+  }
+  return 0;
+}
+
 int bcir_q8_model_load_with_allocator_limited(
     const char *path, bcir_q8_model *out, char *error, size_t error_capacity,
     const bcir_host_allocator *allocator, uint64_t max_file_size) {
@@ -326,9 +446,9 @@ int bcir_q8_model_load_with_allocator_limited(
   size_t got;
   unsigned char *p;
   uint16_t version, header_size, group_size;
-  uint32_t endian, flags, tensor_count, entry_size, body_crc, recorded_header_crc;
+  uint32_t endian, flags, allowed_flags, tensor_count, entry_size, body_crc, recorded_header_crc;
   uint64_t directory_offset, directory_end, payload_offset, recorded_size;
-  uint32_t i, j;
+  uint32_t i, j, lut4_tensor_count = 0u;
   uint64_t expected_tensor_count;
   size_t tensor_bytes, span_count, span_bytes;
   bcir_q8_span *spans = NULL;
@@ -388,9 +508,18 @@ int bcir_q8_model_load_with_allocator_limited(
   }
   version = rd16(p + 8); header_size = rd16(p + 10); endian = rd32(p + 12);
   flags = rd32(p + 16); group_size = rd16(p + 20);
-  if (version != BCIR_Q8_VERSION || header_size != BCIR_Q8_HEADER_SIZE ||
+  if (version == BCIR_Q8_VERSION) {
+    allowed_flags = BCIR_Q8_FLAG_TIED_EMBEDDINGS;
+  } else if (version == BCIR_Q8_VERSION_V2) {
+    allowed_flags = BCIR_Q8_FLAG_TIED_EMBEDDINGS | BCIR_Q8_FLAG_HYBRID_LUT4_MLP;
+  } else {
+    set_error(error, error_capacity, "unsupported BCIRQ8 header fields");
+    goto fail;
+  }
+  if (header_size != BCIR_Q8_HEADER_SIZE ||
       endian != 0x01020304u || p[22] != 8 || p[23] != 0 || !group_size ||
-      (flags & ~BCIR_Q8_FLAG_TIED_EMBEDDINGS)) {
+      (flags & ~allowed_flags) ||
+      (version == BCIR_Q8_VERSION_V2 && !(flags & BCIR_Q8_FLAG_HYBRID_LUT4_MLP))) {
     set_error(error, error_capacity, "unsupported BCIRQ8 header fields");
     goto fail;
   }
@@ -403,7 +532,7 @@ int bcir_q8_model_load_with_allocator_limited(
     set_error(error, error_capacity, "BCIRQ8 header CRC mismatch");
     goto fail;
   }
-  m.flags = flags; m.group_size = group_size; m.bits = 8;
+  m.version = version; m.flags = flags; m.group_size = group_size; m.bits = 8;
   m.vocab_size = rd32(p + 24); m.d_model = rd32(p + 28);
   m.n_heads = rd32(p + 32); m.n_kv_heads = rd32(p + 36);
   m.n_layers = rd32(p + 40); m.d_ff = rd32(p + 44);
@@ -500,44 +629,63 @@ int bcir_q8_model_load_with_allocator_limited(
       set_error(error, error_capacity, "non-canonical BCIRQ8 tensor order at entry %u", i);
       goto fail;
     }
-    if (eflags || reserved || reserved2 || (t->rank != 1 && t->rank != 2) ||
-        !t->dim0 || !t->dim1) {
+    if (reserved2 || (t->rank != 1 && t->rank != 2) || !t->dim0 || !t->dim1) {
       set_error(error, error_capacity, "invalid BCIRQ8 tensor directory entry %u", i);
       goto fail;
     }
-    expected_count = t->rank == 1 ? t->dim0 : (uint64_t)t->dim0 * t->dim1;
-    expected_groups = (expected_count + group_size - 1u) / group_size;
-    if (expected_count != t->element_count || expected_groups != t->group_count ||
-        (t->exponent_offset & 7u) || (t->code_offset & 7u) ||
-        !span_ok(t->exponent_offset, (uint64_t)t->group_count * 2u,
-                 payload_offset, recorded_size, &exponent_end) ||
-        !span_ok(t->code_offset, t->element_count, payload_offset,
-                 recorded_size, &code_end)) {
-      set_error(error, error_capacity, "bad BCIRQ8 tensor shape/span at entry %u", i);
-      goto fail;
-    }
-    t->exponents = p + t->exponent_offset; t->codes = p + t->code_offset;
-    for (j = 0; j < t->group_count; ++j) {
-      int exponent = (int)rdi16(t->exponents + (size_t)j * 2u);
-      if (exponent < -300 || exponent > 300) {
-        set_error(error, error_capacity, "invalid BCIRQ8 exponent at entry %u", i);
+    if (eflags == BCIR_Q8_TENSOR_ENC_LUT4_1B) {
+      if (load_lut4_tensor(&m, t, p, reserved, payload_offset, recorded_size, i,
+                           &exponent_end, &code_end, error, error_capacity))
+        goto fail;
+      lut4_tensor_count++;
+    } else if (eflags == BCIR_Q8_TENSOR_ENC_Q8) {
+      if (reserved) {
+        set_error(error, error_capacity, "invalid BCIRQ8 tensor directory entry %u", i);
         goto fail;
       }
-    }
-    for (j = 0; j < t->element_count; ++j) if (t->codes[j] == 128u) {
-      set_error(error, error_capacity, "non-canonical BCIRQ8 -128 code at entry %u", i);
-      goto fail;
-    }
-    actual_crc = crc_update(0xFFFFFFFFu, t->exponents, (size_t)t->group_count * 2u);
-    actual_crc = crc_update(actual_crc, t->codes, t->element_count) ^ 0xFFFFFFFFu;
-    if (actual_crc != t->tensor_crc32) {
-      set_error(error, error_capacity, "BCIRQ8 tensor CRC mismatch at entry %u", i);
+      t->encoding = BCIR_Q8_TENSOR_ENC_Q8;
+      expected_count = t->rank == 1 ? t->dim0 : (uint64_t)t->dim0 * t->dim1;
+      expected_groups = (expected_count + group_size - 1u) / group_size;
+      if (expected_count != t->element_count || expected_groups != t->group_count ||
+          (t->exponent_offset & 7u) || (t->code_offset & 7u) ||
+          !span_ok(t->exponent_offset, (uint64_t)t->group_count * 2u,
+                   payload_offset, recorded_size, &exponent_end) ||
+          !span_ok(t->code_offset, t->element_count, payload_offset,
+                   recorded_size, &code_end)) {
+        set_error(error, error_capacity, "bad BCIRQ8 tensor shape/span at entry %u", i);
+        goto fail;
+      }
+      t->exponents = p + t->exponent_offset; t->codes = p + t->code_offset;
+      for (j = 0; j < t->group_count; ++j) {
+        int exponent = (int)rdi16(t->exponents + (size_t)j * 2u);
+        if (exponent < -300 || exponent > 300) {
+          set_error(error, error_capacity, "invalid BCIRQ8 exponent at entry %u", i);
+          goto fail;
+        }
+      }
+      for (j = 0; j < t->element_count; ++j) if (t->codes[j] == 128u) {
+        set_error(error, error_capacity, "non-canonical BCIRQ8 -128 code at entry %u", i);
+        goto fail;
+      }
+      actual_crc = crc_update(0xFFFFFFFFu, t->exponents, (size_t)t->group_count * 2u);
+      actual_crc = crc_update(actual_crc, t->codes, t->element_count) ^ 0xFFFFFFFFu;
+      if (actual_crc != t->tensor_crc32) {
+        set_error(error, error_capacity, "BCIRQ8 tensor CRC mismatch at entry %u", i);
+        goto fail;
+      }
+    } else {
+      set_error(error, error_capacity, "unsupported BCIRQ8 tensor encoding %u at entry %u",
+                (unsigned)eflags, i);
       goto fail;
     }
     spans[2u * i].begin = t->exponent_offset;
     spans[2u * i].end = exponent_end;
     spans[2u * i + 1u].begin = t->code_offset;
     spans[2u * i + 1u].end = code_end;
+  }
+  if (version == BCIR_Q8_VERSION_V2 && lut4_tensor_count == 0u) {
+    set_error(error, error_capacity, "BCIRQ8 v2 requires at least one LUT4_1B MLP tensor");
+    goto fail;
   }
   qsort(spans, span_count, sizeof *spans, compare_spans);
   for (i = 1; i < span_count; ++i) {

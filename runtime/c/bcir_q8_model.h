@@ -1,10 +1,11 @@
-/*===- bcir_q8_model.h - portable BCIRQ8 v1 loader ----------------------===*/
+/*===- bcir_q8_model.h - portable BCIRQ8 v1/v2 loader -------------------===*/
 #ifndef BCIR_Q8_MODEL_H
 #define BCIR_Q8_MODEL_H
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bcir_ai_kernels.h"
 #include "bcir_host_alloc.h"
 
 #ifdef __cplusplus
@@ -12,12 +13,20 @@ extern "C" {
 #endif
 
 #define BCIR_Q8_VERSION 1u
+#define BCIR_Q8_VERSION_V2 2u
 #define BCIR_Q8_HEADER_SIZE 224u
 #define BCIR_Q8_DIRECTORY_ENTRY_SIZE 48u
 #define BCIR_Q8_DEFAULT_MAX_FILE_SIZE (64ull * 1024ull * 1024ull)
 
 #define BCIR_Q8_FLAG_TIED_EMBEDDINGS 1u
+/* BCIRQ8 v2 hybrid container flag: MLP projections (W_GATE, W_UP, W_DOWN) may
+ * carry packed-1-bit factorized LUT4_1B encodings while Attention, embeddings,
+ * RMSNorms and LM head stay strictly per-group symmetric Q8. */
+#define BCIR_Q8_FLAG_HYBRID_LUT4_MLP (1u << 1)
 #define BCIR_Q8_MODEL_OWNER_TAG 0x51384d44u
+
+#define BCIR_Q8_TENSOR_ENC_Q8 0u
+#define BCIR_Q8_TENSOR_ENC_LUT4_1B 1u
 
 #define BCIR_Q8_TENSOR_EMBEDDING 1u
 #define BCIR_Q8_TENSOR_G_ATTN 10u
@@ -32,22 +41,36 @@ extern "C" {
 #define BCIR_Q8_TENSOR_G_FINAL 100u
 #define BCIR_Q8_TENSOR_LM_HEAD 101u
 
+/* Container-level policy predicate: only MLP projections may use LUT4_1B. */
+static inline int bcir_q8_tensor_is_mlp(uint16_t tensor_id) {
+  return tensor_id == BCIR_Q8_TENSOR_W_GATE ||
+         tensor_id == BCIR_Q8_TENSOR_W_UP ||
+         tensor_id == BCIR_Q8_TENSOR_W_DOWN;
+}
+
 typedef struct bcir_q8_tensor {
   uint16_t tensor_id;
   int16_t layer;
   uint8_t rank;
+  uint8_t encoding;
+  uint8_t lut4_path_count;
+  uint16_t lut4_ranks[BCIR_AI_LUT4_MAX_PATHS];
   uint32_t dim0;
   uint32_t dim1;
   uint32_t element_count;
   uint32_t group_count;
   uint32_t tensor_crc32;
+  uint32_t lut4_scales_bytes;
+  uint32_t lut4_packed_bytes;
   uint64_t exponent_offset;
   uint64_t code_offset;
   const unsigned char *exponents;
   const unsigned char *codes;
+  bcir_ai_lut4_path lut4_paths[BCIR_AI_LUT4_MAX_PATHS];
 } bcir_q8_tensor;
 
 typedef struct bcir_q8_model {
+  uint16_t version;
   uint32_t flags;
   uint16_t group_size;
   uint8_t bits;
@@ -87,8 +110,9 @@ typedef struct bcir_q8_model {
 
 void bcir_q8_model_init(bcir_q8_model *model);
 
-/* Load and fully validate a BCIRQ8 v1 file.  The loader checks the header/body/tensor
- * CRCs, every span and shape, canonical tensor inventory, and model geometry. */
+/* Load and fully validate a BCIRQ8 v1 or v2 file.  The loader checks the header/body/tensor
+ * CRCs, every span and shape, canonical tensor inventory, MLP-only LUT4_1B enforcement,
+ * and model geometry. */
 int bcir_q8_model_load(const char *path, bcir_q8_model *out,
                        char *error, size_t error_capacity);
 

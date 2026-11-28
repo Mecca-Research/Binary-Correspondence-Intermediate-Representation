@@ -13,6 +13,11 @@
 >   [BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md](BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md)
 > - Bare-metal C LittleBit / LittleBit-2 sub-1-bit compression study (`COMP-1`):
 >   [BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md)
+> - `BCIR-Arch7d-10M` reference configuration, curriculum & `4×` extrapolation report:
+>   [BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md)
+> - Weight-Space Programming (`WSP`), Live State-Space Programming (`SSP-Live`), and Self-Improvement
+>   Memory (`SIM`, `arXiv:2611.18856`) hybrid control report:
+>   [BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md)
 
 Every slice below cites the exact measurement or raw-log anomaly that motivates it, defines its
 numerical/provenance contract, and specifies a falsifiable acceptance gate.
@@ -336,6 +341,38 @@ Combined with `wedge-integrated`'s 68-byte C exact KV registry (`1,568/1,568`), 
 - Reserve learned neural weights for ambiguous, unstructured, and compositional generalization, and
   benchmark compiled sub-circuits honestly against plain C/compiler controls (as Exp A did).
 
+### Verified `WSP-1..3` & Tier 1 `SSP-Live` Empirical Evidence ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md), `Modular-AI` PR #231 `d823c20`)
+Re-auditing Takehi et al. (*Sparks of Weight-Space Programming*, Nov 2026) revealed that `Qwen3.5-0.8B`
+is a **`3:1` hybrid (`18× Gated DeltaNet + 6× full_attention`, `attn_output_gate=true`, `conv k=4`)**
+whose winning Exp 8 edits landed exclusively on deep `full_attention` layers (`L15, L19 ≡ 3 mod 4`) —
+structurally isomorphic to `BCIR-Arch7d-10M`'s `L3 NoPE-MLA + G1`. An `18`-arm bare-metal C11 audit on
+trained `BCIR-Arch7d-10M` (`BCIRQ8 v1`) plus matched `2.6M` 3-architecture training (`163,840` tokens)
+establishes four rules:
+1. **`WSP-1` & `WSP-2` operationalized:** Zero-pickle `bcir.wsp1.weight_patch.v1` manifests emitted for
+   `L3.wdown` (`k=64`, `0.326%` coords) and `L3.bg` (`3` scalars = `0.00003%`); `WSP-2` sentinel passes
+   on `BCIR-Arch7d-10M` in `3.7 ms` (`0` outliers `> 8× median`, `wdown` max/median `1.14–1.43`).
+2. **Global-anchor localization vs uniform-GQA failure:** On `BCIR-Arch7d-10M`, gradient-free activation
+   contrast peaks at `L3 NoPE-MLA` (`6.121` vs `1.867` at `L0`), where sparse `L3.wdown` (`k=64`) gains
+   **`+7.45`** (`20.18 → 27.63`), beating `L0/L1/L2`, dense `L3` (`24.45`, `14.5×` denser), and
+   matched-norm random control (`20.17`, `-0.01`). Modifying **`3` `L3.bg` `G1` biases** beats zeroing
+   `32,430` `L3.wo` coords (`21.15` vs `20.66`, `KL=0.00031`). Conversely, parameter-matched uniform
+   `GQA_Full_2M` fails WSP on **`0/4` layers (`-7.77` to `-0.55`)**, while `Canon-AC` (`19.25`), static
+   `GDN-2` gate shifts (`19.12`), and `mHC` streams (`20.18`, `0.0` KL) are structural traps/invariants.
+3. **Tier 1 `SSP-Live` beats single-layer static `WSP` at zero KL:** Adaptive online `GDN-2` state-echo
+   damping (`S_t` damp + erase boost on 4-gram echo) jumps to **`30.48` (`+10.30`, `0` weight mutations,
+   `0.0000` KL)**, and adaptive `NgramGuard` reaches **`78.93` (`loop 100% → 40.6%`, `dist4 93.3%`,
+   `0` KL)** — establishing strict Tier 1 (`SSP-Live` / harness) precedence over persistent weight edits
+   for ephemeral decoding attractors.
+4. **`WSP` never replaces training (`WSP-3` SGD control):** Eight native C11 `Opt_Q8_Muon` steps
+   (`26.2 s`) simultaneously lower held-out CE (`-0.0067` nats) and lift score to `34.51`, beating every
+   static single-layer `WSP` edit.
+5. **Follow-on 7-Upgrade Control, Co-Evolution & Verification Laws ([BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md](BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md), `Modular-AI` PR #232 `616caec`):**
+   - **Echo-gated Output-Boundary Control (`arXiv:2611.20953`):** Confirms `final_norm_gain` alone is argmax-invariant (`27.43 → 27.43`, `+0.092` dCE), while `13` boundary scalars (`gain=0.75` + `12` loop-token biases) jump `27.43 → 89.55` (`loop 90.6% → 9.4%`, `0` latency tax); deploy strictly echo-gated (`ctrl_apply_always=0`) to avoid `0.134` static KL.
+   - **`BCIR-FWP-Snapshot` Revisable Fast Weights (`arXiv:2102.11174`, `arXiv:2610.12668`):** `0.750 MiB` FP64 (`134 us` save / `131 us` restore) / `0.375 MiB` FP32 `GDN-2` snapshot + rank-1 backward delta-rule erasure jumps stall recovery `27.43 → 76.56` (`loop 28.1%`, beating Blind Reset `30.66` and pure Rollback `72.80`) while retaining `96.97%` of $S_t$ and recovering `96.8%` of mid-episode stall prefix loss (`+0.00222` vs `+0.13692` Blind Reset).
+   - **Anchored On-Policy Localized Co-Evolution (`COEV-1`, `arXiv:2605.27276`, `arXiv:2609.09134`):** Unanchored on-policy SFT collapses (`+0.125–0.223` dCE). Masking `68.75%` of non-failing tokens via `BCIR_EXT_IGNORE` + `50%` pretraining-corpus anchoring is the **only** law clearing `P4` (`+0.0213 <= +0.04`) while maximizing active-harness score (`71.54`, `+15.75` = `1.77×` OffPolicy's `+8.91`).
+   - **Forward-Only `ES`/`MeZO` vs Matched-Budget `Best-of-K` (`arXiv:2509.24372`, `arXiv:2607.12227`):** In inference-only RAM (`0` backward passes), `ES` beats `MeZO`/`Random` on the `520`-param Tier-2 surface (`36.71` vs `34.63`/`31.05`, `dCE=-0.00019`) and recovers `-0.01608` nats + `+3.72` pts on `COMP-1` `12` MLP scales; zero-edit `Best-of-4` hits `98.98` (`0.0%` loops, `0.0` KL) whenever `4.37×` per-query latency (`1356` vs `310 ms/p`) is affordable (`Best-of-8 = 99.52` at `7.91×`).
+   - **Muon `WeightWatcher` ESD, `Tracr` Circuits & `IWI5` Data-Free `COMP-1` RMS Restoration:** Muon orthogonalization preserves full spectral rank (`48.2` @ 2M, `92.7` @ 10M vs AdamW `-18.5%` contraction) and raises ESD $\alpha$ to `5.7–7.4` (disproving SGD `[2,4]` HT-SR thresholds for Muon and confirming `P4` remains mandatory). Compiled `Tracr` parity/Dyck-1 hit `100.0%` exact vs `51.2%`/`98.1%` 3-seed Adam. On `IWIBench`, **`IWI5` (analytical data-free Frobenius RMS restoration across `12` wide `COMP-1` MLPs, `0` forward passes, `0` data) recovers `-0.11107` nats (`PPL 8.19 → 7.33`)**, while `IWI2`/`IWI3` document null/reversal bounds of naive mid-MLP/norm projection steering.
+
 ---
 
 ## Part D. Post-Training Sub-1-Bit Compression & Deployment Guidance (`COMP-1`)
@@ -447,16 +484,103 @@ change:
 - **`P6` (Mandatory provenance):** Record source checkpoint SHA-256, tensor role, calibration data,
   numerical contract, kernel/compiler version, hardware backend, error metrics, and pass/fail logs.
 
+### Completed `50.54M` Precision Frontier & Operational Gate Findings ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md))
+
+Executed bare-metal C11 benchmarks on `Intel(R) Xeon(R) 6985P-C` and `Intel(R) Xeon(R) CPU @ 2.30GHz`
+(2T, `clang 23.1.6`, `-ffp-contract=off`, archived in merged `Modular-AI` PR #228 at
+`8cc3f234be0bc84009b79f152ab55995ada9a499` and PR #229 at `529f3f2eae601c5a39d2ffa5543e0f57795f044d`)
+establish eight operational rules for BCIR training and deployment:
+
+1. **Optimizer-state compression outweighs inference weight precision for training RAM — and `Opt_Q8_Muon_BF16Grad` (`7.07 B/p`) sets a new frontier:** At `50.54M–50.74M` (`wide50m`), `Opt_Q8_BF16Grad` (`8.05 B/param`, `387.86–389.37 MiB`) saves **`383.3–384.8 MiB` (`-49.7%`)** while matching FP32 test CE within `-0.0009` nats; `Opt_Adafactor` (`12.01 B/param`, saves `192.3–193.1 MiB`) remains the wall-clock Pareto winner at tiny update batches (`N <= 512`). Extending beyond the initial list in ABI 6 (`runtime/c/bcir_precision.{h,c}`), **`Opt_Q8_Muon_BF16Grad`** (`Muon-8L/AdamW-32 + BF16Grad`, `arXiv:2509.23106v3`) pushes `wide50m` persistent state down to **`342.17 MiB` (`7.07 B/param`, saving `432.03 MiB` / `-55.8%`)**, matches FP32 Muon within `+0.0004` nats on `wide512`, and beats FP32 AdamW on `wide10m 3:1 Hybrid-DN+GQA` by **`-0.0920` nats (`PPL 9.12` vs `10.00`, 2 seeds) at `2.24×` less RAM**. Because Newton-Schulz carries a fixed per-update cost (`5.92×` at `N=256`, amortizing to `1.62×` at `N=2048` and `~1.15×` at `N=8192`), adopt `Opt_Adafactor`/`Opt_Q8_BF16Grad` for tiny batches (`N <= 512`) and **`Opt_Q8_Muon_BF16Grad`** once `N >= 2048` (via batch size or gradient accumulation).
+2. **Equal-token vs equal-time separation on non-AMX CPUs (`P1` / `P5`):** At `50.54M` equal tokens
+   (`120` steps, `30.7k` tokens), all 10 policies (`FP32`, `Q8+BF16Grad`, `Adafactor`, `BF16_NDT`,
+   `BF16_VDP`, `FP8 E4M3/E5M2`, `MXFP4`, `Asym MXFP4/FP8`, and region-mixed policies) clear the `+0.04`
+   nat gate with zero nonfinites. At **equal wall time (`94.8 s`)**, `FP32_Ref` (`2.4225` val CE) and
+   `Opt_Adafactor` (`2.4400`) beat every emulated low-precision compute path (`2.4673–2.6524`) because
+   `fp32_kblock` (`273.3 GF/s`) outpaces non-AMX `bf16_ndt` (`161.2 GF/s`) and `bf16_vdp_avx512`
+   (`121.0 GF/s`). Hardware probing across Sapphire Rapids and Granite Rapids pins `VDPBF16PS` to
+   `ftz(fmaf(a0, b0, ftz(fmaf(a1, b1, acc))))` (`0` bit mismatches).
+3. **Separate Attention/MLP quantization-policy regions (`P2` / `P3`):** On `pilot1m` (`d=192`),
+   uniform `MXFP4` fails (`+0.0481` nats), while `Region_FP32Attn_MXFP4MLP` (`+0.0141`) and
+   `Region_FP8Attn_MXFP4MLP_Q8Opt` (`+0.0138` at `8.05 B/param`) rescue `>70%` of the error. At
+   `50.54M`, keeping Attention in FP32 cuts `P3` conditional FP64 guard promotions `36.4×` (`364 → 10`).
+4. **`TRAIN-OPT-1/2/4/5` verified across scales:** `mup_v1` lowers held-out test PPL across `0.86M`
+   (`10.54 → 9.69`), `6.16M` (`11.31 → 10.60`), and `50.54M` (`15.71 → 14.31`, `-0.093` nats); raising
+   `grad_clip` to `3.0` drops post-warmup clip saturation from `100.0%` to `0.0% / 2.6% / 42.6%`
+   (tracking natural $\sqrt{L}$ grad-norm scaling). `TRAIN-OPT-2` delivers `2.54×` real speedup on
+   padded KV batches (`max_loss_diff = 3.02e-7`); `TRAIN-OPT-4` cuts startup `5.4–20.8×` vs Python
+   stdlib without `2×` peak-RSS doubling; **`TRAIN-OPT-5` (`online_softmax=1` in `bcir_mixer_ext.c`)**
+   cuts `GQA` probability buffers **`512.0×`** at `T=1024` (`512.00 → 1.00 MiB`, `0` bit drift `1T == 2T`).
+5. **Production `COMP-1` / `P1–P6` Deployment Policy implemented & baselined (`Exp 5`):** Native
+   `LUT4-LANES` (`runtime/c/bcir_ai_kernels.{h,c}`), MLP-only `BCIRQ8 v2` (`runtime/c/bcir_q8_model.{h,c}`,
+   `bcir_llama.c`, `bcir_decoder_gem.c`, `bcir/frontends/models/weights_io.py`), and the `P1–P6`
+   qualification engine (`bcir/frontends/models/deploy_policy.py`) are implemented and anchored by the
+   permanent `bcir.deploy_baseline.v1` checkpoint in merged `Modular-AI` PR #228 at commit
+   `8cc3f234be0bc84009b79f152ab55995ada9a499` (`wide512` KD-QAT `ADMITTED_HYBRID_V2` at `2.05 MiB` /
+   `3.05×` cut / `+0.0096` nats with frozen Q8 attention and `bcir-qualify` GEM parity; `wide50m`
+   zero-QAT PTQ and narrow `wedge128` automatically promoted via `P3`/`P4` to `PROMOTED_Q8_V1`).
+6. **Production ABI 6 `MIXER-EXT` + `Arch-7d` + `1.024M`-Token `T=256` Pilot (merged `PR #229`, `529f3f2`):**
+   Landed in `runtime/c/bcir_mixer_ext.{h,c}`, `runtime/c/bcir_precision.{h,c}`, and
+   `bcir/hosted/models/mixer_ext.py` (preserving ABI 5 untouched). Over `1,024,000` real tokens at
+   `T=256, B=8` (`online_softmax=1`, `~0.85–1.0` tok/param), **`Arch-7d` (`GDN-2 + G1-NoPE-MLA +
+   Canon-AC + mHC2`) + `Opt_Q8_Muon_BF16Grad`** achieves a triple Pareto win: untouched test PPL
+   **`4.81`** vs `Arch-7d + Adafactor` (`5.23`), `Arch-2 Hybrid-DN+GQA` (`5.55`), and `GQA_Full`
+   (`6.47`, `-0.2949` nats / `-25.5%` PPL), faster wall time than `GQA_Full` (`511.0 s` vs `526.5 s`),
+   lowest persistent RAM (`8.76 MiB`), `4.84×` lower peak activation amplitude (`2.15` vs `10.42`),
+   and verified crash-atomic 0-bit-drift mid-run checkpoint resume with full optimizer state restore across
+   all 7 optimizers (`bcir_ext_{opt_state_bytes,save_opt_state,load_opt_state}`).
+7. **Verified `10M` Progressive Curriculum, Equal-`LR(tokens)` Context Ablation & Scale-Factor `COMP-1` QAT ([BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md), merged `Modular-AI` PR #230 `8039838`):**
+   - **Equal-`LR(tokens)` Short-Context & Progressive `T=128 → 256 → 512` Curriculum Law:** On `BCIR-Arch7d-10M` (`10.037M` params, `d=512, L=4, ff=928, mla_dc=128, gate_rank=32`), holding both token budget (`196,608` tok) and token-indexed `LR(tokens)` (`warmup = 32,768` tok, cosine `3.0e-3 → 3.0e-4`) strictly identical, `T=128` (`192 × 1,024` Muon steps) beats flat `T=256` (`96 × 2,048` steps) by **`-0.1788` nats (`PPL 6.56` vs `7.84`)** on untouched `T=256` test and **`-0.1829` nats (`PPL 6.53` vs `7.84`)** on zero-shot `T=512` test while beating `Flat T=256` at equal wall time and cutting warmup arena `43%` (`484.6` vs `850.7 MiB`). Extending across `1,114,112` real tokens with 0-bit-drift cross-stage `Opt_Q8_Muon_BF16Grad` (`68.2 MiB` pers., `-55.5%` vs FP32) handoff reaches **`val PPL 4.05` (`BPB 2.019`)**, untouched test **`PPL 4.30` (`T=512`)**, `0.0%` clip hits across Stages 2–3, and **`4×` zero-shot fixed-target extrapolation to `T=2048` (`PPL 4.21` with `-0.0004` nat drift on identical `2 kB` tail targets and strictly monotonic `4.43 → 4.21` PPL on identical `16 kB` spans, `1.75 MiB` state)**.
+   - **Muon Spectral Preservation vs `COMP-1` Factor-QAT & Data-Free RMS Restoration (`IWI5`):** Because `Opt_Q8_Muon_BF16Grad` maintains high MLP spectral rank (`r90 = 64.50–69.7%`, `stable_rank = 92.7–167.6`), zero-QAT 1-bit `COMP-1` PTQ incurs `+0.6782` nats while `BCIRQ8 v1` (`9.87 MiB`, tracked artifact) stays within **`+0.0001` nats**. Always apply **analytical data-free Frobenius RMS restoration (`IWI5`, `12` scalars, `0` forward passes, recovers `-0.11107` nats immediately)** followed by **Exact Differentiable Scale-Factor `COMP-1` QAT** (which recovers `-0.2903` nats / `42.8%` of the PTQ gap in `32` steps without STE sign-flip shock) or inference-RAM `ES` (`-0.01608` nats in `24` rollouts).
+8. **Production ABI 6 Upgrade 1 — Per-Tensor `AdaGC` + FP32 Kahan Rounding + Per-Group `cos(g_t, m_{t-1})` Telemetry ([BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md](BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md), `Modular-AI` PR #232 `616caec`):**
+   Implemented natively in `runtime/c/bcir_precision.{h,c}`, `runtime/c/bcir_mixer_ext.{h,c}`, and `bcir/hosted/models/mixer_ext.py` with `0`-bit-drift `1T == 2T` and `BCIROPT1` v2 resume (preserving v1 byte-for-byte when off). Composing `AdaGC` *under* `grad_clip=3.0` beats global-only clipping on `2/2` `Arch7d_2M` seeds (`2.28800` vs `2.28916`, `895.8` vs `890.0 tok/s`) and `10M` continuation (`1.43840` vs `1.43851`, `+531.5 KiB` Kahan RAM on `embed`/`norm`). Negative rules: never drop `grad_clip=3.0` (OOD spike stress test regresses `+0.0241` nats without global ceiling), and keep raw `cos(g_t, m_{t-1})` diagnostic-only at small batches (`B=4` reactive OPAL throttling regresses `+0.0197` nats).
+
+---
+
+## Part F. Continual Recursive Self-Improvement Memory (`SIM-1` – `SIM-4` & `bcir.sim.cig.v2`, `arXiv:2611.18856`)
+
+Following Yu et al. (*Self-Improvement Memory Enables Continual Recursive Self-Improvement*, Google,
+Nov 13, 2026, `arXiv:2611.18856`) and BCIR's empirical evaluation across `5` real continual shifts plus
+an `n = 10` paired-seed study ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md),
+`Modular-AI` PR #231 `d823c20`) and the sequential 4-regime continual forgetting study ([BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md](BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md), `Modular-AI` PR #232 `616caec`), BCIR governs post-training harness adaptation, `SSP-Live` tuning, and `WSP` / `COMP-1` recovery under four outer-loop rules:
+
+- **`SIM-1` (Outer-Loop Problem-Grouped Ledger `bcir.sim.v1`):** `SIM` lives strictly on the
+  **outer-loop Proposer + Selector** — never injected into the policy model's inference context window.
+  Entries are indexed by `problem_id` and preserve `{root_cause_hypothesis, action_family, locus,
+  rationale, predicted_outcome [written pre-eval], observed_outcome [fixed/missed/regressed/KL],
+  accepted, provenance}`, **never deleting failed or regressing attempts**.
+- **`SIM-2` (Cross-Shift Continual Transfer Evidence, Strictly Isolated Cold Caches):** Across `5/5`
+  real BCIR continual shifts, `Full_SIM (H_S, M_S)` finishes #1 (or ceiling-tied at `99+`, `mean 98.19`
+  vs `86.57` Transfer, `+11.62` pts; mean loop `1.7%` vs `21.7%`; mean retention `94.07` vs `65.62`):
+  `+4.20` over `Harness_Transfer` on Cross-Dataset (`10M Prose → Structured`), **`+6.24`** (`1.37×`
+  faster cold wall `65.6s / 13 evals` vs `89.9s / 15 evals`, **`9.3×` stronger source retention `78.28`
+  vs `8.41`**) on Cross-Family (`GQA-2M → Arch7d-10M`, where `Problem_Only` drops `-2.26` below
+  `Harness_Transfer`), and **`+47.65`** (`1.28×` faster cold wall `82.7s / 16 evals` vs `106.1s / 18`,
+  **`4.58×` stronger source retention `97.45` vs `21.26`**, rescuing negative transfer where both
+  `Harness_Transfer` `47.42` and `Problem_Only` `43.45` fell below `Cold_Start` `53.23`) on
+  Cross-Precision (`BCIRQ8 v1 → established COMP-1 1-bit`). On the `n = 10` paired-seed test
+  (`Arch7d_2M`), `Full_SIM` beats `Harness_Transfer` (`81.71` vs `72.79`, `6/10` wins, `+9.74` source
+  retention) while cutting wasted probes on structural trap loci (`Canon-AC`, `mHC`, static `GDN-2`
+  gates) by **`2.0–2.6×`**.
+- **`SIM-3` (Evolve Split Sizing & Split-Isolation Gate):** Because small Evolve splits (`n = 6` in
+  `S10`) exhibit high discrete flip variance (`std = 20.27`, `p = 0.197` despite `+8.92` mean gain),
+  production BCIR `SIM` loops require **`>= 30–50` Evolve tasks**, strict Held-Out test isolation,
+  and deterministic `bcir.sim.v1` provenance beside `WSP-1` and `P6`.
+- **`SIM-4` (`bcir.sim.cig.v2`: Factorized Universal-Core + `TurboRouter` Overlays + `CIG` Graph + Idea-Level Critic):**
+  On conflicting sequential multi-regime shifts (`D1 Prose → D2 Structured → D3 ShortPrefix → D4 COMP-1 1-bit`), flat `bcir.sim.v1` cuts evals (`30` vs `48`) but cannot cure monolithic backward forgetting (`8.73` max forgetting). Upgrading to **`bcir.sim.cig.v2`** (shared `universal_core` + per-regime overlays + telemetry-only `CIG` graph + zero-label `TurboRouter` + `0.18 ms` Idea-Level Critic pre-screening) cuts search evals `1.92×` (`25` vs `48`), cuts cold wall `1.75×` (`106.1` vs `185.4 s`), eliminates forgetting (`0.00` Harmony / `0.04` zero-label `TurboRouter` at `93.75%` route accuracy — `213×` forgetting reduction), and achieves **Spearman `ρ = 0.8271`** on unseen `D4 COMP-1` (`Top-3 = 100%` oracle, **`85%` C11 rollouts saved / `6.67×` faster**).
+
 ---
 
 ## Priority Execution Matrix
 
-| Priority | Slice | Primary Metric Targeted | Dependencies |
+| Priority | Slice | Primary Metric Targeted | Status / Dependencies |
 |---:|---|---|---|
-| **1** | `TRAIN-OPT-1` ($\mu$P + residual init) & `TRAIN-OPT-4` (fast C init / `init="skip"`) | Fix 99.8% clip saturation; cut 50M init `15.6s → <0.05s` | None (immediate on `main`) |
-| **2** | `TRAIN-OPT-5` (`BCIR-FlashAttn-CPU` tiled training attention) | Cut attention B4/T2048 prob storage `2,000×`; remove `attention32` confound | `bcir_tensor.c` `INFER-ATTN` |
-| **3** | `TRAIN-OPT-2` (causal suffix trimming + masked-target loss) | `~1.6×` speedup on variable-length training; clean multi-length batches | `bcir_decoder_train.c` ABI 6 |
-| **4** | `MIXER-EXT` + `Arch-1` (`BCIR-DeltaNet`) & `Arch-2` (`BCIR-Hybrid-SWA`) | Solve 4-pair KV binding (`>80%`) + `T2048` recall + byte LM simultaneously | ABI 6 + `TRAIN-OPT-1..2` |
-| **5** | `TRAIN-OPT-6` (`AVX512_BF16` `VDPBF16PS` contract) & `TRAIN-OPT-7` (Q8/Adafactor state) + Precision Frontier (`P1–P6`) | Qualify native BF16/FP8/Q8-state frontier at `10M`/`50M`; halve persistent state (`16 → 8 B/p`) | `bcir_tensor.c` / `bcir_decoder_train.c` |
-| **6** | `TRAIN-OPT-3` (Tier M/L 10M–50M token scaling) + `Arch-4/5/6` + `WSP-1..4` | True scaling laws (`>= 1` tok/param), `4×` byte-patch throughput, auditable patches | Priorities 1–5 + `Modular-AI` archive contract |
-| **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP & `LUT4-LANES`) | Whole-model & MLP decode speedup + `>= 3×` smaller edge artifacts ($d \ge 512$), gated by `P1–P6` | `bcir_q8_model.h`, `bcir_ai_kernels.h`, `wide10m/50m` |
+| **1** | `TRAIN-OPT-1` ($\mu$P + residual init) & `TRAIN-OPT-4` (fast C init / `skip_init`) — **IMPLEMENTED** | Fix 99.8% clip saturation; cut 50M init `15.6s → <0.45s` | `runtime/c/bcir_precision.{h,c}` (`PR #228` `8cc3f23`) |
+| **2** | `TRAIN-OPT-5` (`online_softmax=1` `O(T)` LSE tiled attention) — **IMPLEMENTED** | Cut `GQA` `T=1024` prob storage `512.0×` (`512 → 1 MiB`); `10M` `T=512 B=4` arena `829.8 MiB` | `runtime/c/bcir_mixer_ext.{h,c}` (`PR #229` `529f3f2`, `PR #230` `8039838`) |
+| **3** | `TRAIN-OPT-2` (causal suffix trimming + masked-target loss) — **IMPLEMENTED** | `2.54×` speedup on padded KV batches; fail-closed all-masked refusal | `runtime/c/bcir_mixer_ext.{h,c}` (ABI 6) |
+| **4** | `MIXER-EXT` ABI 6 + `BCIR-Arch7d-10M` (`10.04M` Reference, `1.114M`-Tok Curriculum) — **VERIFIED** | `T=512` test `PPL 4.30`, `4×` zero-shot fixed-target `T=2048` `PPL 4.21`, `2.75 MiB` `T=4K` state, `9.87 MiB` `BCIRQ8 v1` | [BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md) (`PR #230` `8039838`) |
+| **5** | `TRAIN-OPT-6` (`VDPBF16PS`) & `TRAIN-OPT-7` (`Adafactor` `12.0 B/p`, `Q8+BF16Grad` `8.05 B/p`, **`Q8-Muon+BF16Grad` `7.07–7.13 B/p`**) + **Upgrade 1 (`AdaGC`/Kahan/Telemetry)** — **IMPLEMENTED** | Cut `50.74M` RAM `774 → 342 MiB` (`-55.8%`) & `10M` RAM `153 → 68 MiB` (`-55.5%`); `AdaGC` + `clip=3.0` wins `2/2` seeds & `10M` cont., `0`-bit `BCIROPT1` v2 resume | `runtime/c/bcir_precision.{h,c}`, `bcir_mixer_ext.{h,c}` (`PR #229`, `PR #230`, `PR #232` `616caec`) |
+| **6** | `TRAIN-OPT-3` (Tier M/L `10M–200M` scaling on 16–32 core hosts) + `Arch-7d` Decode Lowering (`FWP-Snapshot` + Echo-Gated Boundary) + `Arch-5/6` | `10M` Tier M (`~1.2 hrs` est. 16c AVX2 / `0.43 hrs` 32c AVX-512), `BCIRQ8 v2` `Arch-7d` serve, `BCIR-BLT`, `BCIR-MoE` | `arch7d-10m-training-study` (`PR #230`) & `arch7d-upgrades-study` (`PR #232` `616caec`) |
+| **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP, **`IWI5` Data-Free RMS Restoration** & Scale-Factor QAT) — **IMPLEMENTED** | `7.59×` weight cut (`38.3 → 5.04 MiB`, `7.79 MiB` 4K total); **`-0.11107` nats free (`IWI5`)** + `-0.2903` nats Factor-QAT (`32` steps) | `bcir_q8_model.h`, `bcir_ai_kernels.h`, `PR #228`, `PR #230`, `PR #232` `616caec` |
+| **8** | **3-Tier Hybrid Control (`SSP-Live` + `WSP-1..4` + `SIM-1..3`) — EMPIRICALLY VERIFIED** | Tier 1 `SSP-Live` `+10.30` (`0` KL); Tier 2 `L3 NoPE-MLA` `wdown` `+7.45` / `3`-scalar `G1`; Tier 3 `SIM` `+4.2..+47.7` (`5/5` shifts, `1.7%` vs `21.7%` loops) | [BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md) (`PR #231` `d823c20`) |
+| **9** | **7-Upgrade `Arch-7d` Suite (`AdaGC`/Kahan, Echo-Gated Boundary, `FWP-Snapshot`, `COEV-1`, `bcir.sim.cig.v2`+Turbo+Critic, `ES`/Search, `WeightWatcher`/`Tracr`/`IWIBench`) — EMPIRICALLY VERIFIED** | Boundary `+62.12` (`13` scalars); `FWP-Snapshot` `+49.13` (`0.75 MiB`, `96.8%` prefix retention); `COEV-1` `+15.75` (`+0.021` dCE); `CIG` `0.00` forgetting (`1.92×` fewer evals); Critic `ρ=0.827` (`85%` saved) | [BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md](BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md) (`PR #232` `616caec`) |

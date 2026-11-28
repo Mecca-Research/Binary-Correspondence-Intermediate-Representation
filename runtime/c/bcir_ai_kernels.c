@@ -1370,3 +1370,1085 @@ int bcir_ai_q15_topk(const int16_t *query, const int16_t *patterns,
   *match_count = count;
   return BCIR_AI_OK;
 }
+
+/* ============================================================================
+ * LUT4-LANES (COMP-1): deterministic packed-1-bit factorized matvec & mb4
+ *   portable (1), AVX2 (2), AVX-512 (4) -- 0 bit drift, -ffp-contract=off,
+ *   zero heap allocations, DECODE-THREADS column slicing.
+ * ============================================================================ */
+
+#ifdef BCIR_AI_INSTANCE_PROBE
+static int lut4_instance_seen;
+#define LUT4_SAW(inst) (lut4_instance_seen = (inst))
+int bcir_ai_lut4_instance_probe(void);
+int bcir_ai_lut4_instance_probe(void) {
+  int seen = lut4_instance_seen;
+  lut4_instance_seen = 0;
+  return seen;
+}
+#else
+#define LUT4_SAW(inst) ((void)0)
+#endif
+
+static uint16_t lut4_rd16(const uint8_t *p) {
+  return (uint16_t)((uint16_t)p[0] | (uint16_t)((uint16_t)p[1] << 8));
+}
+
+static int lut4_fp16_is_finite(uint16_t raw) {
+  return (raw & UINT16_C(0x7C00)) != UINT16_C(0x7C00);
+}
+
+static float lut4_fp16_to_f32_bits(uint16_t raw) {
+  uint32_t sign = (uint32_t)(raw >> 15) & 1u;
+  uint32_t exp = (uint32_t)(raw >> 10) & 0x1Fu;
+  uint32_t mant = (uint32_t)(raw & 0x3FFu);
+  if (exp == 0u) {
+    if (mant == 0u) {
+      uint32_t z = sign << 31;
+      float out;
+      memcpy(&out, &z, sizeof out);
+      return out;
+    }
+    {
+      float mag = ldexpf((float)mant, -24);
+      return sign ? -mag : mag;
+    }
+  }
+  if (exp == 31u) {
+    uint32_t bits = (sign << 31) | UINT32_C(0x7F800000) | (mant << 13);
+    float out;
+    memcpy(&out, &bits, sizeof out);
+    return out;
+  }
+  {
+    uint32_t bits = (sign << 31) | ((exp + 112u) << 23) | (mant << 13);
+    float out;
+    memcpy(&out, &bits, sizeof out);
+    return out;
+  }
+}
+
+static float lut4_fp16_f32(const uint8_t *le, size_t idx) {
+  return lut4_fp16_to_f32_bits(lut4_rd16(le + 2u * idx));
+}
+
+static double lut4_fp16_f64(const uint8_t *le, size_t idx) {
+  return (double)lut4_fp16_to_f32_bits(lut4_rd16(le + 2u * idx));
+}
+
+static int lut4_finite_f32(const float *values, size_t count) {
+  size_t idx;
+  if (values == NULL) return 0;
+  for (idx = 0u; idx < count; ++idx)
+    if (!isfinite(values[idx])) return 0;
+  return 1;
+}
+
+int bcir_ai_lut4_instances(void) { return bcir_ai_q8_instances(); }
+
+int bcir_ai_lut4_packed_bytes(size_t rows, size_t cols, size_t *out_bytes) {
+  size_t rows32, bpg, groups4;
+  if (out_bytes == NULL || rows == 0u || cols == 0u ||
+      rows > (size_t)BCIR_AI_MAX_ELEMENTS || cols > (size_t)BCIR_AI_MAX_ELEMENTS ||
+      rows > (size_t)BCIR_AI_MAX_ELEMENTS / cols ||
+      rows > SIZE_MAX - 31u || cols > SIZE_MAX - 3u)
+    return BCIR_AI_INVALID_ARGUMENT;
+  rows32 = (rows + 31u) & ~(size_t)31u;
+  bpg = rows32 >> 1u;
+  groups4 = (cols + 3u) >> 2u;
+  if (groups4 > SIZE_MAX / bpg) return BCIR_AI_INVALID_ARGUMENT;
+  *out_bytes = groups4 * bpg;
+  return BCIR_AI_OK;
+}
+
+int bcir_ai_lut4_pack_signs(const int8_t *signs, size_t rows, size_t cols,
+                            uint8_t *packed, size_t packed_capacity) {
+  size_t required, r, c, bpg, total;
+  if (bcir_ai_lut4_packed_bytes(rows, cols, &required) != BCIR_AI_OK ||
+      signs == NULL || packed == NULL || packed_capacity < required)
+    return BCIR_AI_INVALID_ARGUMENT;
+  total = rows * cols;
+  for (r = 0u; r < total; ++r)
+    if (signs[r] != 1 && signs[r] != -1) return BCIR_AI_INVALID_NUMBER;
+  memset(packed, 0, required);
+  bpg = ((rows + 31u) & ~(size_t)31u) >> 1u;
+  for (r = 0u; r < rows; ++r) {
+    size_t blk32 = r >> 5u;
+    size_t lane = r & 15u;
+    size_t is_hi = (r >> 4u) & 1u;
+    const int8_t *row_ptr = signs + r * cols;
+    for (c = 0u; c < cols; ++c) {
+      if (row_ptr[c] < 0) {
+        uint8_t bit = (uint8_t)(1u << (c & 3u));
+        size_t off = (c >> 2u) * bpg + (blk32 << 4u) + lane;
+        packed[off] = (uint8_t)(packed[off] | (uint8_t)(is_hi ? (bit << 4u) : bit));
+      }
+    }
+  }
+  return BCIR_AI_OK;
+}
+
+int bcir_ai_lut4_validate_packed(const uint8_t *packed, size_t packed_size,
+                                 size_t rows, size_t cols) {
+  size_t required, rows32, bpg, groups4, g, r, tail;
+  if (bcir_ai_lut4_packed_bytes(rows, cols, &required) != BCIR_AI_OK ||
+      packed == NULL || packed_size != required)
+    return BCIR_AI_INVALID_ARGUMENT;
+  rows32 = (rows + 31u) & ~(size_t)31u;
+  bpg = rows32 >> 1u;
+  groups4 = (cols + 3u) >> 2u;
+  /* Padding rows [rows, rows32) must have zero nibbles in every group. */
+  if (rows < rows32) {
+    for (g = 0u; g < groups4; ++g) {
+      const uint8_t *gp = packed + g * bpg;
+      for (r = rows; r < rows32; ++r) {
+        size_t blk32 = r >> 5u;
+        size_t lane = r & 15u;
+        uint8_t byte = gp[(blk32 << 4u) + lane];
+        uint8_t nib = (uint8_t)(((r >> 4u) & 1u) ? (byte >> 4u) : (byte & 0x0Fu));
+        if (nib != 0u) return BCIR_AI_INVALID_NUMBER;
+      }
+    }
+  }
+  /* Padding columns in the trailing 4-column group must have zero bits. */
+  tail = cols & 3u;
+  if (tail != 0u) {
+    uint8_t pad_mask = (uint8_t)(0x0Fu & ~((1u << tail) - 1u));
+    const uint8_t *last = packed + (groups4 - 1u) * bpg;
+    size_t idx;
+    for (idx = 0u; idx < bpg; ++idx) {
+      uint8_t byte = last[idx];
+      if (((byte & 0x0Fu) & pad_mask) != 0u || (((byte >> 4u) & 0x0Fu) & pad_mask) != 0u)
+        return BCIR_AI_INVALID_NUMBER;
+    }
+  }
+  return BCIR_AI_OK;
+}
+
+static int lut4_shape_basic(size_t input_count, size_t output_count,
+                            const bcir_ai_lut4_path *paths, size_t path_count) {
+  size_t p, min_dim;
+  if (input_count == 0u || output_count == 0u ||
+      input_count > (size_t)BCIR_AI_MAX_ELEMENTS / output_count ||
+      paths == NULL || path_count == 0u || path_count > (size_t)BCIR_AI_LUT4_MAX_PATHS)
+    return 0;
+  min_dim = input_count < output_count ? input_count : output_count;
+  for (p = 0u; p < path_count; ++p) {
+    size_t req_v = 0u, req_u = 0u;
+    if (paths[p].rank == 0u || paths[p].rank > (size_t)BCIR_AI_LUT4_MAX_RANK ||
+        paths[p].rank > min_dim ||
+        paths[p].v_packed == NULL || paths[p].u_packed == NULL ||
+        paths[p].g_fp16_le == NULL || paths[p].l_fp16_le == NULL ||
+        paths[p].h_fp16_le == NULL)
+      return 0;
+    if (bcir_ai_lut4_packed_bytes(paths[p].rank, input_count, &req_v) != BCIR_AI_OK ||
+        bcir_ai_lut4_packed_bytes(output_count, paths[p].rank, &req_u) != BCIR_AI_OK ||
+        paths[p].v_packed_bytes != req_v || paths[p].u_packed_bytes != req_u)
+      return 0;
+  }
+  return 1;
+}
+
+int bcir_ai_lut4_paths_validate(size_t input_count, size_t output_count,
+                                const bcir_ai_lut4_path *paths, size_t path_count) {
+  size_t p, idx;
+  if (!lut4_shape_basic(input_count, output_count, paths, path_count))
+    return BCIR_AI_INVALID_ARGUMENT;
+  for (p = 0u; p < path_count; ++p) {
+    int st = bcir_ai_lut4_validate_packed(paths[p].v_packed, paths[p].v_packed_bytes,
+                                          paths[p].rank, input_count);
+    if (st != BCIR_AI_OK) return st;
+    st = bcir_ai_lut4_validate_packed(paths[p].u_packed, paths[p].u_packed_bytes,
+                                      output_count, paths[p].rank);
+    if (st != BCIR_AI_OK) return st;
+    for (idx = 0u; idx < input_count; ++idx)
+      if (!lut4_fp16_is_finite(lut4_rd16(paths[p].g_fp16_le + 2u * idx)))
+        return BCIR_AI_INVALID_NUMBER;
+    for (idx = 0u; idx < paths[p].rank; ++idx)
+      if (!lut4_fp16_is_finite(lut4_rd16(paths[p].l_fp16_le + 2u * idx)))
+        return BCIR_AI_INVALID_NUMBER;
+    for (idx = 0u; idx < output_count; ++idx)
+      if (!lut4_fp16_is_finite(lut4_rd16(paths[p].h_fp16_le + 2u * idx)))
+        return BCIR_AI_INVALID_NUMBER;
+  }
+  return BCIR_AI_OK;
+}
+
+/* Build the 16-entry 4-weight binary sign LUT for one group: identical in portable, AVX2, AVX-512. */
+static void lut4_build_f64(double x0, double x1, double x2, double x3, double out[16]) {
+  double s01_pp = x0 + x1, s01_mp = -x0 + x1, s01_pm = x0 - x1, s01_mm = -x0 - x1;
+  double s23_pp = x2 + x3, s23_mp = -x2 + x3, s23_pm = x2 - x3, s23_mm = -x2 - x3;
+  out[0]  = s01_pp + s23_pp; out[1]  = s01_mp + s23_pp; out[2]  = s01_pm + s23_pp; out[3]  = s01_mm + s23_pp;
+  out[4]  = s01_pp + s23_mp; out[5]  = s01_mp + s23_mp; out[6]  = s01_pm + s23_mp; out[7]  = s01_mm + s23_mp;
+  out[8]  = s01_pp + s23_pm; out[9]  = s01_mp + s23_pm; out[10] = s01_pm + s23_pm; out[11] = s01_mm + s23_pm;
+  out[12] = s01_pp + s23_mm; out[13] = s01_mp + s23_mm; out[14] = s01_pm + s23_mm; out[15] = s01_mm + s23_mm;
+}
+
+static void lut4_build_f32(float x0, float x1, float x2, float x3, float out[16]) {
+  float s01_pp = x0 + x1, s01_mp = -x0 + x1, s01_pm = x0 - x1, s01_mm = -x0 - x1;
+  float s23_pp = x2 + x3, s23_mp = -x2 + x3, s23_pm = x2 - x3, s23_mm = -x2 - x3;
+  out[0]  = s01_pp + s23_pp; out[1]  = s01_mp + s23_pp; out[2]  = s01_pm + s23_pp; out[3]  = s01_mm + s23_pp;
+  out[4]  = s01_pp + s23_mp; out[5]  = s01_mp + s23_mp; out[6]  = s01_pm + s23_mp; out[7]  = s01_mm + s23_mp;
+  out[8]  = s01_pp + s23_pm; out[9]  = s01_mp + s23_pm; out[10] = s01_pm + s23_pm; out[11] = s01_mm + s23_pm;
+  out[12] = s01_pp + s23_mm; out[13] = s01_mp + s23_mm; out[14] = s01_pm + s23_mm; out[15] = s01_mm + s23_mm;
+}
+
+/* 32-row block accumulators for gn consecutive 4-col groups: portable, AVX2, AVX-512. */
+static void lut4_accum32_f64_portable(const uint8_t *base, size_t bpg, const double *luts,
+                                      size_t gn, double acc[32]) {
+  size_t g, lane;
+  for (g = 0u; g < gn; ++g) {
+    const uint8_t *p = base + g * bpg;
+    const double *lt = luts + g * 16u;
+    for (lane = 0u; lane < 16u; ++lane) {
+      uint8_t b = p[lane];
+      acc[lane] = acc[lane] + lt[b & 0x0Fu];
+      acc[lane + 16u] = acc[lane + 16u] + lt[b >> 4u];
+    }
+  }
+}
+
+static void lut4_accum32_f32_portable(const uint8_t *base, size_t bpg, const float *luts,
+                                      size_t gn, float acc[32]) {
+  size_t g, lane;
+  for (g = 0u; g < gn; ++g) {
+    const uint8_t *p = base + g * bpg;
+    const float *lt = luts + g * 16u;
+    for (lane = 0u; lane < 16u; ++lane) {
+      uint8_t b = p[lane];
+      acc[lane] = acc[lane] + lt[b & 0x0Fu];
+      acc[lane + 16u] = acc[lane + 16u] + lt[b >> 4u];
+    }
+  }
+}
+
+static void lut4_accum32_mb4_f64_portable(const uint8_t *base, size_t bpg,
+                                          const double *l0, const double *l1,
+                                          const double *l2, const double *l3,
+                                          size_t gn, double acc0[32], double acc1[32],
+                                          double acc2[32], double acc3[32]) {
+  size_t g, lane;
+  for (g = 0u; g < gn; ++g) {
+    const uint8_t *p = base + g * bpg;
+    const double *t0 = l0 + g * 16u, *t1 = l1 + g * 16u;
+    const double *t2 = l2 + g * 16u, *t3 = l3 + g * 16u;
+    for (lane = 0u; lane < 16u; ++lane) {
+      uint8_t b = p[lane];
+      unsigned lo = (unsigned)(b & 0x0Fu);
+      unsigned hi = (unsigned)(b >> 4u);
+      acc0[lane] = acc0[lane] + t0[lo]; acc0[lane + 16u] = acc0[lane + 16u] + t0[hi];
+      acc1[lane] = acc1[lane] + t1[lo]; acc1[lane + 16u] = acc1[lane + 16u] + t1[hi];
+      acc2[lane] = acc2[lane] + t2[lo]; acc2[lane + 16u] = acc2[lane + 16u] + t2[hi];
+      acc3[lane] = acc3[lane] + t3[lo]; acc3[lane + 16u] = acc3[lane + 16u] + t3[hi];
+    }
+  }
+}
+
+static void lut4_accum32_mb4_f32_portable(const uint8_t *base, size_t bpg,
+                                          const float *l0, const float *l1,
+                                          const float *l2, const float *l3,
+                                          size_t gn, float acc0[32], float acc1[32],
+                                          float acc2[32], float acc3[32]) {
+  size_t g, lane;
+  for (g = 0u; g < gn; ++g) {
+    const uint8_t *p = base + g * bpg;
+    const float *t0 = l0 + g * 16u, *t1 = l1 + g * 16u;
+    const float *t2 = l2 + g * 16u, *t3 = l3 + g * 16u;
+    for (lane = 0u; lane < 16u; ++lane) {
+      uint8_t b = p[lane];
+      unsigned lo = (unsigned)(b & 0x0Fu);
+      unsigned hi = (unsigned)(b >> 4u);
+      acc0[lane] = acc0[lane] + t0[lo]; acc0[lane + 16u] = acc0[lane + 16u] + t0[hi];
+      acc1[lane] = acc1[lane] + t1[lo]; acc1[lane + 16u] = acc1[lane + 16u] + t1[hi];
+      acc2[lane] = acc2[lane] + t2[lo]; acc2[lane + 16u] = acc2[lane + 16u] + t2[hi];
+      acc3[lane] = acc3[lane] + t3[lo]; acc3[lane + 16u] = acc3[lane + 16u] + t3[hi];
+    }
+  }
+}
+
+#ifdef BCIR_AI_DISPATCH
+__attribute__((target("avx2"))) static inline __m256 lut4_lookup8_f32_avx2(
+    __m256 lut_lo, __m256 lut_hi, __m256i idx) {
+  __m256 v_lo = _mm256_permutevar8x32_ps(lut_lo, idx);
+  __m256 v_hi = _mm256_permutevar8x32_ps(lut_hi, idx);
+  __m256 mask = _mm256_castsi256_ps(_mm256_slli_epi32(idx, 28));
+  return _mm256_blendv_ps(v_lo, v_hi, mask);
+}
+
+__attribute__((target("avx2"))) static void lut4_accum32_f32_avx2(
+    const uint8_t *base, size_t bpg, const float *luts, size_t gn, float acc[32]) {
+  const __m128i mask_lo = _mm_set1_epi8(0x0F);
+  __m256 a0 = _mm256_loadu_ps(acc);
+  __m256 a1 = _mm256_loadu_ps(acc + 8);
+  __m256 a2 = _mm256_loadu_ps(acc + 16);
+  __m256 a3 = _mm256_loadu_ps(acc + 24);
+  size_t g;
+  for (g = 0u; g < gn; ++g) {
+    const float *lt = luts + g * 16u;
+    __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(base + g * bpg));
+    __m128i lo_b = _mm_and_si128(b, mask_lo);
+    __m128i hi_b = _mm_and_si128(_mm_srli_epi16(b, 4), mask_lo);
+    __m256 lut_lo = _mm256_loadu_ps(lt);
+    __m256 lut_hi = _mm256_loadu_ps(lt + 8);
+    a0 = _mm256_add_ps(a0, lut4_lookup8_f32_avx2(lut_lo, lut_hi, _mm256_cvtepu8_epi32(lo_b)));
+    a1 = _mm256_add_ps(a1, lut4_lookup8_f32_avx2(lut_lo, lut_hi,
+                                                 _mm256_cvtepu8_epi32(_mm_srli_si128(lo_b, 8))));
+    a2 = _mm256_add_ps(a2, lut4_lookup8_f32_avx2(lut_lo, lut_hi, _mm256_cvtepu8_epi32(hi_b)));
+    a3 = _mm256_add_ps(a3, lut4_lookup8_f32_avx2(lut_lo, lut_hi,
+                                                 _mm256_cvtepu8_epi32(_mm_srli_si128(hi_b, 8))));
+  }
+  _mm256_storeu_ps(acc, a0);
+  _mm256_storeu_ps(acc + 8, a1);
+  _mm256_storeu_ps(acc + 16, a2);
+  _mm256_storeu_ps(acc + 24, a3);
+}
+
+__attribute__((target("avx2"))) static void lut4_accum32_mb4_f32_avx2(
+    const uint8_t *base, size_t bpg,
+    const float *l0, const float *l1, const float *l2, const float *l3,
+    size_t gn, float acc0[32], float acc1[32], float acc2[32], float acc3[32]) {
+  const __m128i mask_lo = _mm_set1_epi8(0x0F);
+  __m256 t0a = _mm256_loadu_ps(acc0),      t0b = _mm256_loadu_ps(acc0 + 8);
+  __m256 t0c = _mm256_loadu_ps(acc0 + 16), t0d = _mm256_loadu_ps(acc0 + 24);
+  __m256 t1a = _mm256_loadu_ps(acc1),      t1b = _mm256_loadu_ps(acc1 + 8);
+  __m256 t1c = _mm256_loadu_ps(acc1 + 16), t1d = _mm256_loadu_ps(acc1 + 24);
+  __m256 t2a = _mm256_loadu_ps(acc2),      t2b = _mm256_loadu_ps(acc2 + 8);
+  __m256 t2c = _mm256_loadu_ps(acc2 + 16), t2d = _mm256_loadu_ps(acc2 + 24);
+  __m256 t3a = _mm256_loadu_ps(acc3),      t3b = _mm256_loadu_ps(acc3 + 8);
+  __m256 t3c = _mm256_loadu_ps(acc3 + 16), t3d = _mm256_loadu_ps(acc3 + 24);
+  size_t g;
+  for (g = 0u; g < gn; ++g) {
+    __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(base + g * bpg));
+    __m128i lo_b = _mm_and_si128(b, mask_lo);
+    __m128i hi_b = _mm_and_si128(_mm_srli_epi16(b, 4), mask_lo);
+    __m256i i0 = _mm256_cvtepu8_epi32(lo_b);
+    __m256i i1 = _mm256_cvtepu8_epi32(_mm_srli_si128(lo_b, 8));
+    __m256i i2 = _mm256_cvtepu8_epi32(hi_b);
+    __m256i i3 = _mm256_cvtepu8_epi32(_mm_srli_si128(hi_b, 8));
+    __m256 v_lo, v_hi;
+    v_lo = _mm256_loadu_ps(l0 + g * 16u); v_hi = _mm256_loadu_ps(l0 + g * 16u + 8u);
+    t0a = _mm256_add_ps(t0a, lut4_lookup8_f32_avx2(v_lo, v_hi, i0));
+    t0b = _mm256_add_ps(t0b, lut4_lookup8_f32_avx2(v_lo, v_hi, i1));
+    t0c = _mm256_add_ps(t0c, lut4_lookup8_f32_avx2(v_lo, v_hi, i2));
+    t0d = _mm256_add_ps(t0d, lut4_lookup8_f32_avx2(v_lo, v_hi, i3));
+    v_lo = _mm256_loadu_ps(l1 + g * 16u); v_hi = _mm256_loadu_ps(l1 + g * 16u + 8u);
+    t1a = _mm256_add_ps(t1a, lut4_lookup8_f32_avx2(v_lo, v_hi, i0));
+    t1b = _mm256_add_ps(t1b, lut4_lookup8_f32_avx2(v_lo, v_hi, i1));
+    t1c = _mm256_add_ps(t1c, lut4_lookup8_f32_avx2(v_lo, v_hi, i2));
+    t1d = _mm256_add_ps(t1d, lut4_lookup8_f32_avx2(v_lo, v_hi, i3));
+    v_lo = _mm256_loadu_ps(l2 + g * 16u); v_hi = _mm256_loadu_ps(l2 + g * 16u + 8u);
+    t2a = _mm256_add_ps(t2a, lut4_lookup8_f32_avx2(v_lo, v_hi, i0));
+    t2b = _mm256_add_ps(t2b, lut4_lookup8_f32_avx2(v_lo, v_hi, i1));
+    t2c = _mm256_add_ps(t2c, lut4_lookup8_f32_avx2(v_lo, v_hi, i2));
+    t2d = _mm256_add_ps(t2d, lut4_lookup8_f32_avx2(v_lo, v_hi, i3));
+    v_lo = _mm256_loadu_ps(l3 + g * 16u); v_hi = _mm256_loadu_ps(l3 + g * 16u + 8u);
+    t3a = _mm256_add_ps(t3a, lut4_lookup8_f32_avx2(v_lo, v_hi, i0));
+    t3b = _mm256_add_ps(t3b, lut4_lookup8_f32_avx2(v_lo, v_hi, i1));
+    t3c = _mm256_add_ps(t3c, lut4_lookup8_f32_avx2(v_lo, v_hi, i2));
+    t3d = _mm256_add_ps(t3d, lut4_lookup8_f32_avx2(v_lo, v_hi, i3));
+  }
+  _mm256_storeu_ps(acc0, t0a); _mm256_storeu_ps(acc0 + 8, t0b);
+  _mm256_storeu_ps(acc0 + 16, t0c); _mm256_storeu_ps(acc0 + 24, t0d);
+  _mm256_storeu_ps(acc1, t1a); _mm256_storeu_ps(acc1 + 8, t1b);
+  _mm256_storeu_ps(acc1 + 16, t1c); _mm256_storeu_ps(acc1 + 24, t1d);
+  _mm256_storeu_ps(acc2, t2a); _mm256_storeu_ps(acc2 + 8, t2b);
+  _mm256_storeu_ps(acc2 + 16, t2c); _mm256_storeu_ps(acc2 + 24, t2d);
+  _mm256_storeu_ps(acc3, t3a); _mm256_storeu_ps(acc3 + 8, t3b);
+  _mm256_storeu_ps(acc3 + 16, t3c); _mm256_storeu_ps(acc3 + 24, t3d);
+}
+
+__attribute__((target("avx2"))) static void lut4_accum32_f64_avx2(
+    const uint8_t *base, size_t bpg, const double *luts, size_t gn, double acc[32]) {
+  const __m128i mask_lo = _mm_set1_epi8(0x0F);
+  __m256d a0 = _mm256_loadu_pd(acc),      a1 = _mm256_loadu_pd(acc + 4);
+  __m256d a2 = _mm256_loadu_pd(acc + 8),  a3 = _mm256_loadu_pd(acc + 12);
+  __m256d a4 = _mm256_loadu_pd(acc + 16), a5 = _mm256_loadu_pd(acc + 20);
+  __m256d a6 = _mm256_loadu_pd(acc + 24), a7 = _mm256_loadu_pd(acc + 28);
+  size_t g;
+  for (g = 0u; g < gn; ++g) {
+    const double *lt = luts + g * 16u;
+    __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(base + g * bpg));
+    __m128i lo_b = _mm_and_si128(b, mask_lo);
+    __m128i hi_b = _mm_and_si128(_mm_srli_epi16(b, 4), mask_lo);
+    a0 = _mm256_add_pd(a0, _mm256_i32gather_pd(lt, _mm_cvtepu8_epi32(lo_b), 8));
+    a1 = _mm256_add_pd(a1, _mm256_i32gather_pd(lt, _mm_cvtepu8_epi32(_mm_srli_si128(lo_b, 4)), 8));
+    a2 = _mm256_add_pd(a2, _mm256_i32gather_pd(lt, _mm_cvtepu8_epi32(_mm_srli_si128(lo_b, 8)), 8));
+    a3 = _mm256_add_pd(a3, _mm256_i32gather_pd(lt, _mm_cvtepu8_epi32(_mm_srli_si128(lo_b, 12)), 8));
+    a4 = _mm256_add_pd(a4, _mm256_i32gather_pd(lt, _mm_cvtepu8_epi32(hi_b), 8));
+    a5 = _mm256_add_pd(a5, _mm256_i32gather_pd(lt, _mm_cvtepu8_epi32(_mm_srli_si128(hi_b, 4)), 8));
+    a6 = _mm256_add_pd(a6, _mm256_i32gather_pd(lt, _mm_cvtepu8_epi32(_mm_srli_si128(hi_b, 8)), 8));
+    a7 = _mm256_add_pd(a7, _mm256_i32gather_pd(lt, _mm_cvtepu8_epi32(_mm_srli_si128(hi_b, 12)), 8));
+  }
+  _mm256_storeu_pd(acc, a0);      _mm256_storeu_pd(acc + 4, a1);
+  _mm256_storeu_pd(acc + 8, a2);  _mm256_storeu_pd(acc + 12, a3);
+  _mm256_storeu_pd(acc + 16, a4); _mm256_storeu_pd(acc + 20, a5);
+  _mm256_storeu_pd(acc + 24, a6); _mm256_storeu_pd(acc + 28, a7);
+}
+
+__attribute__((target("avx2"))) static void lut4_accum32_mb4_f64_avx2(
+    const uint8_t *base, size_t bpg,
+    const double *l0, const double *l1, const double *l2, const double *l3,
+    size_t gn, double acc0[32], double acc1[32], double acc2[32], double acc3[32]) {
+  const __m128i mask_lo = _mm_set1_epi8(0x0F);
+  size_t g;
+  for (g = 0u; g < gn; ++g) {
+    __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(base + g * bpg));
+    __m128i lo_b = _mm_and_si128(b, mask_lo);
+    __m128i hi_b = _mm_and_si128(_mm_srli_epi16(b, 4), mask_lo);
+    __m128i idx[8];
+    const double *lts[4];
+    double *accs[4];
+    int tok, blk;
+    idx[0] = _mm_cvtepu8_epi32(lo_b);
+    idx[1] = _mm_cvtepu8_epi32(_mm_srli_si128(lo_b, 4));
+    idx[2] = _mm_cvtepu8_epi32(_mm_srli_si128(lo_b, 8));
+    idx[3] = _mm_cvtepu8_epi32(_mm_srli_si128(lo_b, 12));
+    idx[4] = _mm_cvtepu8_epi32(hi_b);
+    idx[5] = _mm_cvtepu8_epi32(_mm_srli_si128(hi_b, 4));
+    idx[6] = _mm_cvtepu8_epi32(_mm_srli_si128(hi_b, 8));
+    idx[7] = _mm_cvtepu8_epi32(_mm_srli_si128(hi_b, 12));
+    lts[0] = l0 + g * 16u; lts[1] = l1 + g * 16u;
+    lts[2] = l2 + g * 16u; lts[3] = l3 + g * 16u;
+    accs[0] = acc0; accs[1] = acc1; accs[2] = acc2; accs[3] = acc3;
+    for (tok = 0; tok < 4; ++tok) {
+      for (blk = 0; blk < 8; ++blk) {
+        double *dst = accs[tok] + 4 * blk;
+        _mm256_storeu_pd(dst, _mm256_add_pd(_mm256_loadu_pd(dst),
+                                            _mm256_i32gather_pd(lts[tok], idx[blk], 8)));
+      }
+    }
+  }
+}
+
+__attribute__((target("avx512f"))) static void lut4_accum32_f32_avx512(
+    const uint8_t *base, size_t bpg, const float *luts, size_t gn, float acc[32]) {
+  const __m128i mask_lo = _mm_set1_epi8(0x0F);
+  __m512 a0 = _mm512_loadu_ps(acc);
+  __m512 a1 = _mm512_loadu_ps(acc + 16);
+  size_t g;
+  for (g = 0u; g < gn; ++g) {
+    __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(base + g * bpg));
+    __m512i lo = _mm512_cvtepu8_epi32(_mm_and_si128(b, mask_lo));
+    __m512i hi = _mm512_cvtepu8_epi32(_mm_and_si128(_mm_srli_epi16(b, 4), mask_lo));
+    __m512 vlut = _mm512_loadu_ps(luts + g * 16u);
+    a0 = _mm512_add_ps(a0, _mm512_permutexvar_ps(lo, vlut));
+    a1 = _mm512_add_ps(a1, _mm512_permutexvar_ps(hi, vlut));
+  }
+  _mm512_storeu_ps(acc, a0);
+  _mm512_storeu_ps(acc + 16, a1);
+}
+
+__attribute__((target("avx512f"))) static void lut4_accum32_mb4_f32_avx512(
+    const uint8_t *base, size_t bpg,
+    const float *l0, const float *l1, const float *l2, const float *l3,
+    size_t gn, float acc0[32], float acc1[32], float acc2[32], float acc3[32]) {
+  const __m128i mask_lo = _mm_set1_epi8(0x0F);
+  __m512 lo0 = _mm512_loadu_ps(acc0), hi0 = _mm512_loadu_ps(acc0 + 16);
+  __m512 lo1 = _mm512_loadu_ps(acc1), hi1 = _mm512_loadu_ps(acc1 + 16);
+  __m512 lo2 = _mm512_loadu_ps(acc2), hi2 = _mm512_loadu_ps(acc2 + 16);
+  __m512 lo3 = _mm512_loadu_ps(acc3), hi3 = _mm512_loadu_ps(acc3 + 16);
+  size_t g;
+  for (g = 0u; g < gn; ++g) {
+    __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(base + g * bpg));
+    __m512i lo = _mm512_cvtepu8_epi32(_mm_and_si128(b, mask_lo));
+    __m512i hi = _mm512_cvtepu8_epi32(_mm_and_si128(_mm_srli_epi16(b, 4), mask_lo));
+    __m512 v0 = _mm512_loadu_ps(l0 + g * 16u);
+    __m512 v1 = _mm512_loadu_ps(l1 + g * 16u);
+    __m512 v2 = _mm512_loadu_ps(l2 + g * 16u);
+    __m512 v3 = _mm512_loadu_ps(l3 + g * 16u);
+    lo0 = _mm512_add_ps(lo0, _mm512_permutexvar_ps(lo, v0));
+    hi0 = _mm512_add_ps(hi0, _mm512_permutexvar_ps(hi, v0));
+    lo1 = _mm512_add_ps(lo1, _mm512_permutexvar_ps(lo, v1));
+    hi1 = _mm512_add_ps(hi1, _mm512_permutexvar_ps(hi, v1));
+    lo2 = _mm512_add_ps(lo2, _mm512_permutexvar_ps(lo, v2));
+    hi2 = _mm512_add_ps(hi2, _mm512_permutexvar_ps(hi, v2));
+    lo3 = _mm512_add_ps(lo3, _mm512_permutexvar_ps(lo, v3));
+    hi3 = _mm512_add_ps(hi3, _mm512_permutexvar_ps(hi, v3));
+  }
+  _mm512_storeu_ps(acc0, lo0); _mm512_storeu_ps(acc0 + 16, hi0);
+  _mm512_storeu_ps(acc1, lo1); _mm512_storeu_ps(acc1 + 16, hi1);
+  _mm512_storeu_ps(acc2, lo2); _mm512_storeu_ps(acc2 + 16, hi2);
+  _mm512_storeu_ps(acc3, lo3); _mm512_storeu_ps(acc3 + 16, hi3);
+}
+
+__attribute__((target("avx512f"))) static void lut4_accum32_f64_avx512(
+    const uint8_t *base, size_t bpg, const double *luts, size_t gn, double acc[32]) {
+  const __m128i mask_lo = _mm_set1_epi8(0x0F);
+  __m512d a0 = _mm512_loadu_pd(acc);
+  __m512d a1 = _mm512_loadu_pd(acc + 8);
+  __m512d a2 = _mm512_loadu_pd(acc + 16);
+  __m512d a3 = _mm512_loadu_pd(acc + 24);
+  size_t g;
+  for (g = 0u; g < gn; ++g) {
+    const double *lt = luts + g * 16u;
+    __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(base + g * bpg));
+    __m128i lo_b = _mm_and_si128(b, mask_lo);
+    __m128i hi_b = _mm_and_si128(_mm_srli_epi16(b, 4), mask_lo);
+    __m512d lut_lo = _mm512_loadu_pd(lt);
+    __m512d lut_hi = _mm512_loadu_pd(lt + 8);
+    a0 = _mm512_add_pd(a0, _mm512_permutex2var_pd(lut_lo, _mm512_cvtepu8_epi64(lo_b), lut_hi));
+    a1 = _mm512_add_pd(a1, _mm512_permutex2var_pd(lut_lo, _mm512_cvtepu8_epi64(_mm_srli_si128(lo_b, 8)), lut_hi));
+    a2 = _mm512_add_pd(a2, _mm512_permutex2var_pd(lut_lo, _mm512_cvtepu8_epi64(hi_b), lut_hi));
+    a3 = _mm512_add_pd(a3, _mm512_permutex2var_pd(lut_lo, _mm512_cvtepu8_epi64(_mm_srli_si128(hi_b, 8)), lut_hi));
+  }
+  _mm512_storeu_pd(acc, a0);
+  _mm512_storeu_pd(acc + 8, a1);
+  _mm512_storeu_pd(acc + 16, a2);
+  _mm512_storeu_pd(acc + 24, a3);
+}
+
+__attribute__((target("avx512f"))) static void lut4_accum32_mb4_f64_avx512(
+    const uint8_t *base, size_t bpg,
+    const double *l0, const double *l1, const double *l2, const double *l3,
+    size_t gn, double acc0[32], double acc1[32], double acc2[32], double acc3[32]) {
+  const __m128i mask_lo = _mm_set1_epi8(0x0F);
+  __m512d t0a = _mm512_loadu_pd(acc0),      t0b = _mm512_loadu_pd(acc0 + 8);
+  __m512d t0c = _mm512_loadu_pd(acc0 + 16), t0d = _mm512_loadu_pd(acc0 + 24);
+  __m512d t1a = _mm512_loadu_pd(acc1),      t1b = _mm512_loadu_pd(acc1 + 8);
+  __m512d t1c = _mm512_loadu_pd(acc1 + 16), t1d = _mm512_loadu_pd(acc1 + 24);
+  __m512d t2a = _mm512_loadu_pd(acc2),      t2b = _mm512_loadu_pd(acc2 + 8);
+  __m512d t2c = _mm512_loadu_pd(acc2 + 16), t2d = _mm512_loadu_pd(acc2 + 24);
+  __m512d t3a = _mm512_loadu_pd(acc3),      t3b = _mm512_loadu_pd(acc3 + 8);
+  __m512d t3c = _mm512_loadu_pd(acc3 + 16), t3d = _mm512_loadu_pd(acc3 + 24);
+  size_t g;
+  for (g = 0u; g < gn; ++g) {
+    __m128i b = _mm_loadu_si128((const __m128i *)(const void *)(base + g * bpg));
+    __m128i lo_b = _mm_and_si128(b, mask_lo);
+    __m128i hi_b = _mm_and_si128(_mm_srli_epi16(b, 4), mask_lo);
+    __m512i i0 = _mm512_cvtepu8_epi64(lo_b);
+    __m512i i1 = _mm512_cvtepu8_epi64(_mm_srli_si128(lo_b, 8));
+    __m512i i2 = _mm512_cvtepu8_epi64(hi_b);
+    __m512i i3 = _mm512_cvtepu8_epi64(_mm_srli_si128(hi_b, 8));
+    __m512d vlo, vhi;
+    vlo = _mm512_loadu_pd(l0 + g * 16u); vhi = _mm512_loadu_pd(l0 + g * 16u + 8u);
+    t0a = _mm512_add_pd(t0a, _mm512_permutex2var_pd(vlo, i0, vhi));
+    t0b = _mm512_add_pd(t0b, _mm512_permutex2var_pd(vlo, i1, vhi));
+    t0c = _mm512_add_pd(t0c, _mm512_permutex2var_pd(vlo, i2, vhi));
+    t0d = _mm512_add_pd(t0d, _mm512_permutex2var_pd(vlo, i3, vhi));
+    vlo = _mm512_loadu_pd(l1 + g * 16u); vhi = _mm512_loadu_pd(l1 + g * 16u + 8u);
+    t1a = _mm512_add_pd(t1a, _mm512_permutex2var_pd(vlo, i0, vhi));
+    t1b = _mm512_add_pd(t1b, _mm512_permutex2var_pd(vlo, i1, vhi));
+    t1c = _mm512_add_pd(t1c, _mm512_permutex2var_pd(vlo, i2, vhi));
+    t1d = _mm512_add_pd(t1d, _mm512_permutex2var_pd(vlo, i3, vhi));
+    vlo = _mm512_loadu_pd(l2 + g * 16u); vhi = _mm512_loadu_pd(l2 + g * 16u + 8u);
+    t2a = _mm512_add_pd(t2a, _mm512_permutex2var_pd(vlo, i0, vhi));
+    t2b = _mm512_add_pd(t2b, _mm512_permutex2var_pd(vlo, i1, vhi));
+    t2c = _mm512_add_pd(t2c, _mm512_permutex2var_pd(vlo, i2, vhi));
+    t2d = _mm512_add_pd(t2d, _mm512_permutex2var_pd(vlo, i3, vhi));
+    vlo = _mm512_loadu_pd(l3 + g * 16u); vhi = _mm512_loadu_pd(l3 + g * 16u + 8u);
+    t3a = _mm512_add_pd(t3a, _mm512_permutex2var_pd(vlo, i0, vhi));
+    t3b = _mm512_add_pd(t3b, _mm512_permutex2var_pd(vlo, i1, vhi));
+    t3c = _mm512_add_pd(t3c, _mm512_permutex2var_pd(vlo, i2, vhi));
+    t3d = _mm512_add_pd(t3d, _mm512_permutex2var_pd(vlo, i3, vhi));
+  }
+  _mm512_storeu_pd(acc0, t0a); _mm512_storeu_pd(acc0 + 8, t0b);
+  _mm512_storeu_pd(acc0 + 16, t0c); _mm512_storeu_pd(acc0 + 24, t0d);
+  _mm512_storeu_pd(acc1, t1a); _mm512_storeu_pd(acc1 + 8, t1b);
+  _mm512_storeu_pd(acc1 + 16, t1c); _mm512_storeu_pd(acc1 + 24, t1d);
+  _mm512_storeu_pd(acc2, t2a); _mm512_storeu_pd(acc2 + 8, t2b);
+  _mm512_storeu_pd(acc2 + 16, t2c); _mm512_storeu_pd(acc2 + 24, t2d);
+  _mm512_storeu_pd(acc3, t3a); _mm512_storeu_pd(acc3 + 8, t3b);
+  _mm512_storeu_pd(acc3 + 16, t3c); _mm512_storeu_pd(acc3 + 24, t3d);
+}
+#endif
+
+static void lut4_accum32_f64(int inst, const uint8_t *base, size_t bpg,
+                             const double *luts, size_t gn, double acc[32]) {
+#ifdef BCIR_AI_DISPATCH
+  if (inst == 4) { lut4_accum32_f64_avx512(base, bpg, luts, gn, acc); return; }
+  if (inst == 2) { lut4_accum32_f64_avx2(base, bpg, luts, gn, acc); return; }
+#else
+  (void)inst;
+#endif
+  lut4_accum32_f64_portable(base, bpg, luts, gn, acc);
+}
+
+static void lut4_accum32_f32(int inst, const uint8_t *base, size_t bpg,
+                             const float *luts, size_t gn, float acc[32]) {
+#ifdef BCIR_AI_DISPATCH
+  if (inst == 4) { lut4_accum32_f32_avx512(base, bpg, luts, gn, acc); return; }
+  if (inst == 2) { lut4_accum32_f32_avx2(base, bpg, luts, gn, acc); return; }
+#else
+  (void)inst;
+#endif
+  lut4_accum32_f32_portable(base, bpg, luts, gn, acc);
+}
+
+static void lut4_accum32_mb4_f64(int inst, const uint8_t *base, size_t bpg,
+                                 const double *l0, const double *l1,
+                                 const double *l2, const double *l3,
+                                 size_t gn, double acc0[32], double acc1[32],
+                                 double acc2[32], double acc3[32]) {
+#ifdef BCIR_AI_DISPATCH
+  if (inst == 4) {
+    lut4_accum32_mb4_f64_avx512(base, bpg, l0, l1, l2, l3, gn, acc0, acc1, acc2, acc3);
+    return;
+  }
+  if (inst == 2) {
+    lut4_accum32_mb4_f64_avx2(base, bpg, l0, l1, l2, l3, gn, acc0, acc1, acc2, acc3);
+    return;
+  }
+#else
+  (void)inst;
+#endif
+  lut4_accum32_mb4_f64_portable(base, bpg, l0, l1, l2, l3, gn, acc0, acc1, acc2, acc3);
+}
+
+static void lut4_accum32_mb4_f32(int inst, const uint8_t *base, size_t bpg,
+                                 const float *l0, const float *l1,
+                                 const float *l2, const float *l3,
+                                 size_t gn, float acc0[32], float acc1[32],
+                                 float acc2[32], float acc3[32]) {
+#ifdef BCIR_AI_DISPATCH
+  if (inst == 4) {
+    lut4_accum32_mb4_f32_avx512(base, bpg, l0, l1, l2, l3, gn, acc0, acc1, acc2, acc3);
+    return;
+  }
+  if (inst == 2) {
+    lut4_accum32_mb4_f32_avx2(base, bpg, l0, l1, l2, l3, gn, acc0, acc1, acc2, acc3);
+    return;
+  }
+#else
+  (void)inst;
+#endif
+  lut4_accum32_mb4_f32_portable(base, bpg, l0, l1, l2, l3, gn, acc0, acc1, acc2, acc3);
+}
+
+enum { LUT4_V_GTILE = 32u, LUT4_MB4_MAX_RANK = 256u, LUT4_MB4_V_GTILE = 16u };
+
+static int lut4_matvec_f64_core(int inst, const double *input, size_t input_count,
+                                const bcir_ai_lut4_path *paths, size_t path_count,
+                                size_t output_count, size_t col_begin, size_t col_end,
+                                double *output) {
+  double z_buf[BCIR_AI_LUT4_MAX_RANK];
+  double lut_v[LUT4_V_GTILE * 16u];
+  double lut_u[(BCIR_AI_LUT4_MAX_RANK / 4u) * 16u];
+  size_t p, j;
+  for (j = col_begin; j < col_end; ++j) output[j] = 0.0;
+  for (p = 0u; p < path_count; ++p) {
+    const bcir_ai_lut4_path *pt = &paths[p];
+    size_t rank = pt->rank;
+    size_t gv_total = (input_count + 3u) >> 2u;
+    size_t r32_v = (rank + 31u) & ~(size_t)31u;
+    size_t bpg_v = r32_v >> 1u;
+    size_t gu_total = (rank + 3u) >> 2u;
+    size_t r32_u = (output_count + 31u) & ~(size_t)31u;
+    size_t bpg_u = r32_u >> 1u;
+    size_t g0, r0, k;
+    memset(z_buf, 0, r32_v * sizeof(double));
+    for (g0 = 0u; g0 < gv_total; g0 += LUT4_V_GTILE) {
+      size_t gn = gv_total - g0 < LUT4_V_GTILE ? gv_total - g0 : LUT4_V_GTILE;
+      size_t t;
+      for (t = 0u; t < gn; ++t) {
+        size_t c0 = (g0 + t) << 2u;
+        double x0 = c0 < input_count ? input[c0] * lut4_fp16_f64(pt->g_fp16_le, c0) : 0.0;
+        double x1 = c0 + 1u < input_count ? input[c0 + 1u] * lut4_fp16_f64(pt->g_fp16_le, c0 + 1u) : 0.0;
+        double x2 = c0 + 2u < input_count ? input[c0 + 2u] * lut4_fp16_f64(pt->g_fp16_le, c0 + 2u) : 0.0;
+        double x3 = c0 + 3u < input_count ? input[c0 + 3u] * lut4_fp16_f64(pt->g_fp16_le, c0 + 3u) : 0.0;
+        lut4_build_f64(x0, x1, x2, x3, lut_v + t * 16u);
+      }
+      for (r0 = 0u; r0 < r32_v; r0 += 32u)
+        lut4_accum32_f64(inst, pt->v_packed + g0 * bpg_v + (r0 >> 1u), bpg_v, lut_v, gn, z_buf + r0);
+    }
+    for (k = 0u; k < rank; ++k) z_buf[k] = z_buf[k] * lut4_fp16_f64(pt->l_fp16_le, k);
+    for (g0 = 0u; g0 < gu_total; ++g0) {
+      size_t c0 = g0 << 2u;
+      double x0 = c0 < rank ? z_buf[c0] : 0.0;
+      double x1 = c0 + 1u < rank ? z_buf[c0 + 1u] : 0.0;
+      double x2 = c0 + 2u < rank ? z_buf[c0 + 2u] : 0.0;
+      double x3 = c0 + 3u < rank ? z_buf[c0 + 3u] : 0.0;
+      lut4_build_f64(x0, x1, x2, x3, lut_u + g0 * 16u);
+    }
+    {
+      size_t blk_begin = col_begin & ~(size_t)31u;
+      size_t blk_end = (col_end + 31u) & ~(size_t)31u;
+      for (r0 = blk_begin; r0 < blk_end; r0 += 32u) {
+        double acc_blk[32];
+        size_t lo = r0 > col_begin ? r0 : col_begin;
+        size_t hi = r0 + 32u < col_end ? r0 + 32u : col_end;
+        memset(acc_blk, 0, sizeof acc_blk);
+        lut4_accum32_f64(inst, pt->u_packed + (r0 >> 1u), bpg_u, lut_u, gu_total, acc_blk);
+        for (j = lo; j < hi; ++j)
+          output[j] = output[j] + acc_blk[j - r0] * lut4_fp16_f64(pt->h_fp16_le, j);
+      }
+    }
+  }
+  for (j = col_begin; j < col_end; ++j) {
+    if (!isfinite(output[j])) {
+      memset(output + col_begin, 0, (col_end - col_begin) * sizeof *output);
+      return BCIR_AI_INVALID_NUMBER;
+    }
+  }
+  return BCIR_AI_OK;
+}
+
+static int lut4_matvec_f32_core(int inst, const float *input, size_t input_count,
+                                const bcir_ai_lut4_path *paths, size_t path_count,
+                                size_t output_count, size_t col_begin, size_t col_end,
+                                float *output) {
+  float z_buf[BCIR_AI_LUT4_MAX_RANK];
+  float lut_v[LUT4_V_GTILE * 16u];
+  float lut_u[(BCIR_AI_LUT4_MAX_RANK / 4u) * 16u];
+  size_t p, j;
+  for (j = col_begin; j < col_end; ++j) output[j] = 0.0f;
+  for (p = 0u; p < path_count; ++p) {
+    const bcir_ai_lut4_path *pt = &paths[p];
+    size_t rank = pt->rank;
+    size_t gv_total = (input_count + 3u) >> 2u;
+    size_t r32_v = (rank + 31u) & ~(size_t)31u;
+    size_t bpg_v = r32_v >> 1u;
+    size_t gu_total = (rank + 3u) >> 2u;
+    size_t r32_u = (output_count + 31u) & ~(size_t)31u;
+    size_t bpg_u = r32_u >> 1u;
+    size_t g0, r0, k;
+    memset(z_buf, 0, r32_v * sizeof(float));
+    for (g0 = 0u; g0 < gv_total; g0 += LUT4_V_GTILE) {
+      size_t gn = gv_total - g0 < LUT4_V_GTILE ? gv_total - g0 : LUT4_V_GTILE;
+      size_t t;
+      for (t = 0u; t < gn; ++t) {
+        size_t c0 = (g0 + t) << 2u;
+        float x0 = c0 < input_count ? input[c0] * lut4_fp16_f32(pt->g_fp16_le, c0) : 0.0f;
+        float x1 = c0 + 1u < input_count ? input[c0 + 1u] * lut4_fp16_f32(pt->g_fp16_le, c0 + 1u) : 0.0f;
+        float x2 = c0 + 2u < input_count ? input[c0 + 2u] * lut4_fp16_f32(pt->g_fp16_le, c0 + 2u) : 0.0f;
+        float x3 = c0 + 3u < input_count ? input[c0 + 3u] * lut4_fp16_f32(pt->g_fp16_le, c0 + 3u) : 0.0f;
+        lut4_build_f32(x0, x1, x2, x3, lut_v + t * 16u);
+      }
+      for (r0 = 0u; r0 < r32_v; r0 += 32u)
+        lut4_accum32_f32(inst, pt->v_packed + g0 * bpg_v + (r0 >> 1u), bpg_v, lut_v, gn, z_buf + r0);
+    }
+    for (k = 0u; k < rank; ++k) z_buf[k] = z_buf[k] * lut4_fp16_f32(pt->l_fp16_le, k);
+    for (g0 = 0u; g0 < gu_total; ++g0) {
+      size_t c0 = g0 << 2u;
+      float x0 = c0 < rank ? z_buf[c0] : 0.0f;
+      float x1 = c0 + 1u < rank ? z_buf[c0 + 1u] : 0.0f;
+      float x2 = c0 + 2u < rank ? z_buf[c0 + 2u] : 0.0f;
+      float x3 = c0 + 3u < rank ? z_buf[c0 + 3u] : 0.0f;
+      lut4_build_f32(x0, x1, x2, x3, lut_u + g0 * 16u);
+    }
+    {
+      size_t blk_begin = col_begin & ~(size_t)31u;
+      size_t blk_end = (col_end + 31u) & ~(size_t)31u;
+      for (r0 = blk_begin; r0 < blk_end; r0 += 32u) {
+        float acc_blk[32];
+        size_t lo = r0 > col_begin ? r0 : col_begin;
+        size_t hi = r0 + 32u < col_end ? r0 + 32u : col_end;
+        memset(acc_blk, 0, sizeof acc_blk);
+        lut4_accum32_f32(inst, pt->u_packed + (r0 >> 1u), bpg_u, lut_u, gu_total, acc_blk);
+        for (j = lo; j < hi; ++j)
+          output[j] = output[j] + acc_blk[j - r0] * lut4_fp16_f32(pt->h_fp16_le, j);
+      }
+    }
+  }
+  for (j = col_begin; j < col_end; ++j) {
+    if (!isfinite(output[j])) {
+      memset(output + col_begin, 0, (col_end - col_begin) * sizeof *output);
+      return BCIR_AI_INVALID_NUMBER;
+    }
+  }
+  return BCIR_AI_OK;
+}
+
+int bcir_ai_lut4_matvec_f64_columns_instance(
+    int instance, const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, size_t column_begin, size_t column_end,
+    double *output) {
+  instance = q8_instance(instance);
+  if (!instance || !lut4_shape_basic(input_count, output_count, paths, path_count) ||
+      !q8_input_validate(input, input_count) || output == NULL ||
+      column_begin >= column_end || column_end > output_count)
+    return BCIR_AI_INVALID_ARGUMENT;
+  LUT4_SAW(instance);
+  return lut4_matvec_f64_core(instance, input, input_count, paths, path_count,
+                              output_count, column_begin, column_end, output);
+}
+
+int bcir_ai_lut4_matvec_f64_columns(
+    const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, size_t column_begin, size_t column_end,
+    double *output) {
+  return bcir_ai_lut4_matvec_f64_columns_instance(
+      0, input, input_count, paths, path_count, output_count, column_begin, column_end, output);
+}
+
+int bcir_ai_lut4_matvec_f64_instance(
+    int instance, const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, double *output) {
+  return bcir_ai_lut4_matvec_f64_columns_instance(
+      instance, input, input_count, paths, path_count, output_count, 0u, output_count, output);
+}
+
+int bcir_ai_lut4_matvec_f64_prevalidated(
+    const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, double *output) {
+  return bcir_ai_lut4_matvec_f64_columns_instance(
+      0, input, input_count, paths, path_count, output_count, 0u, output_count, output);
+}
+
+int bcir_ai_lut4_matvec_f64(
+    const double *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, double *output) {
+  int status = bcir_ai_lut4_paths_validate(input_count, output_count, paths, path_count);
+  if (status != BCIR_AI_OK) return status;
+  return bcir_ai_lut4_matvec_f64_prevalidated(input, input_count, paths, path_count,
+                                              output_count, output);
+}
+
+int bcir_ai_lut4_matvec_f32_columns_instance(
+    int instance, const float *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, size_t column_begin, size_t column_end,
+    float *output) {
+  instance = q8_instance(instance);
+  if (!instance || !lut4_shape_basic(input_count, output_count, paths, path_count) ||
+      !lut4_finite_f32(input, input_count) || output == NULL ||
+      column_begin >= column_end || column_end > output_count)
+    return BCIR_AI_INVALID_ARGUMENT;
+  LUT4_SAW(instance);
+  return lut4_matvec_f32_core(instance, input, input_count, paths, path_count,
+                              output_count, column_begin, column_end, output);
+}
+
+int bcir_ai_lut4_matvec_f32_instance(
+    int instance, const float *input, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, float *output) {
+  return bcir_ai_lut4_matvec_f32_columns_instance(
+      instance, input, input_count, paths, path_count, output_count, 0u, output_count, output);
+}
+
+int bcir_ai_lut4_matmul_mb4_f64_instance(
+    int instance, const double *inputs, size_t token_count, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, double *outputs) {
+  size_t tok0 = 0u, p, max_rank = 0u;
+  instance = q8_instance(instance);
+  if (!instance || !lut4_shape_basic(input_count, output_count, paths, path_count) ||
+      token_count == 0u || token_count > (size_t)BCIR_AI_MAX_ELEMENTS / output_count ||
+      token_count > (size_t)BCIR_AI_MAX_ELEMENTS / input_count ||
+      !q8_input_validate(inputs, token_count * input_count) || outputs == NULL)
+    return BCIR_AI_INVALID_ARGUMENT;
+  LUT4_SAW(instance);
+  for (p = 0u; p < path_count; ++p)
+    if (paths[p].rank > max_rank) max_rank = paths[p].rank;
+  if (max_rank <= LUT4_MB4_MAX_RANK) {
+    double z4[4][LUT4_MB4_MAX_RANK];
+    double lut_v[4][LUT4_MB4_V_GTILE * 16u];
+    double lut_u[4][(LUT4_MB4_MAX_RANK / 4u) * 16u];
+    for (; tok0 + 4u <= token_count; tok0 += 4u) {
+      const double *x0 = inputs + (tok0 + 0u) * input_count;
+      const double *x1 = inputs + (tok0 + 1u) * input_count;
+      const double *x2 = inputs + (tok0 + 2u) * input_count;
+      const double *x3 = inputs + (tok0 + 3u) * input_count;
+      double *y0 = outputs + (tok0 + 0u) * output_count;
+      double *y1 = outputs + (tok0 + 1u) * output_count;
+      double *y2 = outputs + (tok0 + 2u) * output_count;
+      double *y3 = outputs + (tok0 + 3u) * output_count;
+      size_t j;
+      for (j = 0u; j < output_count; ++j) y0[j] = y1[j] = y2[j] = y3[j] = 0.0;
+      for (p = 0u; p < path_count; ++p) {
+        const bcir_ai_lut4_path *pt = &paths[p];
+        size_t rank = pt->rank;
+        size_t gv_total = (input_count + 3u) >> 2u;
+        size_t r32_v = (rank + 31u) & ~(size_t)31u;
+        size_t bpg_v = r32_v >> 1u;
+        size_t gu_total = (rank + 3u) >> 2u;
+        size_t r32_u = (output_count + 31u) & ~(size_t)31u;
+        size_t bpg_u = r32_u >> 1u;
+        size_t g0, r0, k, tok;
+        const double *xs[4];
+        xs[0] = x0; xs[1] = x1; xs[2] = x2; xs[3] = x3;
+        for (tok = 0u; tok < 4u; ++tok) memset(z4[tok], 0, r32_v * sizeof(double));
+        for (g0 = 0u; g0 < gv_total; g0 += LUT4_MB4_V_GTILE) {
+          size_t gn = gv_total - g0 < LUT4_MB4_V_GTILE ? gv_total - g0 : LUT4_MB4_V_GTILE;
+          size_t t;
+          for (t = 0u; t < gn; ++t) {
+            size_t c0 = (g0 + t) << 2u;
+            double s0 = c0 < input_count ? lut4_fp16_f64(pt->g_fp16_le, c0) : 0.0;
+            double s1 = c0 + 1u < input_count ? lut4_fp16_f64(pt->g_fp16_le, c0 + 1u) : 0.0;
+            double s2 = c0 + 2u < input_count ? lut4_fp16_f64(pt->g_fp16_le, c0 + 2u) : 0.0;
+            double s3 = c0 + 3u < input_count ? lut4_fp16_f64(pt->g_fp16_le, c0 + 3u) : 0.0;
+            for (tok = 0u; tok < 4u; ++tok) {
+              double a0 = c0 < input_count ? xs[tok][c0] * s0 : 0.0;
+              double a1 = c0 + 1u < input_count ? xs[tok][c0 + 1u] * s1 : 0.0;
+              double a2 = c0 + 2u < input_count ? xs[tok][c0 + 2u] * s2 : 0.0;
+              double a3 = c0 + 3u < input_count ? xs[tok][c0 + 3u] * s3 : 0.0;
+              lut4_build_f64(a0, a1, a2, a3, lut_v[tok] + t * 16u);
+            }
+          }
+          for (r0 = 0u; r0 < r32_v; r0 += 32u)
+            lut4_accum32_mb4_f64(instance, pt->v_packed + g0 * bpg_v + (r0 >> 1u), bpg_v,
+                                 lut_v[0], lut_v[1], lut_v[2], lut_v[3], gn,
+                                 z4[0] + r0, z4[1] + r0, z4[2] + r0, z4[3] + r0);
+        }
+        for (k = 0u; k < rank; ++k) {
+          double lk = lut4_fp16_f64(pt->l_fp16_le, k);
+          z4[0][k] = z4[0][k] * lk; z4[1][k] = z4[1][k] * lk;
+          z4[2][k] = z4[2][k] * lk; z4[3][k] = z4[3][k] * lk;
+        }
+        for (g0 = 0u; g0 < gu_total; ++g0) {
+          size_t c0 = g0 << 2u;
+          for (tok = 0u; tok < 4u; ++tok) {
+            double a0 = c0 < rank ? z4[tok][c0] : 0.0;
+            double a1 = c0 + 1u < rank ? z4[tok][c0 + 1u] : 0.0;
+            double a2 = c0 + 2u < rank ? z4[tok][c0 + 2u] : 0.0;
+            double a3 = c0 + 3u < rank ? z4[tok][c0 + 3u] : 0.0;
+            lut4_build_f64(a0, a1, a2, a3, lut_u[tok] + g0 * 16u);
+          }
+        }
+        for (r0 = 0u; r0 < r32_u; r0 += 32u) {
+          double acc0[32], acc1[32], acc2[32], acc3[32];
+          size_t hi = r0 + 32u < output_count ? r0 + 32u : output_count;
+          memset(acc0, 0, sizeof acc0); memset(acc1, 0, sizeof acc1);
+          memset(acc2, 0, sizeof acc2); memset(acc3, 0, sizeof acc3);
+          lut4_accum32_mb4_f64(instance, pt->u_packed + (r0 >> 1u), bpg_u,
+                               lut_u[0], lut_u[1], lut_u[2], lut_u[3], gu_total,
+                               acc0, acc1, acc2, acc3);
+          for (j = r0; j < hi; ++j) {
+            double hj = lut4_fp16_f64(pt->h_fp16_le, j);
+            y0[j] = y0[j] + acc0[j - r0] * hj;
+            y1[j] = y1[j] + acc1[j - r0] * hj;
+            y2[j] = y2[j] + acc2[j - r0] * hj;
+            y3[j] = y3[j] + acc3[j - r0] * hj;
+          }
+        }
+      }
+      for (j = 0u; j < output_count; ++j) {
+        if (!isfinite(y0[j]) || !isfinite(y1[j]) || !isfinite(y2[j]) || !isfinite(y3[j])) {
+          memset(outputs, 0, token_count * output_count * sizeof *outputs);
+          return BCIR_AI_INVALID_NUMBER;
+        }
+      }
+    }
+  }
+  for (; tok0 < token_count; ++tok0) {
+    int st = lut4_matvec_f64_core(instance, inputs + tok0 * input_count, input_count,
+                                  paths, path_count, output_count, 0u, output_count,
+                                  outputs + tok0 * output_count);
+    if (st != BCIR_AI_OK) {
+      memset(outputs, 0, token_count * output_count * sizeof *outputs);
+      return st;
+    }
+  }
+  return BCIR_AI_OK;
+}
+
+int bcir_ai_lut4_matmul_mb4_f32_instance(
+    int instance, const float *inputs, size_t token_count, size_t input_count,
+    const bcir_ai_lut4_path *paths, size_t path_count,
+    size_t output_count, float *outputs) {
+  size_t tok0 = 0u, p, max_rank = 0u;
+  instance = q8_instance(instance);
+  if (!instance || !lut4_shape_basic(input_count, output_count, paths, path_count) ||
+      token_count == 0u || token_count > (size_t)BCIR_AI_MAX_ELEMENTS / output_count ||
+      token_count > (size_t)BCIR_AI_MAX_ELEMENTS / input_count ||
+      !lut4_finite_f32(inputs, token_count * input_count) || outputs == NULL)
+    return BCIR_AI_INVALID_ARGUMENT;
+  LUT4_SAW(instance);
+  for (p = 0u; p < path_count; ++p)
+    if (paths[p].rank > max_rank) max_rank = paths[p].rank;
+  if (max_rank <= LUT4_MB4_MAX_RANK) {
+    float z4[4][LUT4_MB4_MAX_RANK];
+    float lut_v[4][LUT4_MB4_V_GTILE * 16u];
+    float lut_u[4][(LUT4_MB4_MAX_RANK / 4u) * 16u];
+    for (; tok0 + 4u <= token_count; tok0 += 4u) {
+      const float *x0 = inputs + (tok0 + 0u) * input_count;
+      const float *x1 = inputs + (tok0 + 1u) * input_count;
+      const float *x2 = inputs + (tok0 + 2u) * input_count;
+      const float *x3 = inputs + (tok0 + 3u) * input_count;
+      float *y0 = outputs + (tok0 + 0u) * output_count;
+      float *y1 = outputs + (tok0 + 1u) * output_count;
+      float *y2 = outputs + (tok0 + 2u) * output_count;
+      float *y3 = outputs + (tok0 + 3u) * output_count;
+      size_t j;
+      for (j = 0u; j < output_count; ++j) y0[j] = y1[j] = y2[j] = y3[j] = 0.0f;
+      for (p = 0u; p < path_count; ++p) {
+        const bcir_ai_lut4_path *pt = &paths[p];
+        size_t rank = pt->rank;
+        size_t gv_total = (input_count + 3u) >> 2u;
+        size_t r32_v = (rank + 31u) & ~(size_t)31u;
+        size_t bpg_v = r32_v >> 1u;
+        size_t gu_total = (rank + 3u) >> 2u;
+        size_t r32_u = (output_count + 31u) & ~(size_t)31u;
+        size_t bpg_u = r32_u >> 1u;
+        size_t g0, r0, k, tok;
+        const float *xs[4];
+        xs[0] = x0; xs[1] = x1; xs[2] = x2; xs[3] = x3;
+        for (tok = 0u; tok < 4u; ++tok) memset(z4[tok], 0, r32_v * sizeof(float));
+        for (g0 = 0u; g0 < gv_total; g0 += LUT4_MB4_V_GTILE) {
+          size_t gn = gv_total - g0 < LUT4_MB4_V_GTILE ? gv_total - g0 : LUT4_MB4_V_GTILE;
+          size_t t;
+          for (t = 0u; t < gn; ++t) {
+            size_t c0 = (g0 + t) << 2u;
+            float s0 = c0 < input_count ? lut4_fp16_f32(pt->g_fp16_le, c0) : 0.0f;
+            float s1 = c0 + 1u < input_count ? lut4_fp16_f32(pt->g_fp16_le, c0 + 1u) : 0.0f;
+            float s2 = c0 + 2u < input_count ? lut4_fp16_f32(pt->g_fp16_le, c0 + 2u) : 0.0f;
+            float s3 = c0 + 3u < input_count ? lut4_fp16_f32(pt->g_fp16_le, c0 + 3u) : 0.0f;
+            for (tok = 0u; tok < 4u; ++tok) {
+              float a0 = c0 < input_count ? xs[tok][c0] * s0 : 0.0f;
+              float a1 = c0 + 1u < input_count ? xs[tok][c0 + 1u] * s1 : 0.0f;
+              float a2 = c0 + 2u < input_count ? xs[tok][c0 + 2u] * s2 : 0.0f;
+              float a3 = c0 + 3u < input_count ? xs[tok][c0 + 3u] * s3 : 0.0f;
+              lut4_build_f32(a0, a1, a2, a3, lut_v[tok] + t * 16u);
+            }
+          }
+          for (r0 = 0u; r0 < r32_v; r0 += 32u)
+            lut4_accum32_mb4_f32(instance, pt->v_packed + g0 * bpg_v + (r0 >> 1u), bpg_v,
+                                 lut_v[0], lut_v[1], lut_v[2], lut_v[3], gn,
+                                 z4[0] + r0, z4[1] + r0, z4[2] + r0, z4[3] + r0);
+        }
+        for (k = 0u; k < rank; ++k) {
+          float lk = lut4_fp16_f32(pt->l_fp16_le, k);
+          z4[0][k] = z4[0][k] * lk; z4[1][k] = z4[1][k] * lk;
+          z4[2][k] = z4[2][k] * lk; z4[3][k] = z4[3][k] * lk;
+        }
+        for (g0 = 0u; g0 < gu_total; ++g0) {
+          size_t c0 = g0 << 2u;
+          for (tok = 0u; tok < 4u; ++tok) {
+            float a0 = c0 < rank ? z4[tok][c0] : 0.0f;
+            float a1 = c0 + 1u < rank ? z4[tok][c0 + 1u] : 0.0f;
+            float a2 = c0 + 2u < rank ? z4[tok][c0 + 2u] : 0.0f;
+            float a3 = c0 + 3u < rank ? z4[tok][c0 + 3u] : 0.0f;
+            lut4_build_f32(a0, a1, a2, a3, lut_u[tok] + g0 * 16u);
+          }
+        }
+        for (r0 = 0u; r0 < r32_u; r0 += 32u) {
+          float acc0[32], acc1[32], acc2[32], acc3[32];
+          size_t hi = r0 + 32u < output_count ? r0 + 32u : output_count;
+          memset(acc0, 0, sizeof acc0); memset(acc1, 0, sizeof acc1);
+          memset(acc2, 0, sizeof acc2); memset(acc3, 0, sizeof acc3);
+          lut4_accum32_mb4_f32(instance, pt->u_packed + (r0 >> 1u), bpg_u,
+                               lut_u[0], lut_u[1], lut_u[2], lut_u[3], gu_total,
+                               acc0, acc1, acc2, acc3);
+          for (j = r0; j < hi; ++j) {
+            float hj = lut4_fp16_f32(pt->h_fp16_le, j);
+            y0[j] = y0[j] + acc0[j - r0] * hj;
+            y1[j] = y1[j] + acc1[j - r0] * hj;
+            y2[j] = y2[j] + acc2[j - r0] * hj;
+            y3[j] = y3[j] + acc3[j - r0] * hj;
+          }
+        }
+      }
+      for (j = 0u; j < output_count; ++j) {
+        if (!isfinite(y0[j]) || !isfinite(y1[j]) || !isfinite(y2[j]) || !isfinite(y3[j])) {
+          memset(outputs, 0, token_count * output_count * sizeof *outputs);
+          return BCIR_AI_INVALID_NUMBER;
+        }
+      }
+    }
+  }
+  for (; tok0 < token_count; ++tok0) {
+    int st = lut4_matvec_f32_core(instance, inputs + tok0 * input_count, input_count,
+                                  paths, path_count, output_count, 0u, output_count,
+                                  outputs + tok0 * output_count);
+    if (st != BCIR_AI_OK) {
+      memset(outputs, 0, token_count * output_count * sizeof *outputs);
+      return st;
+    }
+  }
+  return BCIR_AI_OK;
+}

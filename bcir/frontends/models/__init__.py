@@ -28,6 +28,16 @@ _LAZY = {
     "ModelWorkloadSpec": (".assessment", "ModelWorkloadSpec"),
     "assess_model": (".assessment", "assess_model"),
     "lower_model_execution": (".execution_plan", "lower_model_execution"),
+    "DEPLOY_BASELINE_SCHEMA": (".deploy_policy", "DEPLOY_BASELINE_SCHEMA"),
+    "DeployBaselineRecord": (".deploy_policy", "DeployBaselineRecord"),
+    "DeploymentPolicy": (".deploy_policy", "DeploymentPolicy"),
+    "EvalMetrics": (".deploy_policy", "EvalMetrics"),
+    "PrecisionContract": (".deploy_policy", "PrecisionContract"),
+    "Q8BoundReport": (".deploy_policy", "Q8BoundReport"),
+    "QualificationVerdict": (".deploy_policy", "QualificationVerdict"),
+    "export_hybrid_decoder": (".deploy_policy", "export_hybrid_decoder"),
+    "qualify_deployment": (".deploy_policy", "qualify_deployment"),
+    "verify_q8_error_bound": (".deploy_policy", "verify_q8_error_bound"),
 }
 
 
