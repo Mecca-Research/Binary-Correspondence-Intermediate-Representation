@@ -117,10 +117,7 @@
       "verdict": "clean"
     },
     "bcir_make.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: unsupported base expression Index",
-      "construct": "a member through a pointer element (`bf->targets[i]->name`, CF-IDXARROW), which both rails refuse alike; the file-status and directory headers before it are CSUB-5f's",
-      "rung": "CSUB-5"
+      "verdict": "clean"
     },
     "bcir_microbench.c": {
       "verdict": "clean"

@@ -224,22 +224,11 @@ static uint64_t mk_hash(const char *s, size_t n) {
   return h;
 }
 
-static void **map_slot(mk_ctx *mk, mk_map *m, const char *k, size_t n, int create) {
-  size_t i;
-  if (create && (!m->slots || (m->n + 1u) * 10u >= m->cap * 7u)) {
-    mk_map grown;
-    size_t j;
-    grown.cap = m->slots ? m->cap * 2u : 64u;
-    grown.n = 0;
-    grown.slots = (mk_entry *)mk_alloc(mk, grown.cap * sizeof *grown.slots);
-    memset(grown.slots, 0, grown.cap * sizeof *grown.slots);
-    for (j = 0; m->slots && j < m->cap; j++)
-      if (m->slots[j].key)
-        *map_slot(mk, &grown, m->slots[j].key, m->slots[j].len, 1) = m->slots[j].val;
-    *m = grown;
-  }
-  if (!m->slots) return NULL;
-  i = (size_t)(mk_hash(k, n) & (m->cap - 1u));
+/* The slot of `k` in a table with room for one more (map_slot grows it first), an empty one taken when `create`:
+ * the probe, apart from the growth, so growing reinserts through it and map_slot never calls itself -- the
+ * verified compiler refuses recursion (R18, CSUB-5g). A table twice the size never grows while it is refilled. */
+static void **map_probe(mk_map *m, const char *k, size_t n, int create) {
+  size_t i = (size_t)(mk_hash(k, n) & (m->cap - 1u));
   for (;;) {
     mk_entry *e = &m->slots[i];
     if (!e->key) {
@@ -253,6 +242,23 @@ static void **map_slot(mk_ctx *mk, mk_map *m, const char *k, size_t n, int creat
     if (e->len == n && !memcmp(e->key, k, n)) return &e->val;
     i = (i + 1u) & (m->cap - 1u);
   }
+}
+
+static void **map_slot(mk_ctx *mk, mk_map *m, const char *k, size_t n, int create) {
+  if (create && (!m->slots || (m->n + 1u) * 10u >= m->cap * 7u)) {
+    mk_map grown;
+    size_t j;
+    grown.cap = m->slots ? m->cap * 2u : 64u;
+    grown.n = 0;
+    grown.slots = (mk_entry *)mk_alloc(mk, grown.cap * sizeof *grown.slots);
+    memset(grown.slots, 0, grown.cap * sizeof *grown.slots);
+    for (j = 0; m->slots && j < m->cap; j++)
+      if (m->slots[j].key)
+        *map_probe(&grown, m->slots[j].key, m->slots[j].len, 1) = m->slots[j].val;
+    *m = grown;
+  }
+  if (!m->slots) return NULL;
+  return map_probe(m, k, n, create);
 }
 
 static void *map_get(const mk_map *m, const char *k) {
@@ -295,6 +301,13 @@ typedef struct mk_file {
   size_t ntargets, cap_targets;
   mk_map tool_by_name, target_by_name;
 } mk_file;
+
+/* A target's name by its index: the element loaded first, then its member, so the verified compiler, which takes no
+ * member through a pointer element (CF-IDXARROW), reads it as any C compiler does (CSUB-5g). */
+static const char *target_name(const mk_file *bf, size_t i) {
+  const mk_target *t = bf->targets[i];
+  return t->name;
+}
 
 static int is_name(const char *s) {
   const char *p;
@@ -961,7 +974,7 @@ static mk_strs mk_check(mk_ctx *mk, mk_file *bf, mk_lowered *lw) {
         buf_printf(mk, &msg, "%s has %zu writers (", t->writes.v[k], ws->n);
         for (j = 0; j < ws->n; j++) {
           if (j) buf_puts(mk, &msg, ", ");
-          buf_puts(mk, &msg, bf->targets[ws->v[j]]->name);
+          buf_puts(mk, &msg, target_name(bf, ws->v[j]));
         }
         buf_putc(mk, &msg, ')');
         finding(mk, &out, "MK1", t->name, &msg);
@@ -993,13 +1006,13 @@ static mk_strs mk_check(mk_ctx *mk, mk_file *bf, mk_lowered *lw) {
     buf_puts(mk, &msg, "the targets form a cycle: ");
     for (k = 0; k < w.n; k++) {
       if (k) buf_puts(mk, &msg, " -> ");
-      buf_puts(mk, &msg, bf->targets[w.v[k]]->name);
+      buf_puts(mk, &msg, target_name(bf, w.v[k]));
     }
     if (w.n) {
       buf_puts(mk, &msg, " -> ");
-      buf_puts(mk, &msg, bf->targets[w.v[0]]->name);
+      buf_puts(mk, &msg, target_name(bf, w.v[0]));
     }
-    finding(mk, &out, "MK2", w.n ? bf->targets[w.v[0]]->name : "", &msg);
+    finding(mk, &out, "MK2", w.n ? target_name(bf, w.v[0]) : "", &msg);
   }
   /* MK3 footprint (static) */
   for (i = 0; i < bf->ntargets; i++) {
@@ -1518,12 +1531,12 @@ static int dry_run(mk_ctx *mk, const char *data, size_t len, const char *source,
       buf_printf(mk, &out, "wave %zu:", i + 1u);
       for (k = 0; k < waves[i].n; k++) {
         buf_putc(mk, &out, ' ');
-        buf_puts(mk, &out, bf.targets[waves[i].v[k]]->name);
+        buf_puts(mk, &out, target_name(&bf, waves[i].v[k]));
       }
       buf_putc(mk, &out, '\n');
     }
     for (i = 0; i < bf.ntargets; i++)
-      buf_printf(mk, &out, "%s %s %.16s (%s)\n", action[i], bf.targets[i]->name, tags[i],
+      buf_printf(mk, &out, "%s %s %.16s (%s)\n", action[i], target_name(&bf, i), tags[i],
                  why[i].p);
   }
   fwrite(out.p, 1u, out.n, stdout);

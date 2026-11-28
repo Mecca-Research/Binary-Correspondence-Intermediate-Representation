@@ -210,6 +210,14 @@ def _limits(abi: TargetABI) -> list[str]:
     ):
         out.append(f"#define {kind}_WIDTH {bits}")
     out.append("#endif")
+    # POSIX's longest path, glibc's 4096, where a POSIX feature macro asks for it -- C's own <limits.h> reserves no
+    # such name; the UCRT spells its own `_MAX_PATH` (CSUB-5g)
+    if not _windows(abi):
+        out += [
+            "#if defined(_POSIX_C_SOURCE) || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_DEFAULT_SOURCE)",
+            "#define PATH_MAX 4096",
+            "#endif",
+        ]
     return out
 
 
@@ -524,6 +532,7 @@ def _stdlib(abi: TargetABI) -> list[str]:
     ]
     if not _windows(abi):
         out.append("int mkstemp(char *);")  # POSIX's
+        out.append("char *realpath(const char *, char *);")  # ... and XSI's (CSUB-5g)
     return out
 
 

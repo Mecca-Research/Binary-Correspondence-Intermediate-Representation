@@ -1,0 +1,125 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM1 the oracle refuses a pointer member's step again",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "if lv.kind != \"var\" and not _is_scalar_member_lv(node.operand, lv) and not ptr_member:",
+   "new": "if lv.kind != \"var\" and not _is_scalar_member_lv(node.operand, lv):"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM2 the oracle steps a pointer member in place, as a named pointer's storage",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "lv.ct.kind == \"pointer\" and lv.kind == \"var\"\n",
+   "new": "lv.ct.kind == \"pointer\"\n"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM4 the twin refuses a pointer member's step again",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "if((f.is_ptr && (f.fp_sig || f.row_n>0 || step_dev(c,v,&f))) || farr(&f) || f.sidx>=0){",
+   "new": "if(f.is_ptr || farr(&f) || f.sidx>=0){"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM5 the twin steps a pointer member of a device's object through a loaded pointer",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(ok && o->kind==1 && o->f.is_ptr && plv_volatile(c,o)) return 0;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM6 the twin's chain takes no pointer member for a step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "if(mf.is_ptr && c->plv_ptr_leaf && !mf.fp_sig){",
+   "new": "if(0 && mf.is_ptr && c->plv_ptr_leaf && !mf.fp_sig){"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM7 the twin loads a char * member as an int8_t *",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    t->is_plain_char=(uint8_t)(fld->ptee_plain_char?1:0);",
+   "new": "    (void)0;"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM8 the oracle's R18 reaches only what the entry calls",
+   "path": "bcir/frontends/cfront/pipeline.py",
+   "old": "whole = _whole_unit_r18(lowered) if res.r18_ok else None",
+   "new": "whole = None"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM9 the oracle's whole-unit walk sees no cycle",
+   "path": "bcir/frontends/cfront/pipeline.py",
+   "old": "                return \"recursive call cycle\"\n",
+   "new": "                continue\n"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM10 the oracle does not know strerror",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "_STRING_ERROR = {\"strerror\": \"char *\"}",
+   "new": "_STRING_ERROR = {}"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM11 the twin does not know strerror",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "{\"strerror\",4},{0,0}};",
+   "new": "{0,0}};"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM12 the oracle's PATH_MAX glibc's 1024",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"#define PATH_MAX 4096\",",
+   "new": "\"#define PATH_MAX 1024\","
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM13 the twin declares no realpath",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    hput(b, \"char *realpath(const char *, char *);\");",
+   "new": "    (void)0;"
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "PM15 the oracle steps a pointer to a row, which both rails refuse",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            and not lv.ct.shape  # a pointer to a row, `T (*w)[N]`\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_members_of_array_elements_lower_and_refuse_alike_on_both_rails",
+   "label": "PM16 the oracle steps a pointer member of an array element, which both rails refuse",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            and not self._aos_rooted(node.operand)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_pointer_to_array_members_lower_and_refuse_alike_on_both_rails",
+   "label": "PM17 the twin steps a pointer to a row",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "(f.fp_sig || f.row_n>0 || step_dev(c,v,&f))",
+   "new": "(f.fp_sig || step_dev(c,v,&f))"
+  },
+  {
+   "expects": "test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails",
+   "label": "PM14 the build tool's map grows by calling itself again",
+   "path": "runtime/c/bcir_make.c",
+   "old": "*map_probe(&grown, m->slots[j].key, m->slots[j].len, 1) = m->slots[j].val;",
+   "new": "*map_slot(mk, &grown, m->slots[j].key, m->slots[j].len, 1) = m->slots[j].val;"
+  }
+ ]
+}

@@ -360,7 +360,10 @@ _STRING_WRITE = {
     "strncat": "char *",
     "strtok": "char *",
 }
-_STRING_TYPED = {**_STRING_READ, **_STRING_WRITE}
+# ... and `strerror`, an error number's message: a `char *` to the library's own storage, a libc edge like the rest
+# (CSUB-5g). The twin's `string_read` kinds it with the searches.
+_STRING_ERROR = {"strerror": "char *"}
+_STRING_TYPED = {**_STRING_READ, **_STRING_WRITE, **_STRING_ERROR}
 
 # <ctype.h> -- C's character classification and case mapping (C11 7.4), each an `int (int)`: libc edges like the
 # <string.h> routines, recognized by name and never declared by the emit, whose artifact includes the library's
@@ -4997,7 +5000,21 @@ class _FuncLowerer:
             raise CLowerError("inc/dec of a volatile/MMIO bitfield is a follow-on")
         # a volatile object -- through a pointer to volatile storage, `(*c)++` of `bcir_quarantine.h`'s counter, or an
         # element or a member of a device region -- steps as any memory scalar does: one read, one write (CSUB-2e)
-        if lv.kind != "var" and not _is_scalar_member_lv(node.operand, lv):
+        # a pointer member (`j->p++`, `--s.cur`) steps by its pointee as `j->p += 1` does: one read, the sum, one
+        # write -- of plain storage; of a volatile or a device's object it stays the fallback, as the twin's step does,
+        # and so does a pointer to a row (`p->w++` of a `T (*w)[N]`) and a member of an array element (`t[i].p++`),
+        # which both rails refuse (CSUB-2) (CSUB-5g)
+        ptr_member = (
+            lv.kind == "mem"
+            and lv.ct.kind == "pointer"
+            and isinstance(node.operand, cast.Member)
+            and not self._mmio(
+                lv.rid
+            )  # a volatile object's storage is a device's, so this holds it too
+            and not lv.ct.shape  # a pointer to a row, `T (*w)[N]`
+            and not self._aos_rooted(node.operand)
+        )
+        if lv.kind != "var" and not _is_scalar_member_lv(node.operand, lv) and not ptr_member:
             raise CLowerError("inc/dec of this lvalue form is a follow-on")  # a non-scalar member
         if lv.ct.atomic:  # an `_Atomic` object: one read-modify-write, no snapshot or re-read
             kind = ("pre" if node.prefix else "post") + ("inc" if node.op == "+" else "dec")
@@ -5016,7 +5033,9 @@ class _FuncLowerer:
         else:
             old = cur  # a memory read is already a fresh declared temp
         one = self._rvalue(cast.IntLit(1))
-        if lv.ct.kind == "pointer":  # a pointer steps by sizeof(*p): c.ptradd MUTATES the
+        if (
+            lv.ct.kind == "pointer" and lv.kind == "var"
+        ):  # a pointer steps by sizeof(*p): c.ptradd MUTATES the
             self._emit(
                 "c.ptradd"
                 if node.op == "+"

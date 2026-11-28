@@ -357,6 +357,7 @@ typedef struct {
                                              * between folds, released by the failure path too */
   char err[256]; int failed;
   int plv_row;                    /* plv_chain stopped at a row of a pointer-to-array member, `p->m[k]` (CSUB-2d) */
+  int plv_ptr_leaf;               /* a step's chain: a pointer member is its object, `o.pj->p++` (CSUB-5g) */
   int ptr_elem;                   /* member_arr_index stops at the subscript of a pointer element (`load_member_ptr`) */
   uint32_t row_rid;               /* the last row's value `row_value` and `member_row_value` made (CSUB-2d) */
   int typeof_row;                 /* p_typeof_expr's operand was that row */
@@ -3012,6 +3013,8 @@ static uint32_t tempptr_field(CC *c, const field *fld){
   if(c->fn->n_res){ bcir_resource *t=&c->fn->res[c->fn->n_res-1];
     t->is_signed=(uint8_t)(fld->signd?1:0); t->is_float=(uint8_t)(fld->ptee_float?1:0);
     t->is_atomic=(uint8_t)(fld->ptee_atomic?1:0);          /* a pointer to `_Atomic` storage (CF-ATOMIC) */
+    t->is_plain_char=(uint8_t)(fld->ptee_plain_char?1:0);  /* a `char *` member loads as a `char *`, not an `int8_t *`
+                                                           * no compiler compares with the `char *` beside it (CSUB-5g) */
     t->row_n=(uint16_t)fld->row_n;                        /* `T (*m)[N]`: a pointer to a row (CSUB-2d) */
     t->ptr_depth=(uint8_t)(fld->ptee_depth>1?fld->ptee_depth:1);   /* `T **m`: a `T **`, as loaded (CSUB-2) */
     if(fld->ptee_sidx>=0) fits(c,t->agg,sizeof t->agg,"%s %s",
@@ -4689,6 +4692,9 @@ static int plv_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
       uint32_t ix=member_arr_index(c,&mf); if(c->failed) return 0;
       if(is(c,"[")||is(c,".")||is(c,"->")) return 0;
       o->kind=5; o->b=b; o->f=mf; o->idx=ix; return 1; }
+    if(mf.is_ptr && c->plv_ptr_leaf && !mf.fp_sig){   /* a step's pointer member: its object, stepped by its
+                                                       * pointee as `p->q += 1` is (CSUB-5g) */
+      o->kind=1; o->b=b; o->f=mf; return 1; }
     if(mf.is_ptr || farr(&mf) || mf.sidx>=0) return 0;   /* a pointer, array or struct member */
     o->kind=1; o->b=b; o->f=mf;
     return 1;
@@ -4698,6 +4704,14 @@ static int plv_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
 /* The object is volatile, or the pointer reaches a device region -- a struct holding volatile storage (the
  * oracle's `_mmio` of the lvalue's base): an extra access on a re-read, so both rails leave the form to the
  * statement paths. */
+static int plv_volatile(CC *c, const plv *lv);
+/* plv_chain for a step: a pointer member is an object too, of plain storage -- of a volatile or a device's object it
+ * is left to the fallback, as the oracle's `_incdec_value` leaves it (CSUB-5g). */
+static int plv_step_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
+  c->plv_ptr_leaf=1; int ok=plv_chain(c,ptr,psidx,pfld,o); c->plv_ptr_leaf=0;
+  if(ok && o->kind==1 && o->f.is_ptr && plv_volatile(c,o)) return 0;
+  return ok;
+}
 static int plv_volatile(CC *c, const plv *lv){
   const bcir_resource *r=res_of(c->fn,lv->b.rid);
   if(r && r->domain==BCIR_DOM_MMIO) return 1;
@@ -4928,7 +4942,9 @@ static int ctype_call(const char *s, int n) {
 }
 static int string_read(const char *s, int n) {
   static const struct { const char *name; int kind; } M[]={{"memcmp",1},{"strcmp",1},{"strncmp",1},{"memchr",2},
-                                                            {"strchr",4},{"strrchr",4},{"strstr",4},{"strlen",3},{0,0}};
+                                                            {"strchr",4},{"strrchr",4},{"strstr",4},{"strlen",3},
+                                                            {"strerror",4},{0,0}};   /* `strerror`'s `char *`, the
+                                                            * oracle's `_STRING_ERROR` (CSUB-5g) */
   for(int i=0;M[i].name;i++) if((int)strlen(M[i].name)==n && !strncmp(M[i].name,s,(size_t)n)) return M[i].kind;
   return string_write(s,n);
 }
@@ -8149,7 +8165,7 @@ static int elem_ptr_incdec(CC *c, venv *v, const field *arr, uint32_t idx, const
                            char ch, uint32_t *out){
   if(!is(c,"->") && !is(c,"[")) return 0;
   plv lv; uint32_t ptr = arr ? emit_member_index_field(c,v,arr,idx,sub) : emit_index_field(c,v,idx,sub);
-  int ok=plv_chain(c,ptr,sub->ptee_sidx,*sub,&lv);
+  int ok=plv_step_chain(c,ptr,sub->ptee_sidx,*sub,&lv);
   if(c->failed) return -1;
   if(!ok || !incdec_settle(c,prefix,save)) return 0;   /* a device's object too: one read, one write (CSUB-2e) */
   *out=plv_incdec(c,&lv,prefix,ch); return 1;
@@ -8254,7 +8270,7 @@ static BCIR_NOINLINE int incdec_value(CC *c, uint32_t *out){   /* out of p_unary
         if(pre) c->i++;
         uint32_t dp; field df; plv lv;
         if(!paren_deref_base(c,&dp,&df)) return 0;
-        int ok=plv_chain(c,dp,df.ptee_sidx,df,&lv);
+        int ok=plv_step_chain(c,dp,df.ptee_sidx,df,&lv);
         if(c->failed) return 0;
         if(!ok || !incdec_settle(c,pre,dsave)){
           c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=dsave; return 0; }
@@ -8384,7 +8400,7 @@ static BCIR_NOINLINE int incdec_value(CC *c, uint32_t *out){   /* out of p_unary
                                                            * `s->pa[k][i]++` (CSUB-2) */
       plv lv; uint32_t ptr=load_member_ptr(c,v,&f);
       if(c->failed) return 0;
-      int ok=plv_chain(c,ptr,f.ptee_sidx,f,&lv);
+      int ok=plv_step_chain(c,ptr,f.ptee_sidx,f,&lv);
       if(c->failed) return 0;
       if(!ok || !incdec_settle(c,prefix,save)){            /* a device's object too: one read, one write (CSUB-2e) */
         c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
@@ -8408,7 +8424,10 @@ static BCIR_NOINLINE int incdec_value(CC *c, uint32_t *out){   /* out of p_unary
       *out=member_elem_incdec(c,v,&f,idx,soa,&sub,prefix,ch);
       return 1;
     }
-    if(f.is_ptr || farr(&f) || f.sidx>=0){ c->i=save; return 0; }   /* a non-scalar leaf -> fallback */
+    /* a pointer member steps by its pointee, as `j->p += 1` does: read, the sum, write -- of plain storage; of a volatile
+     * or a device's object it stays the fallback, as the oracle's `_incdec_value` keeps it (CSUB-5g) */
+    if((f.is_ptr && (f.fp_sig || f.row_n>0 || step_dev(c,v,&f))) || farr(&f) || f.sidx>=0){ c->i=save; return 0; }   /* a non-scalar
+                                                           * leaf -> fallback */
     if(!incdec_settle(c,prefix,save)){                    /* a deeper lvalue / not stepped -> roll back */
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
     if(f.bit_w && step_dev(c,v,&f)){ fail(c,"inc/dec of a volatile/MMIO bitfield is a follow-on"); return 0; }   /* the
@@ -12540,7 +12559,8 @@ static const char *lk_includes(CC *c, bcir_cfront_result *out){
   static const char *const stddef_names[]={"size_t","ptrdiff_t","wchar_t","max_align_t",0};
   static const char *const mem_calls[]={"memcpy","memmove","memset",0};
   static const char *const str_calls[]={"memcpy","memmove","memset","memcmp","strcmp","strncmp","memchr","strchr",
-                                        "strrchr","strstr","strlen","strcpy","strncpy","strcat","strncat","strtok",0};
+                                        "strrchr","strstr","strlen","strcpy","strncpy","strcat","strncat","strtok",
+                                        "strerror",0};
                                                                       /* `_STRING_CALLS` */
   static const char *const va_names[]={"va_list","va_start","va_arg","va_end","va_copy",0};
   static const char *const bool_names[]={"bool","true","false",0};

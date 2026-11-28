@@ -1204,8 +1204,8 @@
    "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",
    "label": "CS2V1 oracle: a step of a volatile object through a pointer, an element or a member refused again",
    "path": "bcir/frontends/cfront/lower.py",
-   "old": "        if lv.kind != \"var\" and not _is_scalar_member_lv(node.operand, lv):\n",
-   "new": "        if lv.kind != \"var\" and not (_is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)):\n"
+   "old": "        if lv.kind != \"var\" and not _is_scalar_member_lv(node.operand, lv) and not ptr_member:\n",
+   "new": "        if lv.kind != \"var\" and not (_is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)) and not ptr_member:\n"
   },
   {
    "expects": "test_volatile_objects_stepped_and_reached_through_a_pointer_sum_lower_and_refuse_alike_on_both_rails",

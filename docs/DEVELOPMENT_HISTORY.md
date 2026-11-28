@@ -313,6 +313,23 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-28 — CSUB-5g: a pointer member's step, R18 over every function, and the build tool under the verified compiler.**
+  - `j->p++` steps a pointer member by its pointee on both rails, as `j->p += 1` does. Of a volatile or a device's
+    object it stays refused alike.
+  - The twin had loaded a `char *` member as an `int8_t *`; it keeps the plain `char` now.
+  - CF-STEP's one refused for-step, `s.p++`, now lowers alike and runs as Clang's build; its table refuses a row
+    pointer's step in its place.
+  - The oracle's R18 now walks every function. Recursion the entry never reaches, `bcir_make.c`'s `map_slot` among
+    it, had lowered clean on the oracle and been refused on the twin.
+  - `strerror`, `realpath` and a feature-gated `PATH_MAX` are the library's on both rails.
+  - In the unit: a target's name read through a named pointer, and a map that grows without calling itself.
+    `make_parity.py`: 401 trees, 0 differ.
+  - The ratchet moves to **65 of 68**.
+  - **Standing faults.** `cfront-csub5g.json`, 16, over this slice's test and the two CSUB-2 tests whose refusals
+    the step must keep (a pointer to a row, a member of an array element), each swept RED; CS2V1 re-anchored and
+    swept. The oracle's volatile test beside its device test survived as an equivalent mutant (a volatile object's
+    storage is a device's) and was dropped with its line.
+
 - **2026-11-28 — CSUB-5f: `<sys/stat.h>` and `<dirent.h>` on both rails.**
   - `struct stat` and `struct dirent` are laid out as glibc lays them out: its x86 layout on x86-64 and i386, and its
     generic Linux one on aarch64 and riscv64. Both rails choose the layout from the target's pointer size and its

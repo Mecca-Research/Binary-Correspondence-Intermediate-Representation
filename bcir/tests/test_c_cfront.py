@@ -13215,6 +13215,14 @@ _LINKABLE_HEADERS = {
         "struct stat {",
         ("#include <sys/stat.h>", "#include <dirent.h>", "#include <math.h>"),
     ),
+    # ... and `strerror`, `<string.h>`'s, and `realpath`, a declaration of the artifact's own (CSUB-5g)
+    "path and error": (
+        "#include <stdint.h>\n#include <stdlib.h>\n#include <string.h>\nuint32_t f(char *buf, uint32_t x) {"
+        ' const char *m = strerror((int)(x & 7u)); char *r = realpath("/", buf);'
+        " return (uint32_t)strlen(m) + (uint32_t)(r != 0); }\n",
+        "#include <string.h>",
+        ("#include <math.h>",),
+    ),
     "aligned_alloc": (
         "#include <stdint.h>\n#include <stdlib.h>\nuint32_t f(uint32_t n) { uint32_t *p = aligned_alloc(16, 16);"
         " return (uint32_t)(p != 0) + n; }\n",
@@ -16798,6 +16806,155 @@ def test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_eve
         _emits_compile_strictly(d, r.source, {"oracle": oracle_emit, "twin": twin_emit})
 
 
+_CSUB5G_HEAD = (
+    "#include <stdint.h>\nstruct J { const char *p; const char *end; uint32_t k; };\n"
+    'struct O { struct J in; struct J *pj; uint32_t *w; };\nstatic const char text[] = "abcdefgh";\n'
+)
+#: A step of a pointer member, `j->p++`, by its pointee as `j->p += 1` is: as a statement and as a value, prefix and
+#: postfix, through a named pointer, a struct value, a nested member, a loaded pointer member, an array element's and
+#: a dereferenced `T **`'s, in a loop's body -- each run as the host compiler's build on both rails
+_CSUB5G_STEPS = tuple(
+    _CSUB5G_HEAD + body
+    for body in (
+        "uint32_t f(uint32_t x){ struct J j0 = { text, text + 8, 0u }; struct J *j = &j0; j->p++; ++j->p;"
+        " return (uint32_t)(j->p - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct J j = { text, text + 8, 0u }; j.p++; j.p++; --j.p;"
+        " return (uint32_t)(j.p - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct J j0 = { text, text + 8, 0u }; struct J *j = &j0;"
+        " unsigned char c = (unsigned char)*j->p++; unsigned char d = (unsigned char)*++j->p;"
+        " return c * 1000u + d + (uint32_t)(j->p - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct J j0 = { text + 4, text + 8, 0u }; struct J *j = &j0; const char *a = j->p--;"
+        " const char *b = --j->p; return (uint32_t)(a - text) * 10u + (uint32_t)(b - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ uint32_t v[4] = { 1u, 2u, 3u, 4u }; struct O o; o.w = v; o.w++; uint32_t a = *o.w;"
+        " o.w += 1; return a * 10u + *o.w + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct O o; o.in.p = text; o.in.p++; o.in.p++; struct O *q = &o; q->in.p++;"
+        " return (uint32_t)(q->in.p - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct J j0 = { text, text + 8, 0u }; struct O o; o.pj = &j0; o.pj->p++;"
+        " struct O *q = &o; q->pj->p++; return (uint32_t)(j0.p - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct J j0 = { text, text + 8, 0u }; struct O o; o.pj = &j0; struct O *q = &o;"
+        " const char *a = q->pj->p++; const char *b = ++q->pj->p;"
+        " return (uint32_t)(a - text) * 10u + (uint32_t)(b - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct J j0 = { text, text + 8, 0u }; struct O a[2]; a[1].pj = &j0; a[1].pj->p++;"
+        " return (uint32_t)(j0.p - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct J j0 = { text, text + 8, 0u }; struct O o; o.pj = &j0; struct O *q = &o;"
+        " struct O **qq = &q; (*qq)->pj->p++; return (uint32_t)(j0.p - text) + (x & 0u); }\n",
+        "uint32_t f(uint32_t x){ struct J j0 = { text, text + 8, 0u }; struct J *j = &j0; uint32_t n = 0u;"
+        " while (j->p < j->end && *j->p != (char)(100u + (x & 0u))) { j->p++; n++; } return n; }\n",
+        # a `char *` member read, beside the `char *` it is compared with: the twin had typed it an `int8_t *`
+        "uint32_t f(uint32_t x){ struct J j = { text + 2, text + 8, 0u }; return (uint32_t)(j.p - text) + (x & 0u); }\n",
+    )
+)
+#: ... and of a volatile or a device's object, a re-read: refused alike, as a scalar's narrowing step is
+_CSUB5G_STEP_REFUSED = (
+    (
+        _CSUB5G_HEAD + "uint32_t f(volatile struct J *j){ j->p++; return 0u; }\n",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+    (
+        _CSUB5G_HEAD
+        + "struct D { volatile struct J *pj; };\nuint32_t f(struct D *d){ d->pj->p++; return 0u; }\n",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+    (
+        _CSUB5G_HEAD
+        + "uint32_t f(uint32_t x){ volatile struct J j; j.p = text; j.p++; return x; }\n",
+        "inc/dec of this lvalue form is a follow-on",
+    ),
+)
+#: R18 over every function: recursion the entry never reaches, a self-call and a mutual pair, beside a unit of two
+#: roots that is sound and one calling a declared function the linker resolves (a typed external edge)
+_CSUB5G_R18 = (
+    ("#include <stdint.h>\nstatic uint32_t h(uint32_t n){ return n ? h(n - 1u) : 0u; }\n"
+     "uint32_t g(uint32_t x){ return h(x); }\nuint32_t f(uint32_t x){ return x + 1u; }\n", 0),
+    ("#include <stdint.h>\nuint32_t b(uint32_t n);\nuint32_t a(uint32_t n){ return n ? b(n - 1u) : 0u; }\n"
+     "uint32_t b(uint32_t n){ return n ? a(n - 1u) : 1u; }\nuint32_t f(uint32_t x){ return x + 1u; }\n", 0),
+    ("#include <stdint.h>\nstatic uint32_t h(uint32_t n){ return n + 2u; }\nuint32_t g(uint32_t x){ return h(x); }\n"
+     "uint32_t f(uint32_t x){ return h(x) + 1u; }\n", 1),
+    ("#include <stdint.h>\nuint32_t u(uint32_t);\nuint32_t g(uint32_t x){ return u(x); }\n"
+     "uint32_t f(uint32_t x){ return x + 1u; }\n", 1),
+)  # fmt: skip
+#: `strerror`, `realpath` and POSIX's `PATH_MAX`, as the build tool calls them
+_CSUB5G_LIBC = (
+    "#define _XOPEN_SOURCE 700\n#include <stdint.h>\n#include <limits.h>\n#include <stdlib.h>\n#include <string.h>\n"
+    '_Static_assert(PATH_MAX == 4096, "PATH_MAX");\n'
+    "uint32_t f(uint32_t x){ char buf[PATH_MAX]; const char *m = strerror(2); uint32_t n = (uint32_t)strlen(m);\n"
+    '  char *r = realpath("/", buf); return n + (r ? (uint32_t)r[0] : 7u) + (x & 0u); }\n'
+)
+
+
+def test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails():
+    """CSUB-5g. A step of a pointer member, `j->p++`, steps it by its pointee, as `j->p += 1` does: one read, the sum,
+    one write, its value the old pointer or the new one. Both rails had refused it (`inc/dec of this lvalue form is a
+    follow-on`), and the build tool's JSON reader steps its cursor so. Of a volatile or a device's object it stays
+    refused alike. On the twin a `char *` member had loaded as an `int8_t *`, which no compiler compares with the
+    `char *` beside it. Each form lowers alike, runs as the host compiler's build on both rails and compiles as C11
+    strictly. R18 now holds every function of a unit on the oracle as on the twin: the composite plan reached only
+    what the entry calls, so recursion elsewhere lowered clean on the oracle alone. `strerror`, `realpath` and
+    `PATH_MAX` are the library's on both rails. With them, and with two changes in the unit -- a target's name read
+    through a named pointer (CF-IDXARROW stays refused), and a map that grows without calling itself --
+    `bcir_make.c` lowers to one digest on both rails."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    host = _glibc_host_target() is not None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_CSUB5G_STEPS + (_CSUB5G_LIBC,)):
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src[-300:], summary)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"s{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src[-300:], twin_summary, summary)
+            if not host:
+                continue
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(r.source, emit, entry) == "MATCH", (rail, src[-300:], emit[-500:])
+            _emits_compile_strictly(d, r.source, {"oracle": oracle_emit, "twin": twin_emit})
+        for n, (src, why) in enumerate(_CSUB5G_STEP_REFUSED):
+            assert _oracle_refusal(src) == why, (src, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                src[-200:],
+                run.stdout[:300],
+            )
+        cc = _build_bcir_cc(_session_build_dir()) if _CC else None
+        for n, (src, ok) in enumerate(_CSUB5G_R18):
+            summary = _summary_line(compile_unit(src, check_clang=False))
+            assert f" ok={ok} " in summary, (src, summary)
+            if cc is None:
+                continue
+            path = os.path.join(d, f"g{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([cc, path], capture_output=True, text=True)
+            out = run.stdout + run.stderr
+            assert (run.returncode == 0) == bool(ok), (src, out)
+            assert ok or "R18: recursive call cycle" in out, (src, out)
+            if ok:
+                assert out.split(": ", 1)[-1].strip() == summary, (src, out, summary)
+    text = open(os.path.join(_C, "bcir_make.c"), encoding="utf-8").read()
+    summary = _summary_line(
+        compile_unit(text, check_clang=False, search_paths=[_C], filename="bcir_make.c")
+    )
+    assert " ok=1 " in summary, summary
+    if _CC:
+        cc = _build_bcir_cc(_session_build_dir())
+        run = subprocess.run(
+            [cc, "-I", _C, os.path.join(_C, "bcir_make.c")], capture_output=True, text=True
+        )
+        assert run.returncode == 0 and run.stdout.split(": ", 1)[-1].strip() == summary, (
+            run.stdout,
+            summary,
+        )
+
+
 def test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails():
     """CSUB-5d. `<stdatomic.h>`'s `atomic_flag` is one text on both rails for each of the five targets, a one-byte
     structure the emit names by its typedef (`atomic_flag *`, never the frontend's own member or tag). A static flag, an
@@ -16946,6 +17103,8 @@ _STEP_LOWERED = tuple(
         "struct t s = {buf, 0}; struct t *t = &s; uint32_t r = 0; for (t->p = buf; t->p != buf + 4; t->p = t->p + 1)"
         " r += *t->p; return r + k;",
         "struct t s = {buf, 0}; uint32_t x = 0, r = 0; for (; x < 4u; x++, s.p += 1) r += *s.p; return r + k;",
+        # ... and a pointer member's own step, which both rails refused until CSUB-5g
+        "struct t s = {buf, 0}; uint32_t x = 0, r = 0; for (; x < 4u; x++, s.p -= 0, s.p++) r += *s.p; return r + k;",
         "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->b = 0; t->b < 4u; t->b += 1u) r++; return r + k;",
         "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->n = 0; t->n < 4u; t->n = t->n + 1u) r++; return r + k;",
         "struct t s = {0}; struct t *t = &s; uint32_t r = 0; for (t->bf = 0; t->bf < 4u; t->bf += 1u) r++; return r + k;",
@@ -16974,10 +17133,11 @@ _STEP_LOWERED = tuple(
 )
 # ... and a step neither rail lowers is refused for one reason on both: never a part of it lowered, the rest dropped
 _STEP_REFUSED = (
+    # the step of a pointer to a row, which neither rail steps by the row (CSUB-2d)
     (
         _STEP_HDR
-        + "uint32_t f(uint32_t k){ struct t s = {buf, 0}; uint32_t x = 0, r = 0; for (; x < 4u; x++, s.p -= 0,"
-        " s.p++) r += *s.p; return r + k; }\n",
+        + "struct w { uint16_t (*w)[3]; };\nuint32_t f(uint32_t k){ static uint16_t m[2][3]; struct w s; s.w = m;"
+        " uint32_t x = 0, r = 0; for (; x < 2u; x++, s.w++) r += x; return r + k; }\n",
         "inc/dec of this lvalue form is a follow-on",
     ),
 )

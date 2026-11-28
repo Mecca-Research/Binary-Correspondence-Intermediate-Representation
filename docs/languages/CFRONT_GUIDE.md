@@ -396,6 +396,8 @@ _mm_sfence();                      //                   store (release) fence ->
   local variable** (`RET (*f)(PARAMS) = fn;`, reassignable, called indirectly, return-type-signed).
   A function-pointer member of a struct-valued member (`s->in.fn(x)`, `s.in.fn(x)`) has no dispatch base of its
   own: both rails read it at its offset and call through the value (CSUB-6a).
+  A pointer member steps by its pointee, `j->p++` as `j->p += 1` (CSUB-5g); of a volatile or a device's object the
+  step stays refused, as a narrowing step's re-read is.
   A call through a pointer to a `void` function has no value, as a direct void call has none
   (`cb();`, `c ? cb() : (void)0`, `return cb();` in a void function). `c ? f : g` whose arms are
   function designators or function-pointer objects is a pointer to their one function type; arms that

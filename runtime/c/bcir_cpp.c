@@ -1134,6 +1134,9 @@ static void h_limits(const CppState *st, hbuf *b) {
     static const int w[] = {8, 8, 8, 16, 16, 32, 32, 0, 0, 64, 64};
     for (int i = 0; k[i]; i++) hput(b, "#define %s_WIDTH %d", k[i], w[i] ? w[i] : long_bits); }
   hput(b, "#endif");
+  if (!st->msvc) {   /* POSIX's longest path, glibc's, where a POSIX feature macro asks for it (the oracle's, CSUB-5g) */
+    hput(b, "#if defined(_POSIX_C_SOURCE) || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_DEFAULT_SOURCE)");
+    hput(b, "#define PATH_MAX 4096"); hput(b, "#endif"); }
 }
 /* <float.h>'s limits, as Clang predefines them (the oracle's `_FLT`, `_DBL` and `_LDBL`): one row a name and a value
  * per format -- `float`, `double`, and `long double`'s x87 80-bit one (x86-64 and i386 Linux) and IEEE binary128
@@ -1295,7 +1298,10 @@ static void h_stdlib(const CppState *st, hbuf *b) {   /* the allocator's four ar
     "void *bsearch(const void *, const void *, size_t, size_t, int (*)(const void *, const void *));",
     "int abs(int);", "long labs(long);", 0};
   h_lines(b, decls);
-  if (!st->msvc) hput(b, "int mkstemp(char *);");  /* POSIX's */
+  if (!st->msvc) {
+    hput(b, "int mkstemp(char *);");                  /* POSIX's */
+    hput(b, "char *realpath(const char *, char *);");  /* ... and XSI's (CSUB-5g) */
+  }
 }
 static void h_errno(const CppState *st, hbuf *b) {    /* the codes both libraries give the same values */
   static const struct { const char *n; int v; } codes[] = {

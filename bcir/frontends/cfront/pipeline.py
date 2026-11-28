@@ -195,6 +195,40 @@ def verify_cfront_lowering(lf, emit_text: str) -> list:
     return []
 
 
+def _whole_unit_r18(lowered: LoweredUnit) -> str | None:
+    """R18 over every function of the unit, as the twin's verifier checks it (`bcir_verify_unit`): each internal
+    callee defined, and no recursive call cycle. The composite plan reaches only what the entry calls, so a function
+    the entry never reaches -- a library unit's other roots -- had gone unchecked: a self-call there lowered clean
+    on the oracle and was refused on the twin (CSUB-5g). None when the call graph is sound; else the violation."""
+    functions = lowered.functions
+    callees = {
+        name: [c.op.split(":", 1)[1] for c in lf.claims if c.op.startswith("c.call:")]
+        for name, lf in functions.items()
+    }
+    for name, calls in callees.items():
+        for callee in calls:
+            if callee not in functions:
+                return f"call to undefined function {callee}"
+    state: dict = {}  # 1 on the walk's stack, 2 finished: an iterative depth-first walk, no recursion of its own
+    for root in functions:
+        if state.get(root):
+            continue
+        state[root] = 1
+        stack = [(root, iter(callees[root]))]
+        while stack:
+            node, it = stack[-1]
+            nxt = next(it, None)
+            if nxt is None:
+                state[node] = 2
+                stack.pop()
+            elif state.get(nxt) == 1:
+                return "recursive call cycle"
+            elif not state.get(nxt):
+                state[nxt] = 1
+                stack.append((nxt, iter(callees[nxt])))
+    return None
+
+
 def compile_unit(
     source: str,
     *,
@@ -338,6 +372,11 @@ def compile_unit(
         except Exception as e:  # noqa: BLE001 -- recursion / undefined callee == an R18 violation
             res.r18_ok = False
             res.diagnostics.append(Diagnostic("R18", f"call-graph integrity: {e}"))
+        # ... and every function the entry never reaches, as the twin's verifier checks them (CSUB-5g)
+        whole = _whole_unit_r18(lowered) if res.r18_ok else None
+        if whole is not None:
+            res.r18_ok = False
+            res.diagnostics.append(Diagnostic("R18", f"call-graph integrity: {whole}"))
 
     # --- behaviour equivalence vs Clang (clang-gated; host ABI only -- a cross-target layout is not
     #     byte-compatible with the host compiler, so equivalence there would be meaningless) ---

@@ -622,9 +622,8 @@ clean, each to one digest on both rails.
 
 The count is **61 of 68**: the quarantine's two units compile clean, each to one digest on both rails. What the rest
 stop at, as the ratchet records it:
-- `<sys/stat.h>`'s `struct stat` and `<dirent.h>` (`bcir_make.c`): POSIX's host interface past the C library, whose
-  layouts differ by target. Past them is a member through a pointer element, `bf->targets[i]->name`, which both rails
-  refuse by design today (CF-IDXARROW). Before them was a twin defect, now fixed (CSUB-5e, below);
+- `bcir_make.c`: POSIX's file status and directory headers, then a member through a pointer element and a pointer
+  member's step -- each landed below (CSUB-5e to CSUB-5g), and the unit compiles clean;
 - a multi-dimensional member array used as a value (`bcir_cpp.c`), and past it the `#if` evaluator's recursive
   descent and the recursion per `#include`, which R18 refuses by design: the unit needs explicit stacks, as
   `bcir_per.c` did.
@@ -671,6 +670,38 @@ is the slice's remainder.
 
 `bcir_make.c` now stops at `bf->targets[i]->name`: a member through a pointer element (CF-IDXARROW), which both rails
 refuse alike, as `unsupported base expression Index`. The count stays **64 of 68**.
+
+**CSUB-5g: the build tool under the verified compiler (2026-11-28).** Past CF-IDXARROW, `bcir_make.c` needed five
+things, and three were the subset's:
+- **A step of a pointer member, `j->p++`.** Both rails had refused it (`inc/dec of this lvalue form is a follow-on`),
+  while `j->p += 1` lowered. Both now step it by its pointee as `j->p += 1` does: one read, the sum, one write. Its
+  value is the old pointer or the new one. That holds through a named pointer, a struct value, a nested member, a
+  loaded pointer member (`o.pj->p++`), an array element's pointer to a struct (`a[i].pj->p++`) and a dereferenced
+  `T **`'s. Three forms stay refused alike:
+  - a pointer member of a volatile or a device's object, as a scalar's narrowing step is, since its step would
+    re-read the object;
+  - a pointer to a row (`p->w++` of a `T (*w)[N]`), which CSUB-2d refuses;
+  - a pointer member of an array element itself (`t[i].p++`), which CSUB-2c refuses.
+- **A twin defect the step exposed.** The twin loaded a `char *` member as an `int8_t *`, which no compiler compares
+  with the `char *` beside it. It now keeps the member's plain `char`.
+- **R18 over every function, on the oracle.** The oracle's composite plan reaches only what the entry calls. A
+  function the entry never reaches went unchecked there, so recursion in it lowered clean on the oracle and was
+  refused on the twin. `bcir_make.c`'s `map_slot` was one: it calls itself to reinsert when it grows. The oracle now
+  walks every function, as the twin's verifier does. A call to a declared function stays a typed external edge on
+  both rails.
+- **`strerror`, `realpath` and `PATH_MAX`.** `strerror` is a typed `<string.h>` edge, and `realpath` is declared beside
+  `mkstemp`, on Linux. `PATH_MAX` is glibc's 4096, defined only where a POSIX feature macro asks for it, since C's own
+  `<limits.h>` reserves no such name.
+- **Two changes in the unit**, as `bcir_per.c` and `bcir_kplan.c` took theirs:
+  - a target's name is read through a named pointer (`target_name`), so CF-IDXARROW stays refused by design;
+  - `map_slot` reinserts through a probe that never grows (`map_probe`), so it never calls itself. A table twice the
+    size is never full while it is refilled, so the behaviour is unchanged.
+
+  `make_parity.py` over 401 generated trees gives no difference from the oracle's `bcir-make`.
+
+`test_a_pointer_member_steps_and_the_build_tool_lowers_alike_on_both_rails` holds each step form, run as Clang's build
+on both rails and compiled as C11 strictly, along with the refusals, the R18 units and the library edges. The count is
+**65 of 68**: `bcir_make.c` compiles R1-R18 clean, to one digest on both rails.
 
 ### 4.4 CSUB-3, slice by slice
 
