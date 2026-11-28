@@ -5350,6 +5350,12 @@ class _FuncLowerer:
         "atomic_fetch_xor_explicit": ("c.c11atom.fetch_xor", Opcode.ATOMIC_XOR, 2, 1),
         "atomic_compare_exchange_strong_explicit": ("c.c11atom.cas_strong", Opcode.CMPXCHG, 3, 2),
         "atomic_compare_exchange_weak_explicit": ("c.c11atom.cas_weak", Opcode.CMPXCHG, 3, 2),
+        # the flag's operations (7.17.8), each form: a test-and-set reads the flag and returns whether it was set, a
+        # clear stores to it (CSUB-5d)
+        "atomic_flag_test_and_set_explicit": ("c.c11atom.flag_tas", Opcode.ATOMIC_ADD, 1, 1),
+        "atomic_flag_clear_explicit": ("c.c11atom.flag_clear", Opcode.STORE, 1, 1),
+        "atomic_flag_test_and_set": ("c.c11atom.flag_tas", Opcode.ATOMIC_ADD, 1, 0),
+        "atomic_flag_clear": ("c.c11atom.flag_clear", Opcode.STORE, 1, 0),
     }
     # ... and the implicit forms' operands: each generic takes its object and its operands, so `atomic_load()`
     # is refused as a call of any other arity is (CF-ARGC), where it had raised an IndexError
@@ -5372,6 +5378,7 @@ class _FuncLowerer:
         "c.c11atom.store": (frozenset({1, 2, 4}),),
         "c.c11atom.cas_strong": (frozenset(), frozenset({3, 4})),
         "c.c11atom.cas_weak": (frozenset(), frozenset({3, 4})),
+        "c.c11atom.flag_clear": (frozenset({2, 4}),),  # no acquire or acq_rel (7.17.8.2p2)
     }
     # C11 <stdatomic.h> generics on _Atomic objects -> the same ATOMIC opcodes, but emitted as the C11
     # functions (which accept an _Atomic* -- the __atomic_* builtins do not).
@@ -5411,13 +5418,15 @@ class _FuncLowerer:
             raise CLowerError(ATOMIC_ORDER_INVALID)
         ptr, vals = actuals[0], actuals[1:n]
         dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
-        if op == "c.c11atom.store":
+        if op in ("c.c11atom.store", "c.c11atom.flag_clear"):
             self._emit(
                 op, oc, (ptr, *vals), (), lane=Lane.A, domain=dom, hazard="atomic", imm=orders
             )
             return ptr
-        if op.startswith("c.c11atom.cas_"):
-            t = self._temp(scalar("_Bool"), "c11cas")  # the comparison result is _Bool
+        if op.startswith("c.c11atom.cas_") or op == "c.c11atom.flag_tas":
+            t = self._temp(
+                scalar("_Bool"), "c11cas"
+            )  # the comparison's result, the flag's: a _Bool
         else:
             t = self._temp(self._atomic_value_type(ptr), "c11")
         return self._emit(

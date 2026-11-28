@@ -1189,6 +1189,7 @@ static void h_stdatomic(hbuf *b) {
   for (int k = 0; T[k]; k++) hput(b, "#define ATOMIC_%s_LOCK_FREE 2", T[k]);
   hput(b, "#define ATOMIC_FLAG_INIT { 0 }");
   hput(b, "#define kill_dependency(y) (y)");
+  hput(b, "__bcir_builtin typedef struct { _Bool __bcir_flag; } atomic_flag;");   /* the flag (CSUB-5d) */
 }
 /* C23's bit utilities (7.18), the oracle's `stdheaders._stdbit` line for line: each typed function a `static inline`
  * one in the subset's own C over the integer builtins both rails lower verbatim -- a builtin's count taken in its own

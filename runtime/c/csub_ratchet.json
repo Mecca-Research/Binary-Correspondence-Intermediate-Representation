@@ -165,16 +165,10 @@
       "verdict": "clean"
     },
     "bcir_quarantine.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: unknown type",
-      "construct": "<stdatomic.h>'s `atomic_flag` and its `atomic_flag_test_and_set_explicit` and `atomic_flag_clear_explicit` (the ring's lock), which CSUB-4's atomics do not hold yet; past them, GNU's `__attribute__((weak))` on the overridable handler",
-      "rung": "CSUB-4"
+      "verdict": "clean"
     },
     "bcir_quarantine_recover.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: unknown type",
-      "construct": "<stdatomic.h>'s `atomic_flag` and its `atomic_flag_test_and_set_explicit` and `atomic_flag_clear_explicit` (the ring's lock), which CSUB-4's atomics do not hold yet; past them, GNU's `__attribute__((weak))` on the overridable handler",
-      "rung": "CSUB-4"
+      "verdict": "clean"
     },
     "bcir_ring.c": {
       "verdict": "clean"

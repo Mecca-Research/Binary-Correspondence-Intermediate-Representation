@@ -1407,6 +1407,10 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             return deftmp(c.wr[0], f"atomic_load{sfx}({ref(c.rd[0])}{mo})")
         if fn == "store":
             return f"atomic_store{sfx}({ref(c.rd[0])}, {ref(c.rd[1])}{mo});"
+        if fn == "flag_tas":  # the flag's operations, by their own names (CSUB-5d)
+            return deftmp(c.wr[0], f"atomic_flag_test_and_set{sfx}({ref(c.rd[0])}{mo})")
+        if fn == "flag_clear":
+            return f"atomic_flag_clear{sfx}({ref(c.rd[0])}{mo});"
         if fn.startswith("cas_"):  # cas_strong/weak -> bool compare_exchange (obj, &exp, des)
             return deftmp(
                 c.wr[0],

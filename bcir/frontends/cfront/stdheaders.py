@@ -350,6 +350,9 @@ def _stdatomic(abi: TargetABI) -> list[str]:
         ),
         "#define ATOMIC_FLAG_INIT { 0 }",
         "#define kill_dependency(y) (y)",
+        # the flag: one byte the operations set and clear (7.17.8), a structure a compiler's own header defines --
+        # Clang's tagged, GCC's not -- so the emit names it by its typedef, as any untagged structure's (CSUB-5d)
+        "__bcir_builtin typedef struct { _Bool __bcir_flag; } atomic_flag;",
     ]
 
 

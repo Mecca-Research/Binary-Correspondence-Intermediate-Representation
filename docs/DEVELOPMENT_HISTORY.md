@@ -313,6 +313,18 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-28 — CSUB-5d: `<stdatomic.h>`'s flag on both rails; the quarantine under the verified compiler.**
+  - `atomic_flag` is the built-in untagged one-byte structure, named in the emit by its typedef (Clang's flag is a
+    tagged structure, GCC's is not). Its operations, both forms, are CSUB-4's generics, emitted by their own names; a
+    clear takes no acquire or acq_rel order. Both rails had refused the type.
+  - The quarantine's `weak` is under `__GNUC__`, which neither rail defines: the source's own choice for a compiler
+    that is not GCC or Clang, recorded in the audit.
+  - **Evidence.** `test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails`: the header is one text on
+    both rails for the five targets; 2 units run as Clang's build; 6 forms are refused alike; and the 2 quarantine
+    units lower to one digest.
+  - The ratchet moves to **61 of 68**.
+  - **Standing faults.** `cfront-atomic-flag.json`, 14, each swept RED.
+
 - **2026-11-28 — CSUB-5c: the tools' next forms on both rails; four more tools under the verified compiler.**
   - **Forms.** Both rails read:
     - a `for` init's comma expression;

@@ -5432,7 +5432,7 @@ static uint32_t call_result(CC *c, uint32_t r, const bcir_ctype *rt){
 
 /* §5.8: GCC/Clang atomic + fence + CAS builtins -> the BCIR ATOMIC_x / BARRIER / CMPXCHG opcodes.
  * kind: 0 = RMW (ptr,val), 1 = fence (no operands), 2 = cmpxchg (ptr,expected,desired). */
-enum { AK_RMW=0, AK_FENCE=1, AK_CAS=2, AK_LOAD=3, AK_STORE=4 };
+enum { AK_RMW=0, AK_FENCE=1, AK_CAS=2, AK_LOAD=3, AK_STORE=4, AK_FLAG_TAS=5, AK_FLAG_CLEAR=6 };
 static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
   struct{const char *n,*op;bcir_opcode oc;int k;} A[]={
     {"__atomic_fetch_add","c.atomic.add",BCIR_OP_ATOMIC_ADD,AK_RMW},
@@ -5512,7 +5512,12 @@ static int c11_explicit(const tok *t,const char **op,bcir_opcode *oc,int *kind,i
     {"atomic_fetch_sub_explicit","c.c11atom.fetch_sub",BCIR_OP_ATOMIC_SUB,AK_RMW,2,1},
     {"atomic_fetch_xor_explicit","c.c11atom.fetch_xor",BCIR_OP_ATOMIC_XOR,AK_RMW,2,1},
     {"atomic_compare_exchange_strong_explicit","c.c11atom.cas_strong",BCIR_OP_CMPXCHG,AK_CAS,3,2},
-    {"atomic_compare_exchange_weak_explicit","c.c11atom.cas_weak",BCIR_OP_CMPXCHG,AK_CAS,3,2},{0,0,0,0,0,0}};
+    {"atomic_compare_exchange_weak_explicit","c.c11atom.cas_weak",BCIR_OP_CMPXCHG,AK_CAS,3,2},
+    /* the flag's operations (7.17.8), each form (CSUB-5d) */
+    {"atomic_flag_test_and_set_explicit","c.c11atom.flag_tas",BCIR_OP_ATOMIC_ADD,AK_FLAG_TAS,1,1},
+    {"atomic_flag_clear_explicit","c.c11atom.flag_clear",BCIR_OP_STORE,AK_FLAG_CLEAR,1,1},
+    {"atomic_flag_test_and_set","c.c11atom.flag_tas",BCIR_OP_ATOMIC_ADD,AK_FLAG_TAS,1,0},
+    {"atomic_flag_clear","c.c11atom.flag_clear",BCIR_OP_STORE,AK_FLAG_CLEAR,1,0},{0,0,0,0,0,0}};
   for(int i=0;X[i].nm;i++) if(tok_is(t,X[i].nm)){ *op=X[i].op; *oc=X[i].oc; *kind=X[i].kind; *n=X[i].n; *k=X[i].k; return 1; }
   return 0;
 }
@@ -5535,6 +5540,7 @@ static int order_ok(const char *op, int j, long long o){
   if(!strcmp(op,"c.c11atom.load")) return o!=3 && o!=4;
   if(!strcmp(op,"c.c11atom.store")) return o!=1 && o!=2 && o!=4;
   if(!strncmp(op,"c.c11atom.cas_",14) && j==1) return o!=3 && o!=4;
+  if(!strcmp(op,"c.c11atom.flag_clear")) return o!=2 && o!=4;   /* 7.17.8.2p2 (CSUB-5d) */
   return 1;
 }
 /* A temp of the value type of what pointer `ptr` points at (the oracle's `_atomic_value_type`): its pointee,
@@ -5596,7 +5602,8 @@ static uint32_t p_atomic_explicit(CC *c,const char *op,bcir_opcode oc,int kind,i
   for(int j=0;j<k;j++) if(!order_peek(c,starts[n+j],&ord[j])){ fail(c,CC_ORDER_CONST); return 0; }
   for(int j=0;j<k;j++) if(!order_ok(op,j,ord[j])){ fail(c,CC_ORDER_INVALID); return 0; }
   uint32_t t = kind==AK_RMW || kind==AK_LOAD ? atomic_value_temp(c,args[0]) : temp(c,4);
-  if(kind==AK_CAS && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* compare_exchange -> _Bool */
+  if((kind==AK_CAS || kind==AK_FLAG_TAS) && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* compare_exchange,
+                                                            * test_and_set -> _Bool */
   bcir_claim *cl=new_claim(c,op,oc); if(!cl) return t;
   cl->lane=BCIR_LANE_A; cl->hazard=BCIR_HZ_ATOMIC;
   bcir_domain dom=BCIR_DOM_RAM;
@@ -5605,6 +5612,8 @@ static uint32_t p_atomic_explicit(CC *c,const char *op,bcir_opcode oc,int kind,i
   if(kind==AK_LOAD){ cl->n_rd=1; cl->n_wr=1; cl->wr[0]=t; }
   else if(kind==AK_STORE){ cl->n_rd=2; cl->rd[1]=args[1]; }
   else if(kind==AK_CAS){ cl->n_wr=1; cl->wr[0]=t; cl->n_rd=3; cl->rd[1]=args[1]; cl->rd[2]=args[2]; }
+  else if(kind==AK_FLAG_TAS){ cl->n_rd=1; cl->n_wr=1; cl->wr[0]=t; }   /* the flag: read, and whether it was set */
+  else if(kind==AK_FLAG_CLEAR) cl->n_rd=1;                             /* ... cleared */
   else { cl->n_wr=1; cl->wr[0]=t; cl->n_rd=2; cl->rd[1]=args[1]; }
   for(int j=0;j<k;j++) cl->imm[j]=ord[j];
   cl->n_imm=(uint8_t)k;
@@ -11598,6 +11607,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(!strcmp(fn,"load")) w+=snprintf(o+EO,on-EO,"%s %s = atomic_load%s(%s%s);\n",   /* typed by the pointee (CF-ATOMIC) */
                                          decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),sfx,rname(f,cl->rd[0],a),mo);
       else if(!strcmp(fn,"store")) w+=snprintf(o+EO,on-EO,"atomic_store%s(%s, %s%s);\n",sfx,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),mo);
+      else if(!strcmp(fn,"flag_tas"))            /* the flag's operations, by their own names (CSUB-5d) */
+        w+=snprintf(o+EO,on-EO,"_Bool %s = atomic_flag_test_and_set%s(%s%s);\n",rname(f,cl->wr[0],d),sfx,rname(f,cl->rd[0],a),mo);
+      else if(!strcmp(fn,"flag_clear")) w+=snprintf(o+EO,on-EO,"atomic_flag_clear%s(%s%s);\n",sfx,rname(f,cl->rd[0],a),mo);
       else if(!strncmp(fn,"cas_",4))             /* cas_strong/weak -> _Bool atomic_compare_exchange_<...>(obj,&exp,des) */
         w+=snprintf(o+EO,on-EO,"_Bool %s = atomic_compare_exchange_%s%s(%s, %s, %s%s);\n",
                     rname(f,cl->wr[0],d),fn+4,sfx,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e),mo);

@@ -625,6 +625,8 @@ _mm_sfence();                      //                   store (release) fence ->
 - C11's atomics API: `<stdatomic.h>`'s lock-free macros, `ATOMIC_FLAG_INIT` and `kill_dependency`; and each generic's
   explicit-order form, of constant memory orders the operation takes (C11 7.17.7), lowered as its implicit form with
   the orders as the claim's immediates. A variable order is a follow-on (CSUB-4).
+- `atomic_flag` and its operations, both forms: a one-byte flag the emit names by its typedef, the compiler's own
+  (CSUB-5d).
 - A call of a function with a prototype passes as many arguments as it has parameters, and at least as many where it
   ends in `...` -- through a definition, a prototype, a function-pointer object, a member, a table element or a
   select alike; any other count is refused in Clang's words (CF-ARGC).

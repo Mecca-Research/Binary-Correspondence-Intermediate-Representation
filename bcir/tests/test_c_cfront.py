@@ -16446,6 +16446,142 @@ def test_unistd_is_one_text_on_both_rails_and_the_c_librarys_declarations():
             assert run.returncode == 0, (rail, run.stderr[-1500:])
 
 
+# CSUB-5d: <stdatomic.h>'s flag (C11 7.17.8). `atomic_flag` is a structure a compiler's own header defines -- Clang's
+# tagged, GCC's not -- so both rails read it as the built-in untagged `struct { _Bool __bcir_flag; }`, one byte, and the
+# emit names it by its typedef as any untagged structure's (CF-ANON). Its operations, both forms, are CSUB-4's
+# generics with the orders as immediates, emitted by their own names: a test-and-set reads the flag and returns whether
+# it was set, a clear stores to it and takes no acquire or acq_rel order (7.17.8.2p2). Both rails had refused the type.
+_ATOMIC_FLAG_LOWERED = (
+    (
+        "#include <stdint.h>\n"
+        "#include <stdbool.h>\n"
+        "#include <stdatomic.h>\n"
+        "static atomic_flag lock = ATOMIC_FLAG_INIT;\n"
+        "static atomic_flag other = ATOMIC_FLAG_INIT;\n"
+        "uint32_t f(uint32_t k){ uint32_t n = 0u;\n"
+        "  while (atomic_flag_test_and_set_explicit(&lock, memory_order_acquire)) n++;\n"
+        "  uint32_t r = k + n * 3u; bool was = atomic_flag_test_and_set(&other);\n"
+        "  atomic_flag_clear_explicit(&lock, memory_order_release); atomic_flag_clear(&other);\n"
+        "  bool again = atomic_flag_test_and_set_explicit(&lock, memory_order_seq_cst); atomic_flag_clear(&lock);\n"
+        "  return r + (uint32_t)was * 5u + (uint32_t)again * 7u; }\n"
+    ),
+    (
+        "#include <stdint.h>\n"
+        "#include <stdbool.h>\n"
+        "#include <stdatomic.h>\n"
+        "struct ring { atomic_flag lock; uint32_t n; };\n"
+        "static struct ring g = { ATOMIC_FLAG_INIT, 5u };\n"
+        "static atomic_flag locks[4] = { ATOMIC_FLAG_INIT, ATOMIC_FLAG_INIT, ATOMIC_FLAG_INIT, ATOMIC_FLAG_INIT };\n"
+        "static void take(atomic_flag *l){ while (atomic_flag_test_and_set_explicit(l, memory_order_acquire)) { } }\n"
+        "static void give(atomic_flag *l){ atomic_flag_clear_explicit(l, memory_order_release); }\n"
+        "uint32_t f(uint32_t k){ atomic_flag mine = ATOMIC_FLAG_INIT;\n"
+        "  take(&g.lock); uint32_t n = g.n + k; give(&g.lock);\n"
+        "  atomic_flag *l = &locks[k & 3u]; take(l); uint32_t r = n * 3u + (uint32_t)atomic_flag_test_and_set(l) * 2u; give(l);\n"
+        "  bool first = !atomic_flag_test_and_set_explicit(&mine, memory_order_relaxed);\n"
+        "  bool second = atomic_flag_test_and_set(&mine); atomic_flag_clear(&mine);\n"
+        "  return r + (uint32_t)first * 11u + (uint32_t)second * 17u + (uint32_t)sizeof(atomic_flag) * 13u\n"
+        "         + (uint32_t)sizeof(struct ring) * 19u; }\n"
+    ),
+)
+# ... refused alike, in the oracle's words: an order a clear does not take, a variable order, and a call of either
+# operation with as many arguments as the other form has
+_ATOMIC_FLAG_REFUSED = tuple(
+    (
+        "#include <stdint.h>\n#include <stdatomic.h>\nstatic atomic_flag f = ATOMIC_FLAG_INIT;\n"
+        "uint32_t g(uint32_t k){ int o = memory_order_release; (void)o; " + call + "; return k; }\n",
+        why,
+    )
+    for call, why in (
+        ("atomic_flag_clear_explicit(&f, memory_order_acquire)", "a memory order this atomic operation does not take"),
+        ("atomic_flag_clear_explicit(&f, memory_order_acq_rel)", "a memory order this atomic operation does not take"),
+        ("atomic_flag_clear_explicit(&f, o)", "an atomic operation's memory order is a constant"),
+        ("atomic_flag_clear()", "too few arguments to function call"),
+        ("atomic_flag_test_and_set_explicit(&f)", "too few arguments to function call"),
+        ("atomic_flag_test_and_set(&f, memory_order_relaxed)", "too many arguments to function call"),
+    )
+)  # fmt: skip
+#: The runtime's units the flag brings under the verified compiler: each lowers to one digest on both rails
+_ATOMIC_FLAG_UNITS = ("bcir_quarantine.c", "bcir_quarantine_recover.c")
+
+
+def test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails():
+    """CSUB-5d. `<stdatomic.h>`'s `atomic_flag` is one text on both rails for each of the five targets, a one-byte
+    structure the emit names by its typedef (`atomic_flag *`, never the frontend's own member or tag). A static flag, an
+    element of an array of them, a structure's member and a local, set and cleared through both forms of each operation,
+    lower alike on both rails, R18 clean, and each rail's emit runs as Clang's build -- against Clang's own
+    `<stdatomic.h>`, whose flag is a tagged structure -- and compiles as C11 strictly. An order a clear does not take,
+    a variable order and a wrong arity are refused alike. And the quarantine's units, whose rings the flag locks, lower
+    to one digest on both rails."""
+    from bcir.frontends.cfront.abi import TARGETS
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <stdatomic.h>\n@ atomic_flag @ ATOMIC_FLAG_INIT @\n"
+    for name, abi in TARGETS.items():
+        ours = _cpp._tokens(_cpp.preprocess(unit, abi=abi))
+        assert "__bcir_flag" in ours and "_Bool" in ours, (name, ours[-24:])
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "flag.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            r = subprocess.run(
+                [exe, "--target", name, "--emit-cpp", path], capture_output=True, text=True
+            )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _cpp._tokens(r.stdout) == ours, name
+    host = _glibc_host_target() is not None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_ATOMIC_FLAG_LOWERED):
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src[-300:], summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            assert "atomic_flag *" in oracle_emit and "__bcir_flag" not in oracle_emit, oracle_emit[
+                :600
+            ]
+            if exe is None:
+                continue
+            path = os.path.join(d, f"f{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src[-300:], twin_summary, summary)
+            assert "atomic_flag *" in twin_emit and "__bcir_flag" not in twin_emit, twin_emit[:600]
+            if not host:
+                continue
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src[-300:])
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+        for n, (src, why) in enumerate(_ATOMIC_FLAG_REFUSED):
+            assert why in _oracle_refusal(src), (src, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                src[-200:],
+                run.stdout[:300],
+            )
+    for unit_name in _ATOMIC_FLAG_UNITS:
+        text = open(os.path.join(_C, unit_name), encoding="utf-8").read()
+        summary = _summary_line(
+            compile_unit(text, check_clang=False, search_paths=[_C], filename=unit_name)
+        )
+        assert " ok=1 " in summary, (unit_name, summary)
+        if _CC:
+            cc = _build_bcir_cc(_session_build_dir())
+            run = subprocess.run(
+                [cc, "-I", _C, os.path.join(_C, unit_name)], capture_output=True, text=True
+            )
+            assert run.returncode == 0 and run.stdout.split(": ", 1)[-1].strip() == summary, (
+                unit_name,
+                run.stdout,
+                summary,
+            )
+
+
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through
 # a pointer (`t->p += 1`, `a[i] = 0`, `*pp += 1`), an `( E ) OP= v` the parentheses of which are redundant -- and so is an
 # unbraced statement after a condition, `else` or `do`. The twin had read a step through the expression grammar: it
