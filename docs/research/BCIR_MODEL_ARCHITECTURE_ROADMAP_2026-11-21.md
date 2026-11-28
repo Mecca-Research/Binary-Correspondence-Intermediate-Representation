@@ -497,7 +497,7 @@ exceeded; `<= 0.04` nat WikiText-2 CE drift — `<= 4.08%` PPL ratio $e^{\Delta\
   `N = 1..256` (`35.9×` at `N=1`, `1.84×` at `N=256`) and crosses unpacked `LowRank-FP32` at
   `N ≈ 32` (`140.9` vs `135.2 us`), reinforcing per-host/shape/thread calibration of the prefill boundary.
 
-### 3-Tier Hybrid Control-Surface Law: `SSP-Live × WSP × SIM` ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md), `Modular-AI` PR #231 `320a110`)
+### 3-Tier Hybrid Control-Surface Law: `SSP-Live × WSP × SIM` ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md), `Modular-AI` PR #231 `d823c20`)
 
 Re-auditing Takehi et al. (*Sparks of Weight-Space Programming*, Nov 2026) and Google's *Self-Improvement
 Memory* (`arXiv:2611.18856`, Nov 2026) via bare-metal C11 experiments linking against unmodified ABI 6
@@ -558,7 +558,7 @@ caught in `gp-global` and `wedge-next`):
    untouched test `PPL 4.30` @ `T=512`, `4×` zero-shot fixed-target `T=2048` `PPL 4.21` with `-0.0004` nat drift on identical `2 kB` tail targets and `-0.0053` nat improvement on identical `16 kB` spans, `2.75 MiB` `T=4K` state,
    permanent `9.87 MiB` `BCIRQ8 v1` checkpoint at `+0.0001` nats, merged `Modular-AI` PR #230 `8039838`;
    prior 10-arch ablation in merged PR #229 `529f3f2`; `WSP`/`SSP-Live`/`SIM` 3-tier control study in
-   PR #231 `320a110`).
+   PR #231 `d823c20`).
 3. **Phase M3 (Native `Arch-7d` Inference Decode Lowering, `SSP-Live` Runtime Hooks & Tier M `10M`-Token Scaling):**
    - Lower `BCIR-Arch7d-10M` (`GDN-2` + `NoPE-MLA` + `Canon-AC` + `mHC`) together with **Tier 1 `SSP-Live`
      (`GDN-2` adaptive state-echo damping + `NoPE-MLA` repeat-key bias)** onto BCIR's `BCIRQ8 v1` /
@@ -606,4 +606,4 @@ caught in `gp-global` and `wedge-next`):
 - Pinned Precision Frontier & Exp 5 Deployment Baseline bundle (`precision-arch-study`, merged commit `8cc3f234be0bc84009b79f152ab55995ada9a499`, PR #228): https://github.com/Mecca-Research/Modular-AI/tree/8cc3f234be0bc84009b79f152ab55995ada9a499/BCIR%20Model%20Training/precision-arch-study
 - Pinned ABI 6 `MIXER-EXT`, `Q8-Muon`, `Arch-7` & `1.024M` Pilot bundle (`mixer-ext-abi6-study`, merged commit `529f3f2eae601c5a39d2ffa5543e0f57795f044d`, PR #229): https://github.com/Mecca-Research/Modular-AI/tree/529f3f2eae601c5a39d2ffa5543e0f57795f044d/BCIR%20Model%20Training/mixer-ext-abi6-study
 - Pinned `BCIR-Arch7d-10M` 6-Stage Curriculum, Controls, Fixed-Target `4×` Extrapolation & Deployment bundle (`arch7d-10m-training-study`, merged commit `803983803b72b7d313924fe5d4c3c644d969385e`, PR #230): https://github.com/Mecca-Research/Modular-AI/tree/803983803b72b7d313924fe5d4c3c644d969385e/BCIR%20Model%20Training/arch7d-10m-training-study
-- Pinned `WSP` / `SSP-Live` / `SIM` Hybrid Control Study bundle (`wsp-sim-hybrid-study`, commit `320a110e3f17511a88dec99de7ff9cf8714944be`, PR #231): https://github.com/Mecca-Research/Modular-AI/tree/320a110e3f17511a88dec99de7ff9cf8714944be/BCIR%20Model%20Training/wsp-sim-hybrid-study
+- Pinned `WSP` / `SSP-Live` / `SIM` Hybrid Control Study bundle (`wsp-sim-hybrid-study`, commit `d823c202c211ac4bb31c89ef35b398984a9ac4d1`, PR #231): https://github.com/Mecca-Research/Modular-AI/tree/d823c202c211ac4bb31c89ef35b398984a9ac4d1/BCIR%20Model%20Training/wsp-sim-hybrid-study

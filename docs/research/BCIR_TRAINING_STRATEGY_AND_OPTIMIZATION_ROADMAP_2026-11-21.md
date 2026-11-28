@@ -341,7 +341,7 @@ Combined with `wedge-integrated`'s 68-byte C exact KV registry (`1,568/1,568`), 
 - Reserve learned neural weights for ambiguous, unstructured, and compositional generalization, and
   benchmark compiled sub-circuits honestly against plain C/compiler controls (as Exp A did).
 
-### Verified `WSP-1..3` & Tier 1 `SSP-Live` Empirical Evidence ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md), `Modular-AI` PR #231 `320a110`)
+### Verified `WSP-1..3` & Tier 1 `SSP-Live` Empirical Evidence ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md), `Modular-AI` PR #231 `d823c20`)
 Re-auditing Takehi et al. (*Sparks of Weight-Space Programming*, Nov 2026) revealed that `Qwen3.5-0.8B`
 is a **`3:1` hybrid (`18× Gated DeltaNet + 6× full_attention`, `attn_output_gate=true`, `conv k=4`)**
 whose winning Exp 8 edits landed exclusively on deep `full_attention` layers (`L15, L19 ≡ 3 mod 4`) —
@@ -534,7 +534,7 @@ establish six operational rules for BCIR training and deployment:
 Following Yu et al. (*Self-Improvement Memory Enables Continual Recursive Self-Improvement*, Google,
 Nov 13, 2026, `arXiv:2611.18856`) and BCIR's empirical evaluation across `5` real continual shifts plus
 an `n = 10` paired-seed study ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md),
-`Modular-AI` PR #231 `320a110`), BCIR governs post-training harness adaptation, `SSP-Live` tuning, and
+`Modular-AI` PR #231 `d823c20`), BCIR governs post-training harness adaptation, `SSP-Live` tuning, and
 `WSP` / `COMP-1` recovery under three outer-loop rules:
 
 - **`SIM-1` (Outer-Loop Problem-Grouped Ledger `bcir.sim.v1`):** `SIM` lives strictly on the
@@ -573,4 +573,4 @@ an `n = 10` paired-seed study ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_W
 | **5** | `TRAIN-OPT-6` (`VDPBF16PS`) & `TRAIN-OPT-7` (`Adafactor` `12.0 B/p`, `Q8+BF16Grad` `8.05 B/p`, **`Q8-Muon+BF16Grad` `7.07–7.13 B/p`**) — **IMPLEMENTED** | Cut `50.74M` RAM `774 → 342 MiB` (`-55.8%`) & `10M` RAM `153 → 68 MiB` (`-55.5%`); 0-bit-drift cross-stage handoff | `runtime/c/bcir_precision.{h,c}` (`PR #229` `529f3f2`, `PR #230` `8039838`) |
 | **6** | `TRAIN-OPT-3` (Tier M/L `10M–200M` scaling on 16–32 core hosts) + `Arch-7d` Decode Lowering + `Arch-5/6` | `10M` Tier M (`~1.2 hrs` est. 16c AVX2 / `0.43 hrs` 32c AVX-512), `BCIRQ8 v2` `Arch-7d` serve, `BCIR-BLT`, `BCIR-MoE` | `arch7d-10m-training-study` progressive curriculum CLI (merged `PR #230` `8039838`) |
 | **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP & Scale-Factor QAT) — **IMPLEMENTED** | `7.59×` weight cut (`38.3 → 5.04 MiB`, `7.79 MiB` 4K total); `-0.2903` nats Factor-QAT recovery in 32 steps | `bcir_q8_model.h`, `bcir_ai_kernels.h`, `PR #228` `8cc3f23`, `PR #230` `8039838` |
-| **8** | **3-Tier Hybrid Control (`SSP-Live` + `WSP-1..4` + `SIM-1..3`) — EMPIRICALLY VERIFIED** | Tier 1 `SSP-Live` `+10.30` (`0` KL); Tier 2 `L3 NoPE-MLA` `wdown` `+7.45` / `3`-scalar `G1`; Tier 3 `SIM` `+4.2..+47.7` (`5/5` shifts, `1.7%` vs `21.7%` loops) | [BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md) (`PR #231` `320a110`) |
+| **8** | **3-Tier Hybrid Control (`SSP-Live` + `WSP-1..4` + `SIM-1..3`) — EMPIRICALLY VERIFIED** | Tier 1 `SSP-Live` `+10.30` (`0` KL); Tier 2 `L3 NoPE-MLA` `wdown` `+7.45` / `3`-scalar `G1`; Tier 3 `SIM` `+4.2..+47.7` (`5/5` shifts, `1.7%` vs `21.7%` loops) | [BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md) (`PR #231` `d823c20`) |
