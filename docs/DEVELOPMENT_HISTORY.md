@@ -313,6 +313,21 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-28 — CSUB-6a: a call of 24 arguments, and a call through a member of a member; the tensor kernels under the verified compiler.**
+  - A call carries 24 arguments on both rails, and a twenty-fifth is refused alike. The limit was 16, and the
+    attention kernels' workspace calls pass 18. The freeze's mirror of a claim's reads (`CLAIM_MAX_RD`) and its
+    fixtures hold 25.
+  - Past the bound was an oracle defect. `s->provider.silu(...)`, a call through a function-pointer member of a
+    struct-valued member, was fused over the outer base and emitted as `s.silu(...)`, which compiles nowhere. The
+    twin read the pointer at its offset and called through it. Both rails do that now, and the dispatch forms keep
+    their fused claim.
+  - **Evidence.** `test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails`: 8
+    units run as Clang's build on both rails and compile as C11 strictly, and the two kernel units lower to one digest
+    on both rails.
+  - The ratchet moves to **64 of 68**: `bcir_tensor.c` and `bcir_decoder_train.c`, each as its serial scalar build.
+  - **Standing faults.** `cfront-csub6a.json`, 4, each swept RED; `cfront-calls.json`'s CL46 to CL48 re-swept at the
+    new bound.
+
 - **2026-11-28 — CSUB-5e, first slice: a pointer element of a `T **` member, stored, on the twin.**
   - `s->v[s->n++] = x` (`bcir_make.c`'s string vectors) was read by the twin as the start of a walk through the
     element, and refused. The element is now stored, and a null pointer constant takes the element's pointer type.

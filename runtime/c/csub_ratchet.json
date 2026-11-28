@@ -63,10 +63,7 @@
       "verdict": "clean"
     },
     "bcir_decoder_train.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: a call of more than 16 arguments is not supported",
-      "construct": "a call of 18 arguments (`bcir_tensor_attention_backward_contract_variant_ws_pool`), past the claim graph's 16 reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS); then threads, SIMD and bf16",
-      "rung": "CSUB-6"
+      "verdict": "clean"
     },
     "bcir_devman.c": {
       "verdict": "clean"
@@ -201,10 +198,7 @@
       "verdict": "clean"
     },
     "bcir_tensor.c": {
-      "verdict": "blocked",
-      "blocker": "parse error: a call of more than 16 arguments is not supported",
-      "construct": "a call of 18 arguments (`bcir_tensor_attention_backward_contract_variant_ws_pool`'s workspace call), past the claim graph's 16 reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS); then threads and SIMD",
-      "rung": "CSUB-6"
+      "verdict": "clean"
     },
     "bcir_tokenize_cli.c": {
       "verdict": "clean"

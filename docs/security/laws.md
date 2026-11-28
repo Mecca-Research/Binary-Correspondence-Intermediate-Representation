@@ -516,11 +516,12 @@ refuse -- but the compile succeeded, `ok=1`, with an emit that passed six
 arguments to a function of seven, which C refuses, and a digest the oracle's
 no longer. A bound on what a structure carries is a refusal at the point of
 entry, in the same words on both rails, or the structure is widened to what
-the law admits: both rails carry sixteen arguments now and refuse a seventeenth
-alike (`a call of more than 16 arguments is not supported`). Witness:
-`test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_rails`.
+the law admits: both rails carry twenty-four arguments now (sixteen until the
+tensor kernels' calls of eighteen, CSUB-6a) and refuse a twenty-fifth alike
+(`a call of more than 24 arguments is not supported`). Witness:
+`test_a_call_carries_twenty_four_arguments_and_a_twenty_fifth_is_refused_on_both_rails`.
 Faults (`cfront-calls.json`): `CL46` (the drop restored), `CL47` (the oracle
-lowers seventeen).
+lowers one more than the limit).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.

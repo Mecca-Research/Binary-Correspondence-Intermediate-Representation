@@ -1,0 +1,39 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails",
+   "label": "NM1 the oracle fuses a member of a member's call over the outer base again, emitting `s.fn(x)`",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if not m.arrow and isinstance(m.base, cast.Member):\n",
+   "new": "        if False and isinstance(m.base, cast.Member):\n"
+  },
+  {
+   "expects": "test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails",
+   "label": "NM2 the oracle reads the dispatch form through its value and fuses the member of a member",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if not m.arrow and isinstance(m.base, cast.Member):\n",
+   "new": "        if m.arrow and isinstance(m.base, cast.Member):\n"
+  },
+  {
+   "expects": "test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails",
+   "label": "NM3 the twin carries seventeen arguments: the tensor units' calls of eighteen are refused on the twin alone",
+   "path": "runtime/c/bcir_cir.h",
+   "old": "#define BCIR_CALL_MAX_ARGS 24\n",
+   "new": "#define BCIR_CALL_MAX_ARGS 17\n"
+  },
+  {
+   "expects": "test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails",
+   "label": "NM4 the oracle carries seventeen arguments: the tensor units' calls of eighteen are refused on the oracle alone",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "MAX_CALL_ARGS = 24  #",
+   "new": "MAX_CALL_ARGS = 17  #"
+  }
+ ]
+}

@@ -25,7 +25,9 @@ conformance fixes would bring that to 15.**
   serialization code uses everywhere: static string tables, untagged structs, pointers to
   arrays and array parameters in function-pointer types.
 - **The AI kernels sit beyond the subset**: threads, SIMD intrinsics and bf16 storage. They
-  should stay outside it, compiled by clang and GCC and held by parity, as today.
+  should stay outside it, compiled by clang and GCC and held by parity, as today. (Their scalar
+  halves are inside it now: `bcir_tensor.c` and `bcir_decoder_train.c` compile clean, CSUB-6a,
+  §4.8.)
 
 The next steps are a six-rung ladder, CSUB-1 to CSUB-6 (§4), ordered by how much runtime each
 rung brings under the verified compiler. One unit should change instead of the subset:
@@ -142,7 +144,7 @@ itself forbids, and RED before GREEN.
 | **CSUB-3** C23 bits and checked arithmetic (**landed 2026-11-27**: `<stdckdint.h>`, `<stdbit.h>` and the one `bcir_bytes.h`, §4.4) | `<stdbit.h>` (endian queries, bit width, leading and trailing zeros, population count) and `<stdckdint.h>` (`ckd_add`, `ckd_sub`, `ckd_mul`), each with its exact C23 semantics. The master roadmap lists both as near-term gaps (§4.1). One shared `bcir_bytes.h` built on them replaces the nine copies of the endian helpers, byte-identical. | Varints, bitmaps, length fields and every bounds check of the L3 kind ("bounds live where the resource commits") written as checked arithmetic rather than hand-rolled comparisons. |
 | **CSUB-4** The atomics API (**landed 2026-11-27**, §4.6) | `<stdatomic.h>`'s explicit-order calls: `atomic_load_explicit`, `atomic_store_explicit`, `atomic_fetch_add_explicit` and `atomic_compare_exchange_*_explicit`, with `memory_order`. They map onto the memory model the oracle already states (`lower.memory_model`) and the law rail's atomic orderings. | `bcir_ring.c` and the lock-free single-producer, single-consumer structures the AI system's services run on (`BCIR_AI_SYSTEM_ROADMAP.md` §5.2). |
 | **CSUB-5** A hosted profile (**four slices landed**: the `<string.h>` reads 2026-11-20, the hosted headers 2026-11-27, the tools' next forms and `atomic_flag` 2026-11-28, §4.3; 61 of the 68 units compile clean) | A declared hosted class, not part of the freestanding subset: `<stdio.h>` streams and file I/O under the injected-allocator memory class (`../languages/C_MEMORY_DISCIPLINE.md`). Memory mapping goes through a declared host interface. The `<string.h>` reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`, freestanding since C23 -- landed first: `bcir_decoder_gem.c`, `bcir_decoder_pack.c`, `bcir_verify.c`, `bcir_spm.c`, `bcir_bpe.c` and `bcir_diag.c` stopped at one. | The loaders `bcir_q8_model.c` and `bcir_llama.c`, and the quarantine's recovery |
-| **CSUB-6** AI numerics, at the source level | A bf16 storage type and `_Float16` with declared conversion semantics. `#pragma STDC FP_CONTRACT OFF`, so a kernel's no-contraction contract (M17) is stated in its source as well as its flags. C23 `unreachable()` and an assume form feeding verifier facts (the master roadmap's "verifier-fed assume"). A call of more than 16 arguments: the claim graph's bound on a claim's reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS), which an attention kernel's workspace call passes with 18 (`bcir_decoder_train.c`). | The scalar halves of the AI kernels. Threads, vector types and ISA intrinsics stay outside the subset under the fallback contract. The tensor pool and the AVX-512/AMX kernels are measured, parity-held runtime services, not verified-subset code. |
+| **CSUB-6** AI numerics, at the source level | A bf16 storage type and `_Float16` with declared conversion semantics. `#pragma STDC FP_CONTRACT OFF`, so a kernel's no-contraction contract (M17) is stated in its source as well as its flags. C23 `unreachable()` and an assume form feeding verifier facts (the master roadmap's "verifier-fed assume"). A call of more than 16 arguments: the claim graph's bound on a claim's reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS), which an attention kernel's workspace call passes with 18 (`bcir_decoder_train.c`). (Landed as CSUB-6a, §4.8: 24 arguments on both rails.) | The scalar halves of the AI kernels. Threads, vector types and ISA intrinsics stay outside the subset under the fallback contract. The tensor pool and the AVX-512/AMX kernels are measured, parity-held runtime services, not verified-subset code. |
 
 **Two things should not change:**
 - **R18 stays.** `bcir_per.c` should drop its one-level recursion: the length of an
@@ -793,6 +795,51 @@ every rung until its walk takes an explicit stack, as `bcir_per.c`'s length read
     `#include`, past a multi-dimensional member array used as a value;
   - `bcir_cfront.c`, the verified compiler's own rail: past the front end's input bound, it is a recursive-descent
     parser throughout.
+- **Their size, measured (2026-11-28)** by the recursive call cycles of each unit's call graph, the strongly connected
+  components R18 refuses:
+
+  | Unit | Cycles | Lines in them | The cycles |
+  |---|---|---|---|
+  | `bcir_emit.c` | 11 | 1,182 of 2,371 | DER's measure and write passes, BER's, JER's, OER's and PER's node walks (`per_node` with its payload and length), the plan reader and the node skip, and three smaller walks of the schema tree |
+  | `bcir_cpp.c` | 3 | 419 of 2,374 | the `#if` evaluator (`ce_comma` down to `ce_prim`, 49 lines), the macro expander's prescan and rescan (`ppx_*`, 225), and `cpp_process` once per `#include` (145) |
+  | `bcir_cfront.c` | 4 | 12,002 of 13,938 | one cycle of 142 functions, 11,921 lines: the parser itself; and three small ones |
+
+  `bcir_cpp.c` is the nearest of the three. Its first refusal is a front-end form (CSUB-2's multi-dimensional member
+  array used as a value), and its three walks are each bounded already: an `#if` expression by its nesting bound
+  (`#if expression nested too deeply`), the expander by the nesting and budget bounds CSUB-1e shares across both rails,
+  and `#include` at 64 levels. Each walk moves onto
+  an explicit stack as O1's did, held differentially against the recursive version. `bcir_emit.c` is that work eleven
+  times over, one encoder a slice. `bcir_cfront.c` stays outside: its recursion is the parser.
+
+### 4.8 CSUB-6, slice by slice
+
+**CSUB-6a: a call of 24 arguments, and a call through a member of a member (2026-11-28).**
+- **The bound.** A call carries 24 arguments on both rails, and a twenty-fifth is refused alike (`BCIR_CALL_MAX_ARGS`,
+  `lower.MAX_CALL_ARGS`, CF-CALLARGS). It was 16, and the attention kernels' workspace calls pass 18. A claim's reads
+  are one more, and every rail that mirrors that capacity holds 25: the freeze's `CLAIM_MAX_RD` and its fixtures, and
+  the law registry's L11 entry.
+- **The defect past it was the oracle's.** A call through a function pointer that is a member of a struct-valued
+  member, `s->provider.silu(ctx, n, x, y)`, has no dispatch base of its own. Its address is the outer base plus the
+  inner member's offset. The oracle fused it into one `c.call.imember:silu` claim over the outer base and emitted
+  `s.silu(...)`, which compiles nowhere. The twin read it correctly: it loads the function pointer at its offset and
+  calls through the value, a `c.call.indirect`. The oracle now reads it the same way (`_call_member` hands the call
+  to `_call_ptr`). The dispatch forms keep their fused claim on both rails: `o->fn(x)`, `o.fn(x)`, `(*p).fn(x)` and
+  `q->pp->fn(x)`.
+- **Witnesses.**
+  - `test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails` covers eight units:
+    the member at its offset or at 0, through `(*q).`, two levels down, void, and the fused dispatch form beside them.
+    Each lowers alike, runs as Clang's build on both rails, and compiles as C11 strictly.
+  - The same test lowers both runtime units, each to one digest on both rails.
+  - `test_a_call_carries_twenty_four_arguments_and_a_twenty_fifth_is_refused_on_both_rails` holds the bound.
+
+The count is **64 of 68**. `bcir_tensor.c` and `bcir_decoder_train.c` compile with R1-R18 clean, each to one digest
+on both rails. Under the verified compiler each is its serial scalar build:
+- the vector kernels sit behind `__GNUC__` or `__clang__`, and the pool's threads behind `__unix__`, `__APPLE__` or
+  `_WIN32`. Neither rail defines any of them, so the pool reports no rail (`bcir_tensor_pool_rails` returns 0);
+- the threaded and vector builds stay what §0 says: compiled by Clang and GCC, and held by parity.
+
+The rest of the rung is unchanged: bf16 and `_Float16` with declared conversions, `#pragma STDC FP_CONTRACT OFF`, and
+`unreachable()` with an assume form that feeds verifier facts.
 
 ## 5. Subsystems
 

@@ -394,6 +394,8 @@ _mm_sfence();                      //                   store (release) fence ->
 - Functions, the call graph (R18: callee resolution, no recursion), inter-procedural summary reuse,
   function pointers — as a `typedef`'d parameter, a `struct` member (HAL dispatch table), **and as a
   local variable** (`RET (*f)(PARAMS) = fn;`, reassignable, called indirectly, return-type-signed).
+  A function-pointer member of a struct-valued member (`s->in.fn(x)`, `s.in.fn(x)`) has no dispatch base of its
+  own: both rails read it at its offset and call through the value (CSUB-6a).
   A call through a pointer to a `void` function has no value, as a direct void call has none
   (`cb();`, `c ? cb() : (void)0`, `return cb();` in a void function). `c ? f : g` whose arms are
   function designators or function-pointer objects is a pointer to their one function type; arms that
@@ -748,7 +750,7 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   stray `\\` -- is `unexpected character` on both; a logical line ends at a new-line alone on both, a CRLF end of line
   is a new-line (translation phase 1) and a lone `\r` white space, so a CRLF unit lowers to its LF twin's digest, and a
   `\x1c` or `\x1e` in code is `unexpected character` and a NEL or U+2028 `NONASCII` on both (CF-PPSPLITS). A call
-  carries at most 16 arguments on both rails (CF-CALLARGS).
+  carries at most 24 arguments on both rails (CF-CALLARGS, CSUB-6a).
 - An assignment used as a value of a device object -- a `volatile` object, or any member of a struct that holds
   volatile storage reached through a pointer -- and a prefix step of one that narrows (`++*c` of a
   `volatile uint8_t *`): its value would be a second device access. A bitfield of a device region stepped. Both rails

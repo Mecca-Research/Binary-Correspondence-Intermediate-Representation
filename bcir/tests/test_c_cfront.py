@@ -5087,10 +5087,10 @@ def test_escape_and_effects_reports_are_byte_identical_over_the_corpus():
 
 
 def test_escape_refusal_and_its_boundary_agree_across_rails():
-    """A C-twin claim holds a call's sixteen arguments and its callee value (CF-CALLARGS; it held six and dropped
-    the rest, so both rails refused a unit with a call of seven as `truncated=1`, every footprint `*`). Sixteen
-    arguments is the boundary now: a call of seven and one of sixteen are analyzed on both rails, their effects
-    and escape reports byte-identical, and a call of seventeen is refused at lowering by both in the same words,
+    """A C-twin claim holds a call's twenty-four arguments and its callee value (CF-CALLARGS; it held six and dropped
+    the rest, so both rails refused a unit with a call of seven as `truncated=1`, every footprint `*`). The limit
+    is the boundary now: a call of seven and one at the limit are analyzed on both rails, their effects
+    and escape reports byte-identical, and a call of one more is refused at lowering by both in the same words,
     so no unit reaches either rail's analysis truncated."""
     from bcir.frontends.cfront.escape import effects_report, escape_report  # noqa: PLC0415
     from bcir.frontends.cfront.lower import MAX_CALL_ARGS  # noqa: PLC0415
@@ -5108,7 +5108,7 @@ def test_escape_refusal_and_its_boundary_agree_across_rails():
         return
     with tempfile.TemporaryDirectory() as d:
         cc = _build_bcir_cc(d)
-        for label, n in (("seven", 7), ("sixteen", MAX_CALL_ARGS)):
+        for label, n in (("seven", 7), ("the limit", MAX_CALL_ARGS)):
             src = unit(n)
             path = os.path.join(d, f"{label}.c")
             with open(path, "w", encoding="utf-8") as fh:
@@ -5123,7 +5123,7 @@ def test_escape_refusal_and_its_boundary_agree_across_rails():
                 assert out == report(r.lowered, r.escape), (label, flag, out)
         why = f"a call of more than {MAX_CALL_ARGS} arguments is not supported"
         assert _oracle_refusal(unit(MAX_CALL_ARGS + 1)) == why
-        path = os.path.join(d, "seventeen.c")
+        path = os.path.join(d, "past_the_limit.c")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(unit(MAX_CALL_ARGS + 1))
         run = subprocess.run([cc, "--emit-escape", path], capture_output=True, text=True)
@@ -9616,22 +9616,22 @@ def _call_of(n: int, *, indirect: bool = False) -> str:
     return f"{callee}uint32_t f(uint32_t x) {{ return h({args}); }}\n"
 
 
-def test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_rails():
+def test_a_call_carries_twenty_four_arguments_and_a_twenty_fifth_is_refused_on_both_rails():
     """CF-CALLARGS. The twin's claim held six reads, so `p_call` kept a call's first six arguments and dropped the
     rest: a call of seven lowered `ok=1` with a digest the oracle's no longer, and its emit passed six arguments to
-    a function of seven, which C refuses. Both rails now carry sixteen arguments (`BCIR_CALL_MAX_ARGS`,
+    a function of seven, which C refuses. Both rails now carry twenty-four arguments (`BCIR_CALL_MAX_ARGS`,
     `lower.MAX_CALL_ARGS`; a claim's reads are one more, for a callee value or an object base) and refuse a
-    seventeenth alike: calls of seven and of sixteen, direct and through a function pointer, are digest-equal on
+    twenty-fifth alike: calls of seven and of twenty-four, direct and through a function pointer, are digest-equal on
     both rails and the twin's emits run as the originals."""
     units = {
         "seven": _call_of(7),
-        "sixteen": _call_of(16),
-        "sixteen through a pointer": _call_of(16, indirect=True),
+        "twenty-four": _call_of(24),
+        "twenty-four through a pointer": _call_of(24, indirect=True),
     }
     oracle = {name: _oracle(src) for name, src in units.items()}
     exe = _build_frontend(_session_build_dir()) if _CC else None
-    for src in (_call_of(17), _call_of(17, indirect=True)):
-        _refused_on_both_rails(exe, src, "a call of more than 16 arguments is not supported")
+    for src in (_call_of(25), _call_of(25, indirect=True)):
+        _refused_on_both_rails(exe, src, "a call of more than 24 arguments is not supported")
     if exe is None:
         return
     with tempfile.TemporaryDirectory() as d:
@@ -9644,6 +9644,87 @@ def test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_r
             assert c_summary == summary, f"{name}: parity\n C: {c_summary}\nPY: {summary}"
             verdict = _equiv(src, c_emit, entry)
             assert verdict == "MATCH", f"{name}: the twin's emit: {verdict}\n{c_emit}"
+
+
+_CSUB6A_HEAD = (
+    "#include <stdint.h>\nstatic uint32_t inc(uint32_t v){ return v + 1u; }\n"
+    "static void put(uint32_t *o, uint32_t v){ *o = v * 3u; }\n"
+    "typedef uint32_t (*op_t)(uint32_t);\ntypedef void (*set_t)(uint32_t *, uint32_t);\n"
+    "struct pz { op_t fn; set_t set; uint32_t pad; };\nstruct pr { uint32_t pad; op_t fn; set_t set; };\n"
+    "struct outer { uint32_t k; struct pr in; struct pz z; struct pr *pp; };\nstruct o2 { struct outer o; };\n"
+)
+#: A function pointer that is a member of a struct-valued member, called -- `s.in.fn(x)`, `q->in.fn(x)`, at the inner
+#: member's offset or at 0, through `(*q).`, two levels down, void -- beside the dispatch form both rails fuse,
+#: `q->pp->fn(x)`: each lowers alike and runs as the host compiler's build.
+_CSUB6A_LOWERED = tuple(
+    _CSUB6A_HEAD + body
+    for body in (
+        "uint32_t f(uint32_t x){ struct outer s; s.in.fn = inc; return s.in.fn(x); }\n",
+        "uint32_t f(uint32_t x){ struct outer s; s.in.fn = inc; struct outer *q = &s; return q->in.fn(x); }\n",
+        "uint32_t f(uint32_t x){ struct outer s; s.z.fn = inc; struct outer *q = &s; return q->z.fn(x + 2u); }\n",
+        "uint32_t f(uint32_t x){ struct outer s; s.z.fn = inc; struct outer *q = &s; return (*q).z.fn(x); }\n",
+        "uint32_t f(uint32_t x){ struct o2 s; s.o.in.fn = inc; struct o2 *q = &s;\n"
+        "  return q->o.in.fn(x) + s.o.in.fn(x + 1u); }\n",
+        "uint32_t f(uint32_t x){ struct outer s; uint32_t r = 0u; s.in.set = put; struct outer *q = &s;\n"
+        "  q->in.set(&r, x); s.in.set(&r, r + 1u); return r; }\n",
+        "static uint32_t g(struct outer *q, uint32_t x){ return q->in.fn(q->k + x); }\n"
+        "uint32_t f(uint32_t x){ struct outer s; s.in.fn = inc; s.k = 3u; return g(&s, x); }\n",
+        "uint32_t f(uint32_t x){ struct outer s; struct pr p; p.fn = inc; s.pp = &p; struct outer *q = &s;\n"
+        "  return q->pp->fn(x); }\n",
+    )
+)
+#: The runtime's units the slice brings under the verified compiler, each lowered alone to one digest on both rails
+_CSUB6A_UNITS = ("bcir_tensor.c",) + ("bcir_decoder_train.c",)
+
+
+def test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails():
+    """CSUB-6a. A call through a function pointer that is a member of a struct-valued member, `s->provider.silu(x)`,
+    has no dispatch base of its own: its address is the outer base plus the inner member's offset. The oracle fused it
+    into one `c.call.imember:silu` claim over the outer base and emitted `s.silu(x)`, which compiles nowhere; the twin
+    reads the function pointer at its offset and calls through the value, a `c.call.indirect`. Both rails read it so
+    now, each emit runs as the host compiler's build and compiles as C11 strictly, and the dispatch forms keep their
+    fused claim. With a call's twenty-four arguments (CF-CALLARGS) `bcir_tensor.c` and `bcir_decoder_train.c` each
+    lower to one digest on both rails."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    host = _glibc_host_target() is not None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_CSUB6A_LOWERED):
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src[-300:], summary)
+            oracle_emit = "\n".join(r.emitted.values())
+            ops = [c.op for lf in r.lowered.functions.values() for c in lf.claims]
+            fused = [op for op in ops if op.startswith("c.call.imember:")]
+            # the dispatch form keeps its one fused claim; a member of a member is read, then called through
+            assert fused == (["c.call.imember:fn"] if "pp->fn(" in src else []), (src[-200:], ops)
+            assert ("pp->fn(" in src) or "c.call.indirect" in ops, (src[-200:], ops)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"m{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src[-300:], twin_summary, summary)
+            if not host:
+                continue
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src[-300:], emit)
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+    for unit in _CSUB6A_UNITS:
+        text = open(os.path.join(_C, unit), encoding="utf-8").read()
+        summary = _summary_line(
+            compile_unit(text, check_clang=False, search_paths=[_C], filename=unit)
+        )
+        assert " ok=1 " in summary, (unit, summary)
+        if _CC:
+            cc = _build_bcir_cc(_session_build_dir())
+            run = subprocess.run(
+                [cc, "-I", _C, os.path.join(_C, unit)], capture_output=True, text=True
+            )
+            assert run.returncode == 0 and run.stdout.split(": ", 1)[-1].strip() == summary, (
+                unit,
+                run.stdout,
+                summary,
+            )
 
 
 def _lowers_alike(exe, src: str) -> str:

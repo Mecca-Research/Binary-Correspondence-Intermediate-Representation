@@ -752,9 +752,7 @@ class _LV:
 
 
 _INIT_MAX_FRAMES = 64  # the subobjects one brace list may nest into (the twin's IW_MAXFRAMES)
-MAX_CALL_ARGS = (
-    16  # the arguments a call carries, both rails (the twin's BCIR_CALL_MAX_ARGS; CF-CALLARGS)
-)
+MAX_CALL_ARGS = 24  # the arguments a call carries, both rails (the twin's BCIR_CALL_MAX_ARGS; CF-CALLARGS, CSUB-6a)
 # ... and as many as a prototype has parameters, at least as many where it ends in `...`: Clang's words (CF-ARGC; the
 # twin's CC_ARGC_FEW and CC_ARGC_MANY)
 ARGC_FEW = "too few arguments to function call"
@@ -3935,6 +3933,11 @@ class _FuncLowerer:
         base, then the actuals) emitted as `o->fn(args)`, so no 8-byte function-pointer value has to
         ride in the 4-byte value model. Not added to the call graph (R18: an opaque external edge)."""
         m = node.callee
+        if not m.arrow and isinstance(m.base, cast.Member):
+            # `s->in.fn(x)` / `s.in.fn(x)`: a function-pointer member of a struct-valued member has no
+            # dispatch base of its own -- its address is the outer base plus the inner member's offset --
+            # so its value is read and called through, a `c.call.indirect`, as the twin reads it (CSUB-6a)
+            return self._call_ptr(cast.CallPtr(m, node.args))
         base_rid, base_ct, _base_off = self._addr(m.base)  # a dispatch base is a pointer (offset 0)
         actuals = self._call_args(node.args)
         # the struct with the funcptr field
