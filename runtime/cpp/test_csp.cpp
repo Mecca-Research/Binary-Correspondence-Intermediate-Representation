@@ -186,6 +186,13 @@ void test_every_refusal() {
   with("an objective past 2^61", BCIR_CSP_ERR_RANGE, [](Problem &p) { p.offset = (int64_t{1} << 61) + 1; });
   with("coefficients that sum past 64 bits", BCIR_CSP_ERR_RANGE, [](Problem &p) {
     p.cons[0].terms = {{INT64_MAX, 0}, {INT64_MAX, 0}}; });
+  // INT64_MIN as a bound, a coefficient and an offset: past every bound, never negated (it had been undefined, and a
+  // fixed variable at it had been solved)
+  with("a bound of INT64_MIN", BCIR_CSP_ERR_RANGE, [](Problem &p) { p.vars.push_back({INT64_MIN, INT64_MIN, 0}); });
+  with("a coefficient of INT64_MIN", BCIR_CSP_ERR_RANGE, [](Problem &p) { p.cons[0].terms[0].coef = INT64_MIN; });
+  with("an offset of INT64_MIN", BCIR_CSP_ERR_RANGE, [](Problem &p) { p.offset = INT64_MIN; });
+  with("a rectangle offset of INT64_MIN", BCIR_CSP_ERR_RANGE, [](Problem &p) {
+    Con c; c.kind = BCIR_CSP_NO_OVERLAP_2D; c.rects = {{0, INT64_MIN, 0, 1, 1, 1, 0}}; p.cons.push_back(c); });
   with("a duration past 2^60", BCIR_CSP_ERR_RANGE, [](Problem &p) {
     Con c; c.kind = BCIR_CSP_CUMULATIVE; c.tasks = {{0, (int64_t{1} << 60) + 1}}; p.cons.push_back(c); });
   for (const Case &c : cases) {

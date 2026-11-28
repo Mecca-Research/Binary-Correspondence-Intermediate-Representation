@@ -33,7 +33,9 @@ int64_t floor_div(int64_t a, int64_t b) {
   return q;
 }
 int64_t ceil_div(int64_t a, int64_t b) { return -floor_div(-a, b); }  // the oracle's -((-a) // b)
-int64_t mag(int64_t v) { return v < 0 ? -v : v; }
+// |v|, saturating: |INT64_MIN| is past every bound it is compared with (kValue, kSum) and every product checked, as the
+// oracle's abs() puts it -- negating it in int64_t had been undefined, and let the value through
+int64_t mag(int64_t v) { return v >= 0 ? v : v == INT64_MIN ? INT64_MAX : -v; }
 
 struct Term { int64_t c; size_t v; };
 struct Task { size_t s; int64_t d; };
@@ -286,23 +288,27 @@ int cumulative(const Model &m, const Con &c, pvec<int64_t> &lo, pvec<int64_t> &h
     if (w.full.empty()) continue;
     const int64_t d = task.d;
     const size_t s = task.s;
+    // The earliest start >= lo whose [t, t + d) holds no full instant, and below, the latest <= hi: the oracle's walk
+    // from full instant to full instant, by whole spans. A start in [t, f.b) of a span f meeting [t, t + d) covers an
+    // instant of f -- its own, or f.a -- so no start before f.b is one, and the scan resumes there; going down, none
+    // after f.a - d. Each pass passes a span, where stepping by d had made the cost the span's length over d.
     int64_t t = lo[s];
-    while (t <= hi[s]) {   // the latest full instant in [t, t + d), and past it
+    while (t <= hi[s]) {   // the latest full span meeting [t, t + d), and past it
       bool hit = false;
-      int64_t last = 0;
+      int64_t past = 0;
       for (const Span &f : w.full)
-        if (f.a < t + d && f.b > t) { last = std::min(f.b, t + d) - 1; hit = true; }
+        if (f.a < t + d && f.b > t) { past = f.b; hit = true; }
       if (!hit) break;
-      t = last + 1;
+      t = past;
     }
     if (t > hi[s]) return -1;
     if (t > lo[s]) { lo[s] = t; moved = 1; }
     t = hi[s];
-    while (t >= lo[s]) {   // the earliest full instant in [t, t + d), and a start that ends before it
+    while (t >= lo[s]) {   // the earliest full span meeting [t, t + d), and a start that ends before it
       bool hit = false;
       int64_t first = 0;
       for (const Span &f : w.full)
-        if (f.a < t + d && f.b > t) { first = std::max(f.a, t); hit = true; break; }
+        if (f.a < t + d && f.b > t) { first = f.a; hit = true; break; }
       if (!hit) break;
       t = first - d;
     }

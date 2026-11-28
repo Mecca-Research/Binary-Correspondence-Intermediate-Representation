@@ -6,7 +6,8 @@
     "bcir.tests.test_cpp_csp:_CXX",
     "bcir.tests.test_cpp_csp:test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
     "bcir.tests.test_cpp_csp:test_the_facades_contracts_hold",
-    "bcir.tests.test_cpp_csp:test_a_malformed_problem_is_the_tools_and_a_refusal_a_status"
+    "bcir.tests.test_cpp_csp:test_a_malformed_problem_is_the_tools_and_a_refusal_a_status",
+    "bcir.tests.test_cpp_csp:test_a_long_compulsory_part_is_passed_in_one_step"
   ],
   "faults": [
     {
@@ -62,8 +63,8 @@
       "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
       "label": "C9 the forward scan overshoots by one",
       "path": "runtime/cpp/bcir_csp.cpp",
-      "old": "      t = last + 1;",
-      "new": "      t = last + 2;"
+      "old": "      t = past;",
+      "new": "      t = past + 1;"
     },
     {
       "expects": "test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check",
@@ -218,6 +219,20 @@
       "path": "runtime/cpp/bcir_csp.cpp",
       "old": "    if (x.lo > x.hi) return unexpected(BCIR_CSP_ERR_INVALID);",
       "new": "    if (false) return unexpected(BCIR_CSP_ERR_INVALID);"
+    },
+    {
+      "expects": "test_a_long_compulsory_part_is_passed_in_one_step",
+      "label": "C34 the forward scan steps by the task's duration, not past the span",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "        if (f.a < t + d && f.b > t) { past = f.b; hit = true; }",
+      "new": "        if (f.a < t + d && f.b > t) { past = std::min(f.b, t + d); hit = true; }"
+    },
+    {
+      "expects": "test_a_long_compulsory_part_is_passed_in_one_step",
+      "label": "C35 the backward scan steps by the task's duration, not below the span",
+      "path": "runtime/cpp/bcir_csp.cpp",
+      "old": "        if (f.a < t + d && f.b > t) { first = f.a; hit = true; break; }",
+      "new": "        if (f.a < t + d && f.b > t) { first = std::max(f.a, t); hit = true; break; }"
     }
   ]
 }

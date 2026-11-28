@@ -67,7 +67,9 @@ typedef struct bcir_tokload {
   int shuffle;
   uint32_t windows;
   uint32_t *perm;   /* the caller's workspace: `windows` words when shuffled */
-  uint64_t epoch;   /* the epoch perm holds; UINT64_MAX before the first */
+  uint64_t epoch;   /* the epoch perm holds, once perm_ready */
+  int perm_ready;   /* perm holds epoch's permutation: no epoch is a sentinel, as UINT64_MAX had been -- the epoch of
+                     * sample 2^64 - 1 when there is one window, which then read the workspace unwritten */
 } bcir_tokload;
 
 /* A loader over `n` opened shards. `perm`/`perm_capacity` (in words) are the shuffle's workspace, unused (and

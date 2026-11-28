@@ -148,6 +148,12 @@ static void test_loader(void) {
   CHECK(bcir_tokload_batch(&l, (UINT64_MAX - 4) / 5 + 1, 5, in, tg) == BCIR_TOKLOAD_ERR_ARG);
   CHECK(bcir_tokload_batch(&l, UINT64_MAX, 1, in, tg) == BCIR_TOKLOAD_OK);
   CHECK(bcir_tokload_batch(&l, 0, 0, in, tg) == BCIR_TOKLOAD_ERR_ARG);
+  /* one window, shuffled, its first batch the last sample's: epoch 2^64 - 1, which the loader had taken for its own
+   * "no permutation yet" and so read the workspace unwritten -- here every word past any window */
+  for (size_t k = 0; k < 256; k++) perm2[k] = UINT32_MAX;
+  CHECK(bcir_tokload_init(&m, shards + 1, 1, 4, key, 1, perm2, 256) == BCIR_TOKLOAD_OK && m.windows == 1u);
+  CHECK(bcir_tokload_batch(&m, UINT64_MAX, 1, in, tg) == BCIR_TOKLOAD_OK && perm2[0] == 0u);
+  CHECK(in[0] == bcir_tokshard_token(&shards[1], 0) && tg[3] == bcir_tokshard_token(&shards[1], 4));
   CHECK(bcir_tokload_batch(&l, 0, 1, NULL, tg) == BCIR_TOKLOAD_ERR_ARG);
   /* shards of two vocabularies */
   open_three(501);

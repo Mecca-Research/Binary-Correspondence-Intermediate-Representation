@@ -203,6 +203,13 @@
    "path": "runtime/c/bcir_prom.c",
    "old": "  decimal(w, v, 0);\n  lit(w, \"\\n\");",
    "new": "  int64(w, (int64_t)v);\n  lit(w, \"\\n\");"
+  },
+  {
+   "expects": "test_the_c_twin_holds_its_contracts",
+   "label": "PR29 a NULL name of a nonzero length ordered, its bytes read",
+   "path": "runtime/c/bcir_prom.c",
+   "old": "    if (!s->name.p && s->name.n) return BCIR_PROM_ERR_ARG;\n",
+   "new": ""
   }
  ]
 }

@@ -313,6 +313,37 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-28 — REVIEW-829a: Codex's four findings on the ready PR, each verified against the tree and fixed with a
+  witness that fails without the fix.**
+  - **The exposition read a NULL name.** `bcir_prom_write` ordered each series name against the one before it
+    (`bytes_lt`) before any text check, so a name of a nonzero length and no pointer was dereferenced, before it or
+    after it. A NULL name of a length is a NULL argument now (`BCIR_PROM_ERR_ARG`, as the header names it), refused
+    before it is ordered. Every name compared has passed that test, so the comparison reads only bytes it holds.
+  - **The loader's "no permutation yet" was an epoch.** `bcir_tokload_init` set the epoch to `UINT64_MAX` to say no
+    permutation had been drawn. With one window, the last sample, `2^64 - 1`, is of that epoch, so its batch read the
+    caller's workspace unwritten and walked past the shards. Whether the workspace holds a permutation is a flag of its
+    own (`perm_ready`), and no epoch is a sentinel.
+  - **The CSP solver negated `INT64_MIN`.** `mag` negated in `int64_t`, which is undefined for `INT64_MIN`, so a bound,
+    a coefficient, an offset or a rectangle's offset of it could pass the range checks. It saturates now: `|INT64_MIN|`
+    is past every bound it is compared with, as the oracle's `abs()` puts it, and each is `BCIR_CSP_ERR_RANGE`.
+  - **The cumulative's scans stepped by a task's duration.** Its timetable is kept as intervals so that its cost is
+    the spans' count, not the domain's width, but both scans still moved one duration at a time through a full span:
+    a part 2^50 long beside a task of 1 was 2^50 passes for one bound. A start that meets a full span covers one of
+    its instants up to its end, and below its beginning less the duration, so each scan now passes a span whole. The
+    bound is the same; `test_cpp_csp`'s parity with the oracle holds node for node.
+  - **Witnesses.** `test_prom` refuses a NULL name before and after a name, and `test_tokload` asks a one-window
+    loader over a poisoned workspace for batch `2^64 - 1` first. `test_csp`'s refusals take `INT64_MIN` in each of
+    the four places. `test_a_long_compulsory_part_is_passed_in_one_step` solves the two long-span models under a
+    minute's bound; the oracle's set of instants cannot hold such a span, so its answers, the models' only
+    solutions, are written into the test.
+  - **Each fix was shown RED by hand on the code before it:** UBSan's null load in `bytes_lt`, ASan's overflow past
+    the shards, UBSan's negation of `INT64_MIN`, and the scans past a 60-second timeout.
+  - **Standing faults.** PR29 (`prom.json`), L20 (`tokload.json`), and C34 and C35 (`cpp-csp.json`), each swept RED.
+    C9 and L12 were re-anchored to the lines they mutate and swept RED. The negation's fault survived the sweep: the
+    witnesses' optimized build folds `-v` into a range test, so the verdict was `ERR_RANGE` there all along, and only
+    UBSan sees the overflow. Its witness is `check_solver.sh`'s run of `test_csp` under UBSan, which went RED on the
+    old `mag`. The fault was dropped from the table rather than kept as one the table cannot see.
+
 - **2026-11-28 — CSUB-5g: a pointer member's step, R18 over every function, and the build tool under the verified compiler.**
   - `j->p++` steps a pointer member by its pointee on both rails, as `j->p += 1` does. Of a volatile or a device's
     object it stays refused alike.

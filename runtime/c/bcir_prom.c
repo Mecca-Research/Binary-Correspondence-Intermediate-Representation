@@ -260,6 +260,10 @@ int bcir_prom_write(const bcir_prom_series *series, size_t n, bcir_prom_text cha
   for (size_t k = 0; k < n; k++) {
     const bcir_prom_series *s = &series[k];
     if (s->available && !s->has_definition) return BCIR_PROM_ERR_ARG;
+    /* a NULL name of a nonzero length is a NULL argument, refused before its bytes are ordered: every name before it
+     * passed this test, so the comparison reads none it does not hold (an invalid UTF-8 name is bytes, ordered as
+     * any, and refused below) */
+    if (!s->name.p && s->name.n) return BCIR_PROM_ERR_ARG;
     if (k && !bytes_lt(series[k - 1u].name, s->name)) return BCIR_PROM_ERR_ORDER;
     utf8 = utf8 && text_ok(s->name);
     if (s->has_definition)

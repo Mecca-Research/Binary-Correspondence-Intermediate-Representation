@@ -71,6 +71,14 @@ static void contracts(void) {
   r[1] = s[1];
   r[1].available = 1;
   CHECK(bcir_prom_write(r, 2, T("h"), NULL, 0, NULL, out, sizeof out, &len) == BCIR_PROM_ERR_ARG);
+  /* a NULL name of a nonzero length, after a name and before one: refused, never read */
+  r[0] = s[0];
+  r[1] = s[1];
+  r[1].name.p = NULL;
+  CHECK(bcir_prom_write(r, 2, T("h"), NULL, 0, NULL, out, sizeof out, &len) == BCIR_PROM_ERR_ARG);
+  r[1] = s[1];
+  r[0].name.p = NULL;
+  CHECK(bcir_prom_write(r, 2, T("h"), NULL, 0, NULL, out, sizeof out, &len) == BCIR_PROM_ERR_ARG);
   /* every NULL */
   CHECK(bcir_prom_write(NULL, 2, T("h"), NULL, 0, NULL, out, sizeof out, &len) == BCIR_PROM_ERR_ARG);
   CHECK(bcir_prom_write(s, 2, T("h"), NULL, 1, NULL, out, sizeof out, &len) == BCIR_PROM_ERR_ARG);

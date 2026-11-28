@@ -171,6 +171,43 @@ def test_the_cpp_solver_answers_as_the_oracle_does_and_its_answers_check():
         assert all(seen[k] > 20 for k in ("optimal", "infeasible", "budget", "seeded")), seen
 
 
+#: A compulsory part 2^50 long beside a task of 1 on one machine: the task's earliest start pushed past the part, and
+#: in the second its latest below it, each at the root. The timetable is kept as intervals so that its cost is the
+#: spans' count, not the domain's width; the scans had still stepped by the task's duration, 2^50 passes for one
+#: bound. The oracle keeps a set of instants, which this span would exhaust, so the answers are written here -- the
+#: model's only solutions -- and the run is bounded: a minute is a million times what it takes.
+_BIG = 1 << 50
+_LONG_SPAN = (
+    (
+        f"problem\nvar 0 0 0\nvar 0 {_BIG} 0\ncumulative 1 0:{_BIG},1:1\nobjective 0 1:1\nbudget 1000\n",
+        f"stop optimal values 0,{_BIG} objective {_BIG} ",
+    ),
+    (
+        f"problem\nvar {_BIG} {_BIG} 0\nvar {_BIG - 1} {2 * _BIG - 1} 0\ncumulative 1 0:{_BIG},1:1\n"
+        "objective 0 -1:1\nbudget 1000\n",
+        f"stop optimal values {_BIG},{_BIG - 1} objective {1 - _BIG} ",
+    ),
+)
+
+
+def test_a_long_compulsory_part_is_passed_in_one_step():
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = _build(tmp)
+        if exe is None:
+            return
+        path = os.path.join(tmp, "long")
+        with open(path, "w", encoding="ascii") as f:
+            f.write("".join(text for text, _want in _LONG_SPAN))
+        try:
+            ran = subprocess.run([exe, path], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise AssertionError(f"test_csp did not answer: {exc}") from exc
+        got = ran.stdout.splitlines()
+        assert ran.returncode == 0 and len(got) == len(_LONG_SPAN), ran.stdout + ran.stderr
+        for (_text, want), line in zip(_LONG_SPAN, got):
+            assert line.startswith(want), (line, want)
+
+
 def test_a_malformed_problem_is_the_tools_and_a_refusal_a_status():
     with tempfile.TemporaryDirectory() as tmp:
         exe = _build(tmp)

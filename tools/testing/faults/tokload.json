@@ -90,8 +90,8 @@
       "expects": "test_the_c_tool_answers_as_the_oracle_does",
       "label": "L12 the permutation never redrawn for a new epoch",
       "path": "runtime/c/bcir_tokload.c",
-      "old": "      if (loader->epoch != epoch) {",
-      "new": "      if (loader->epoch == UINT64_MAX) {"
+      "old": "      if (!loader->perm_ready || loader->epoch != epoch) {",
+      "new": "      if (!loader->perm_ready) {"
     },
     {
       "expects": "test_the_c_tool_answers_as_the_oracle_does",
@@ -141,6 +141,13 @@
       "path": "runtime/c/bcir_tokload_tool.c",
       "old": "  out[6] = (uint8_t)width;",
       "new": "  out[4] = (uint8_t)width;"
+    },
+    {
+      "expects": "test_the_c_harness_holds_its_contracts",
+      "label": "L20 the epoch alone tells a permutation drawn, so the first is read unwritten",
+      "path": "runtime/c/bcir_tokload.c",
+      "old": "      if (!loader->perm_ready || loader->epoch != epoch) {",
+      "new": "      if (loader->epoch != epoch) {"
     }
   ]
 }

@@ -71,7 +71,8 @@ int bcir_tokload_init(bcir_tokload *loader, const bcir_tokshard *shards, size_t 
   loader->shuffle = shuffle != 0;
   loader->windows = (uint32_t)windows;
   loader->perm = perm;
-  loader->epoch = UINT64_MAX;
+  loader->epoch = 0;
+  loader->perm_ready = 0;
   return BCIR_TOKLOAD_OK;
 }
 
@@ -98,10 +99,11 @@ int bcir_tokload_batch(bcir_tokload *loader, uint64_t index, uint32_t size, uint
     uint64_t p = first + r, epoch = p / loader->windows;
     uint32_t j = (uint32_t)(p % loader->windows), w = j;
     if (loader->shuffle) {
-      if (loader->epoch != epoch) {
+      if (!loader->perm_ready || loader->epoch != epoch) {
         uint64_t at = 0;
         bcir_rng_permutation(loader->key, epoch, &at, loader->perm, loader->windows);
         loader->epoch = epoch;
+        loader->perm_ready = 1;
       }
       w = loader->perm[j];
     }
