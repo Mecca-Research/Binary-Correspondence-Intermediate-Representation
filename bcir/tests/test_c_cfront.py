@@ -16582,6 +16582,59 @@ def test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails():
             )
 
 
+# CSUB-5e: a store of a pointer element of a `T **` member, `s->v[i] = x` (`bcir_make.c`'s string vectors). The twin
+# read every subscript of such a member as the start of a walk through the element it selects (`s->v[i][j] = c`) and
+# refused the `=`; the element itself is now stored, a null pointer constant converted to its pointer type, as a named
+# pointer's store converts it. The oracle had lowered it.
+_PTR_ELEM_STORED = (
+    (
+        "#include <stdint.h>\n"
+        "#include <stddef.h>\n"
+        "typedef struct { char **v; size_t n, cap; } strs;\n"
+        'uint32_t f(uint32_t k){ char a[4] = "abc"; char *tab[4] = {0}; strs st = { tab, (size_t)(k & 3u), 4u }; strs *s = &st; char *x = a + (k & 1u); s->v[s->n] = x; return (uint32_t)(s->v[k & 3u] == x) + (uint32_t)(tab[1] != 0) * 3u; }\n'
+    ),
+    (
+        "#include <stdint.h>\n"
+        "#include <stddef.h>\n"
+        "typedef struct { char **v; size_t n, cap; } strs;\n"
+        "struct node { uint32_t val; };\n"
+        "struct list { struct node **at; uint32_t n; };\n"
+        'uint32_t f(uint32_t k){ char a[4] = "abc"; char *tab[4] = {0}; strs st = { tab, 0u, 4u }; strs *s = &st;\n'
+        "  struct node n0 = { 7u }, n1 = { 9u }; struct node *slots[2] = {0}; struct list l = { slots, 2u }; struct list *lp = &l;\n"
+        "  s->v[s->n] = a + (k & 1u); s->n++; s->v[s->n++] = a; s->v[(k & 1u) + 2u] = 0;\n"
+        "  lp->at[0] = &n0; lp->at[k & 1u] = &n1; l.at[1] = lp->at[0]; s->v[1][0] = (char)(65 + (int)(k & 7u));\n"
+        "  return (uint32_t)(tab[0] == a + (k & 1u)) + (uint32_t)(tab[1] == a) * 2u + (uint32_t)(tab[2] == 0) * 4u\n"
+        "       + (uint32_t)(slots[0] == &n0) * 8u + (uint32_t)(slots[1] == &n1) * 32u + (uint32_t)s->n * 16u + (uint32_t)a[0] * 64u; }\n"
+    ),
+)
+
+
+def test_a_pointer_element_of_a_member_is_stored_alike_on_both_rails():
+    """CSUB-5e. A pointer element of a `T **` member, the store's own target -- `s->v[i] = x`, `s->v[s->n++] = a`, a
+    null pointer constant, through a pointer to the structure and through the structure itself -- lowers alike on both
+    rails, beside a walk through such an element (`s->v[1][0] = c`), and each rail's emit runs as Clang's build and
+    compiles as C11 strictly."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    host = _glibc_host_target() is not None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_PTR_ELEM_STORED):
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src[-300:], summary)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"p{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src[-300:], twin_summary, summary)
+            if not host:
+                continue
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src[-300:])
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+
+
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through
 # a pointer (`t->p += 1`, `a[i] = 0`, `*pp += 1`), an `( E ) OP= v` the parentheses of which are redundant -- and so is an
 # unbraced statement after a condition, `else` or `do`. The twin had read a step through the expression grammar: it

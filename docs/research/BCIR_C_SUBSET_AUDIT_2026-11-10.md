@@ -621,10 +621,20 @@ clean, each to one digest on both rails.
 The count is **61 of 68**: the quarantine's two units compile clean, each to one digest on both rails. What the rest
 stop at, as the ratchet records it:
 - `<sys/stat.h>`'s `struct stat` and `<dirent.h>` (`bcir_make.c`): POSIX's host interface past the C library, whose
-  layouts differ by target;
+  layouts differ by target. Past them is a member through a pointer element, `bf->targets[i]->name`, which both rails
+  refuse by design today (CF-IDXARROW). Before them was a twin defect, now fixed (CSUB-5e, below);
 - a multi-dimensional member array used as a value (`bcir_cpp.c`), and past it the `#if` evaluator's recursive
   descent and the recursion per `#include`, which R18 refuses by design: the unit needs explicit stacks, as
   `bcir_per.c` did.
+
+**CSUB-5e, first slice: a pointer element of a `T **` member, stored (2026-11-28).** `bcir_make.c` grows its string
+vectors by `s->v[s->n++] = x`. The twin read every subscript of a `T **` member as the start of a walk through the
+element it selects (`s->v[i][j] = c`) and refused the `=`, where the oracle lowered it. The element is now stored
+whenever it is the store's own target, and a null pointer constant becomes its pointer type, as a named pointer's store
+converts it. `test_a_pointer_element_of_a_member_is_stored_alike_on_both_rails` runs both forms beside a walk through
+such an element, each rail's emit running as Clang's build and compiled as C11 strictly. `bcir_make.c` now stops at
+`struct stat` itself. Laying out POSIX's `struct stat` and `struct dirent` for each target, with a witness per target,
+is the slice's remainder.
 
 ### 4.4 CSUB-3, slice by slice
 

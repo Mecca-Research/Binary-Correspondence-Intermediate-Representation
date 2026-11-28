@@ -313,6 +313,14 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-28 — CSUB-5e, first slice: a pointer element of a `T **` member, stored, on the twin.**
+  - `s->v[s->n++] = x` (`bcir_make.c`'s string vectors) was read by the twin as the start of a walk through the
+    element, and refused. The element is now stored, and a null pointer constant takes the element's pointer type.
+  - **Evidence.** `test_a_pointer_element_of_a_member_is_stored_alike_on_both_rails`: 2 units run as Clang's build
+    on both rails and compile as C11 strictly.
+  - `bcir_make.c` now stops at `struct stat`; the count stays **62 of 68**.
+  - **Standing faults.** `cfront-ptrelem-store.json`, 3, each swept RED.
+
 - **2026-11-28 — O1: `bcir_channel.c`'s JSON skip on an explicit stack; the channel reader under the verified compiler.**
   - The reader skipped an unknown key's value by recursive descent, which R18 refuses by design. It is now one loop
     over an explicit stack of the open containers, with the same grammar and the same 64-container bound.

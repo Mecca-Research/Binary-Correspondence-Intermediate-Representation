@@ -9477,10 +9477,20 @@ static void store_through_ptr(CC *c, uint32_t ptr, int psidx, field pfld) {
   if(ENTER_REC(c)){ LEAVE_REC(c); return; }
   store_through_ptr_inner(c, ptr, psidx, pfld); LEAVE_REC(c);
 }
+/* The subscript at the cursor is the store's own target -- `s->v[i] = x`, `s->v[i] OP= x` -- not the start of a walk
+ * through the element it selects (`s->v[i][j]`, `s->v[i]->m`). */
+static int elem_is_stored(CC *c){
+  int d=0, j=c->i;
+  do{ if(tok_is(tat(c,j),"[")) d++; else if(tok_is(tat(c,j),"]")) d--; j++; }while(d>0 && tat(c,j)->k!=T_END);
+  const tok *t=tat(c,j);
+  return tok_is(t,"=") || is_compound_op(t);
+}
 static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) {
   if(is(c,"[")){                                        /* `...->p[i] = v` -- indexed store via the pointer */
-    if(pfld.ptee_depth>1 && pfld.row_n<=0 && !pfld.fp_sig){   /* `...->pp[i][j] = v` of a `T **pp`: the pointer
-                                                         * element loaded, the store through it (CSUB-2) */
+    if(pfld.ptee_depth>1 && pfld.row_n<=0 && !pfld.fp_sig && !elem_is_stored(c)){   /* `...->pp[i][j] = v` of a
+                                                         * `T **pp`: the pointer element loaded, the store through it
+                                                         * (CSUB-2); `...->pp[i] = q` stores the element itself, below
+                                                         * (CSUB-5e) */
       uint32_t np=ptr_elem_load(c,ptr,&pfld); if(c->failed) return;
       store_through_ptr(c,np,pfld.ptee_sidx,pfld); return; }
     uint32_t idx=ptr_member_sub(c,ptr,&pfld); if(c->failed) return;   /* `p->m[k][j] = v` of a row too (CSUB-2d) */
@@ -9516,7 +9526,15 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
       bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
       val=tmp;
     } else { if(!eat(c,"="))return; val=p_expr(c);
-      if(!agg_value_ok(c,pfld.ptee_sidx>=0 && pfld.ptee_depth<=1 ? pfld.ptee_sidx : -1,val,agg_assigned)) return; }
+      if(!agg_value_ok(c,pfld.ptee_sidx>=0 && pfld.ptee_depth<=1 ? pfld.ptee_sidx : -1,val,agg_assigned)) return;
+      if(pfld.ptee_depth>1){   /* `s->v[i] = 0` of a `T **v`: the element a pointer, a null pointer constant its own
+                                * pointer, as a named pointer's store makes it (CSUB-5e) */
+        bcir_ctype et; memset(&et,0,sizeof et); et.kind=2; et.ptr_depth=(uint8_t)(pfld.ptee_depth-1);
+        et.size=pfld.ptee_size; et.signd=pfld.signd; et.is_float=(uint8_t)pfld.ptee_float;
+        et.is_plain_char=(uint8_t)pfld.ptee_plain_char;
+        if(pfld.ptee_sidx>=0){ et.ptr_to_struct=1; et.is_union=(uint8_t)c->s[pfld.ptee_sidx].is_union;
+          fits(c,et.tag,sizeof et.tag,"%s",c->s[pfld.ptee_sidx].tag); }
+        val=null_pointer(c,val,&et); } }
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=3;cl->rd[0]=ptr;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;
       mark_access(c,cl,pfld.ptee_volatile); mark_atomic(cl,pfld.ptee_atomic);}

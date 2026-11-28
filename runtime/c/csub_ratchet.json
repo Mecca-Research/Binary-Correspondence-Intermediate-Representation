@@ -121,8 +121,8 @@
     },
     "bcir_make.c": {
       "verdict": "blocked",
-      "blocker": "parse error: expected ->/./[ after a pointer field",
-      "construct": "<sys/stat.h>: POSIX's `struct stat`, a member of a host structure the profile does not lay out",
+      "blocker": "parse error: unknown struct",
+      "construct": "<sys/stat.h>'s `struct stat` and <dirent.h>'s `struct dirent`: POSIX's host interface past the C library, whose layouts differ by target; past them, a member through a pointer element (`bf->targets[i]->name`), which both rails refuse by design today (CF-IDXARROW)",
       "rung": "CSUB-5"
     },
     "bcir_microbench.c": {
