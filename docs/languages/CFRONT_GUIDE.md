@@ -616,6 +616,12 @@ _mm_sfence();                      //                   store (release) fence ->
 - The hosted profile: `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` as the target's C library
   declares them, each call a typed external edge the host linker resolves. A `FILE` is the library's: only a pointer
   to one. POSIX's `fileno`, `fdopen`, `mkstemp` and `clock_gettime` are declared on Linux alone (CSUB-5).
+- POSIX's `<unistd.h>` on Linux (`close`, `fsync`, `read`, `write`, `unlink`, `getpid`, `fork`, `_exit`); on Windows
+  it is read as nothing. `<string.h>`'s writes (`strcpy`, `strncpy`, `strcat`, `strncat`, `strtok`) and `<ctype.h>`'s
+  functions are libc edges recognized by name; the artifact includes the library's headers for them, since a library
+  may define a function as a macro too (CSUB-5c).
+- A `for` init's comma expression, and a cast to a pointer type as a base: `((char *)b)[len] = 0`,
+  `((struct P *)v)->a` (CSUB-5c).
 - C11's atomics API: `<stdatomic.h>`'s lock-free macros, `ATOMIC_FLAG_INIT` and `kill_dependency`; and each generic's
   explicit-order form, of constant memory orders the operation takes (C11 7.17.7), lowered as its implicit form with
   the orders as the claim's immediates. A variable order is a follow-on (CSUB-4).

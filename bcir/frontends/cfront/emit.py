@@ -30,6 +30,7 @@ from .lower import (
     ScopeOpen,
     SwitchNode,
     WhileNode,
+    _CTYPE_CALLS,
     _STRING_CALLS,
     _const_spelling,
     _kspell,
@@ -556,6 +557,8 @@ def emit_linkable(lowered, emitted: dict) -> str:
     # the <string.h> edges (memcpy/memmove/memset, memcmp/memchr/strlen), and the emit's own copies
     if callees & _STRING_CALLS or _MEM_CALL.search(code):
         parts.append("#include <string.h>")
+    if callees & _CTYPE_CALLS:  # the <ctype.h> edges, which the library's header declares (CSUB-5c)
+        parts.append("#include <ctype.h>")
     parts += [f"#include {h}" for h, names_re in _OWN_HEADERS if names_re.search(code)]
     # `I`, which the lowering read as <complex.h>'s imaginary unit
     if any(op.startswith("c.cconst:") for op in ops) and "#include <complex.h>" not in parts:
@@ -563,7 +566,7 @@ def emit_linkable(lowered, emitted: dict) -> str:
     parts += [f"#include {h}" for h, names_re in _C11_MACRO_HEADERS if names_re.search(code)]
     if any(op.startswith("c.call.extern:") for op in ops):
         parts.append("#include <stdio.h>")  # the printf/scanf-family edges
-    if callees - libc - _STRING_CALLS and any(
+    if callees - libc - _STRING_CALLS - _CTYPE_CALLS and any(
         op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops
     ):
         parts.append("#include <math.h>")  # the remaining libm edges

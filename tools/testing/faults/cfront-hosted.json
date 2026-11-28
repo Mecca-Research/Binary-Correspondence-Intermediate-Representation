@@ -103,8 +103,8 @@
    "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
    "label": "HP14 the twin's stdlib unknown",
    "path": "runtime/c/bcir_cpp.c",
-   "old": "\"stdio.h\", \"stdlib.h\", \"errno.h\", \"time.h\", \"inttypes.h\", 0};",
-   "new": "\"stdio.h\", \"errno.h\", \"time.h\", \"inttypes.h\", 0};"
+   "old": "\"stdio.h\", \"stdlib.h\", \"errno.h\", \"time.h\", \"inttypes.h\", \"unistd.h\",",
+   "new": "\"stdio.h\", \"errno.h\", \"time.h\", \"inttypes.h\", \"unistd.h\","
   },
   {
    "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",

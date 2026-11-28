@@ -141,7 +141,7 @@ itself forbids, and RED before GREEN.
 | **CSUB-2** Table idioms (**landed 2026-11-27**: CSUB-2a 2026-11-14; CSUB-2b, CSUB-2c's first two slices, CSUB-2d's two and CSUB-2e's first 2026-11-15, CSUB-2c's third and CSUB-2e's second 2026-11-16, CSUB-2e's third to fifth 2026-11-20, the close-out 2026-11-27, §4.2; 32 of the 58 units compile clean by it, and no unit's first refusal is the rung's) | Static tables whose initializers are address constants (C11 6.6p9), such as string tables. Untagged struct types in a declaration. Struct-typed members of array elements, read and copied (`t[i].m.f`, `t[i].m = v`): the record table (§3.1). String members in static struct tables. Pointer-to-array types (`T (*p)[N]`) as objects and members. Array parameters in function-pointer types. `_Alignas` on any object. Four more the ratchet found first in units the measurement had not reached: a member read through a local's address, `(&v)->m`, as a macro writes it (`bcir_kplan.c`); a row of a multi-dimensional array used as a value, `f(t[1])` of `fe t[4][10]` (`bcir_ed25519.c`); the address-of, increment and assignment of an lvalue reached through a loaded pointer (`bcir_spm.c`, `bcir_emit.c`, both quarantine units); and a struct returned by a call through a prototype (`bcir_handoff.c`). | `bcir_jer.c`, `bcir_emit.c`, `bcir_artifact_bundle.c`, `bcir_provenance.c`, `bcir_verify.c`, `bcir_hydrate.c`, `bcir_handoff.c` and `bcir_ed25519.c`: the table-driven dispatch every codec and catalog reader is written in, and the field arithmetic of the signature code. |
 | **CSUB-3** C23 bits and checked arithmetic (**landed 2026-11-27**: `<stdckdint.h>`, `<stdbit.h>` and the one `bcir_bytes.h`, §4.4) | `<stdbit.h>` (endian queries, bit width, leading and trailing zeros, population count) and `<stdckdint.h>` (`ckd_add`, `ckd_sub`, `ckd_mul`), each with its exact C23 semantics. The master roadmap lists both as near-term gaps (§4.1). One shared `bcir_bytes.h` built on them replaces the nine copies of the endian helpers, byte-identical. | Varints, bitmaps, length fields and every bounds check of the L3 kind ("bounds live where the resource commits") written as checked arithmetic rather than hand-rolled comparisons. |
 | **CSUB-4** The atomics API (**landed 2026-11-27**, §4.6) | `<stdatomic.h>`'s explicit-order calls: `atomic_load_explicit`, `atomic_store_explicit`, `atomic_fetch_add_explicit` and `atomic_compare_exchange_*_explicit`, with `memory_order`. They map onto the memory model the oracle already states (`lower.memory_model`) and the law rail's atomic orderings. | `bcir_ring.c` and the lock-free single-producer, single-consumer structures the AI system's services run on (`BCIR_AI_SYSTEM_ROADMAP.md` §5.2). |
-| **CSUB-5** A hosted profile (**two slices landed**: the `<string.h>` reads 2026-11-20 and the hosted headers 2026-11-27, §4.3; 55 of the 68 units compile clean) | A declared hosted class, not part of the freestanding subset: `<stdio.h>` streams and file I/O under the injected-allocator memory class (`../languages/C_MEMORY_DISCIPLINE.md`). Memory mapping goes through a declared host interface. The `<string.h>` reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`, freestanding since C23 -- landed first: `bcir_decoder_gem.c`, `bcir_decoder_pack.c`, `bcir_verify.c`, `bcir_spm.c`, `bcir_bpe.c` and `bcir_diag.c` stopped at one. | The loaders `bcir_q8_model.c` and `bcir_llama.c`, and the quarantine's recovery |
+| **CSUB-5** A hosted profile (**three slices landed**: the `<string.h>` reads 2026-11-20, the hosted headers 2026-11-27 and the tools' next forms 2026-11-28, §4.3; 59 of the 68 units compile clean) | A declared hosted class, not part of the freestanding subset: `<stdio.h>` streams and file I/O under the injected-allocator memory class (`../languages/C_MEMORY_DISCIPLINE.md`). Memory mapping goes through a declared host interface. The `<string.h>` reads -- `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`, freestanding since C23 -- landed first: `bcir_decoder_gem.c`, `bcir_decoder_pack.c`, `bcir_verify.c`, `bcir_spm.c`, `bcir_bpe.c` and `bcir_diag.c` stopped at one. | The loaders `bcir_q8_model.c` and `bcir_llama.c`, and the quarantine's recovery |
 | **CSUB-6** AI numerics, at the source level | A bf16 storage type and `_Float16` with declared conversion semantics. `#pragma STDC FP_CONTRACT OFF`, so a kernel's no-contraction contract (M17) is stated in its source as well as its flags. C23 `unreachable()` and an assume form feeding verifier facts (the master roadmap's "verifier-fed assume"). A call of more than 16 arguments: the claim graph's bound on a claim's reads (`BCIR_CALL_MAX_ARGS`, CF-CALLARGS), which an attention kernel's workspace call passes with 18 (`bcir_decoder_train.c`). | The scalar halves of the AI kernels. Threads, vector types and ISA intrinsics stay outside the subset under the fallback contract. The tensor pool and the AVX-512/AMX kernels are measured, parity-held runtime services, not verified-subset code. |
 
 **Two things should not change:**
@@ -571,14 +571,42 @@ The count is **38 of 58**: `bcir_spm.c`, `bcir_bpe.c`, `bcir_verify.c`, `bcir_di
 
 The count is **55 of 68**. `bcir_cc.c`, `bcir_llama_cli.c`, `bcir_pack_cli.c`, `bcir_qualify_cli.c`,
 `bcir_tokenize_cli.c`, `bcir_tokload_tool.c`, `bcir_asn1_bench.c` and `bcir_ai_microbench.c` compile clean, each to
-one digest on both rails. What the profile's units stop at next, as the ratchet records it:
-- `<unistd.h>`'s `close` (`bcir_bundle_cli.c`) and `<sys/stat.h>`'s `struct stat` (`bcir_make.c`): POSIX's host
-  interface past the C library;
-- `strncpy` (`bcir_microbench.c`), a `<string.h>` write the libc edges do not hold yet;
-- GNU's `__attribute__((weak))` on the quarantine's overridable handler (`bcir_quarantine.c`,
-  `bcir_quarantine_recover.c`);
-- two language forms: a comma expression in a `for` loop's init clause (`bcir_cpp.c`, `bcir_q8_model.c`) and a store
-  through a cast's subscript, `((char *)b)[len] = 0` (`bcir_etl_tool.c`).
+one digest on both rails.
+
+**CSUB-5c: what the tools stopped at next (2026-11-28).**
+- **A `for` init's comma expression**, `for (r = 0, w = n; ...)`: its pieces in order, read as the step's are. On the
+  twin one helper reads both clauses' lists (`p_simple_list`), the whole list or a refusal.
+- **A cast to a pointer type as a base**, `((char *)b)[len] = 0`, `((struct P *)v)->a`: its value is the base, as a
+  call's is, in a read, a store, a compound store, a step, an assignment's value and an address. On the twin it is
+  A6's parenthesized base, now measured (`paren_base_len`), so `(*q)->m` and the cast share every path. A cast to no
+  pointer is no base on either rail, in the oracle's words. `*((T *)b + i)` is the pointer value the sum is,
+  dereferenced, as CF-DEREFSUM's `*(p + i + j)` is.
+- **`<string.h>`'s writes**, `strcpy`, `strncpy`, `strcat`, `strncat` and `strtok`: typed libc edges beside the
+  reads, each a `char *`.
+- **`<ctype.h>`**: its fourteen functions are libc edges too, recognized by name, with the artifact including the
+  library's `<ctype.h>`. They are not declared by a header the rails supply, because a library may define each as a
+  function-like macro as well (C11 7.1.4p1). glibc does, and an emitted `extern int isspace(int);` beside its header
+  failed to compile: the declarations witness found it.
+- **POSIX's `<unistd.h>`** on Linux: `close`, `fsync`, `read`, `write`, `unlink`, `getpid`, `fork` and `_exit`, its
+  `ssize_t` glibc's `long` where pointers are 64 bits and its `int` where they are 32. On Windows, whose UCRT has
+  none, it is a header the rails do not supply, read as nothing as any other is.
+- **One twin defect at the base.** A call of the function being defined, whose result is a struct, was typed an
+  unsigned int, and refused as the struct's initializer before R18 saw the cycle the oracle reports. The twin now types
+  a function's own call by its return, as the oracle's `func_rets` does (C11 6.2.1p7).
+- **Witnesses**: 5 units lower alike, R18 clean, and run as Clang's build with each rail's emit compiled as C11
+  strictly. 2 forms are refused alike, and the self-call reaches R18 on both rails. `<unistd.h>` is one text on both
+  rails for the five targets, and every function the slice declares or recognizes, called where no run reaches, lowers
+  alike with each rail's emit compiled beside glibc's headers.
+
+The count is **59 of 68**. `bcir_q8_model.c`, `bcir_etl_tool.c`, `bcir_microbench.c` and `bcir_bundle_cli.c` compile
+clean, each to one digest on both rails. What the rest stop at, as the ratchet records it:
+- `<stdatomic.h>`'s `atomic_flag` and its `test_and_set` and `clear` calls, the quarantine ring's lock
+  (`bcir_quarantine.c`, `bcir_quarantine_recover.c`), with GNU's `weak` on the overridable handler past them;
+- `<sys/stat.h>`'s `struct stat` and `<dirent.h>` (`bcir_make.c`): POSIX's host interface past the C library, whose
+  layouts differ by target;
+- a multi-dimensional member array used as a value (`bcir_cpp.c`), and past it the `#if` evaluator's recursive
+  descent and the recursion per `#include`, which R18 refuses by design: the unit needs explicit stacks, as
+  `bcir_per.c` did.
 
 ### 4.4 CSUB-3, slice by slice
 

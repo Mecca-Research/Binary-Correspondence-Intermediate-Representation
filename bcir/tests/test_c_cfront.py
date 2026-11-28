@@ -9930,7 +9930,9 @@ def _std_probes(abi) -> list:
 
     out = []
     for h in stdheaders.NAMES:
-        for m in _STD_DEFINE.finditer(stdheaders.header_text(h, abi)):
+        for m in _STD_DEFINE.finditer(
+            stdheaders.header_text(h, abi) or ""
+        ):  # none: not on this target
             name = m.group(1)
             if name.startswith("__BCIR_"):  # the include guard
                 continue
@@ -9947,8 +9949,17 @@ def _std_probes(abi) -> list:
 #: The headers a compiler's own freestanding headers do not hold, which a hosted C library supplies: `<math.h>`;
 #: C23's `<stdbit.h>`, freestanding in C23 but in no Clang resource directory -- glibc's spells its type-generic forms
 #: through its own helpers, so its expansions are held to on the glibc host, by value (CSUB-3); and the hosted
-#: profile's `<stdio.h>`, `<stdlib.h>`, `<errno.h>` and `<time.h>` (CSUB-5)
-_LIBC_HEADERS = ("math.h", "stdbit.h", "stdio.h", "stdlib.h", "errno.h", "time.h", "inttypes.h")
+#: profile's `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` (CSUB-5), and POSIX's `<unistd.h>`
+_LIBC_HEADERS = (
+    "math.h",
+    "stdbit.h",
+    "stdio.h",
+    "stdlib.h",
+    "errno.h",
+    "time.h",
+    "inttypes.h",
+    "unistd.h",
+)
 
 
 def _std_probe_unit(probes, libc: bool = True, host: bool = False) -> str:
@@ -13095,6 +13106,21 @@ _LINKABLE_HEADERS = {
         "#include <string.h>",
         ("#include <math.h>", "#include <stdlib.h>"),
     ),
+    # ... the writes, CSUB-5c: strcpy/strncpy/strcat/strncat and strtok
+    "string writes": (
+        "#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\nuint32_t f(char *a, char *b, uint32_t x) {"
+        ' strcpy(a, "x"); strncpy(a + 1, "y", 2); strcat(a, "z"); strncat(a, "w", 1);'
+        ' char *t = strtok(b, ","); return (uint32_t)(t != 0) + x; }\n',
+        "#include <string.h>",
+        ("#include <math.h>", "#include <stdlib.h>", "#include <ctype.h>"),
+    ),
+    # ... and <ctype.h>'s, which the library may define as macros too: its own header, never a declaration (CSUB-5c)
+    "ctype": (
+        "#include <stdint.h>\n#include <ctype.h>\nuint32_t f(uint32_t x) { int c = (int)(x & 127u);"
+        " return (uint32_t)(isalpha(c) != 0) + (uint32_t)(isdigit(c) != 0) + (uint32_t)tolower(c); }\n",
+        "#include <ctype.h>",
+        ("#include <math.h>", "#include <stdlib.h>", "#include <string.h>"),
+    ),
     "aligned_alloc": (
         "#include <stdint.h>\n#include <stdlib.h>\nuint32_t f(uint32_t n) { uint32_t *p = aligned_alloc(16, 16);"
         " return (uint32_t)(p != 0) + n; }\n",
@@ -16218,6 +16244,206 @@ def test_the_hosted_profile_lowers_alike_and_runs_as_the_c_librarys_build():
                 run.stdout,
                 summary,
             )
+
+
+# CSUB-5c: what the hosted profile's tools stop at next. A `for` init of comma-separated expressions (`r = 0, w = n`),
+# read as the step's pieces are; a cast to a pointer type as a base (`((char *)b)[len] = 0`, `((struct P *)v)->a`), its
+# value the base as a call's is, and `*((T *)b + i)` the pointer value the sum is, dereferenced; `<string.h>`'s writes
+# as typed libc edges beside its reads; `<ctype.h>`; and POSIX's `<unistd.h>`, on Linux alone. Both rails had refused
+# each, and the twin had typed a call of the function being defined, whose result is a struct, an unsigned int: refused
+# as the struct's initializer before R18 saw the cycle the oracle reports.
+_CSUB5C_HDR = "#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\n#include <ctype.h>\n"
+_CSUB5C_LOWERED = tuple(
+    _CSUB5C_HDR + body
+    for body in (
+        # the init's comma, beside the step's, and an init that is one piece
+        "uint32_t f(uint32_t k){ uint32_t r, w, acc = 0;\n  for (r = 0, w = k; r < 8u; r++, w--) acc += r * w;\n"
+        "  uint64_t i, end; for (i = k, end = (uint64_t)k + 5u; i < end;) { acc += (uint32_t)i; i++; }\n"
+        "  for (r = 0, w++; r < 3u; r++) acc ^= w;\n  for (r = 1; r < 4u; r++) acc += r;\n"
+        "  for (r = k & 3u, w = r * 2u + 1u; r < 6u; r++) acc = acc * 7u + w;  /* the pieces in order */\n"
+        "  return acc; }\n",
+        # a store, a compound store, a step and a read through a cast's subscript
+        "uint32_t f(uint32_t k){ uint8_t buf[8] = {0}; void *b = buf; size_t len = (size_t)(k & 7u);\n"
+        "  ((char *)b)[len] = 1; ((uint8_t *)b)[0] += 2u; ((char *)b)[1]++;\n"
+        "  return (uint32_t)buf[0] + (uint32_t)buf[1] * 3u + (uint32_t)((uint8_t *)b)[len] * 7u; }\n",
+        # through a cast's member, a sum's deref, an assignment's value, a prefix step and an address
+        "struct P { uint32_t a, b; };\n"
+        "uint32_t f(uint32_t k){ uint32_t w[4] = {1, 2, 3, 4}; void *b = w; struct P q = {k, 7u}; void *v = &q;\n"
+        "  *((uint32_t *)b + 2) += k; ((uint32_t *)b)[3]--; ++((uint32_t *)b)[0]; ((struct P *)v)->a ^= 3u;\n"
+        "  uint32_t x = (((uint32_t *)b)[1] = k + 9u); uint32_t *pp = &((uint32_t *)b)[2];\n"
+        "  uint32_t *pa = &((struct P *)v)->b; uint32_t y = *((uint32_t *)b + (k & 3u));\n"
+        "  return w[0] + w[1] * 3u + w[2] * 5u + w[3] * 7u + x + *pp + *pa + q.a + y + ((struct P *)v)->b; }\n",
+        # the string writes, their results and a tokenizer's loop
+        'uint32_t f(uint32_t k){ char a[32] = {0}; char b[32] = "x,y;z"; char *t; uint32_t acc = 0u;\n'
+        '  strncpy(a, "hello", sizeof a - 1); a[sizeof a - 1] = 0; strcat(a, "-");\n'
+        '  strncat(a, "worldwide", 3u + (k & 1u)); char *r = strcpy(b + 8, a);\n'
+        "  acc += (uint32_t)strlen(r) * 3u + (uint32_t)(r == b + 8);\n"
+        '  for (t = strtok(b, ",;"); t != NULL; t = strtok(NULL, ",;")) acc = acc * 31u + (uint32_t)t[0];\n'
+        "  return acc + (uint32_t)a[(k & 7u)]; }\n",
+        # the character functions
+        'uint32_t f(uint32_t k){ const char *s = "aZ 9_!\\t"; uint32_t acc = 0u;\n'
+        "  for (int i = 0; s[i]; i++) { int c = (unsigned char)s[i];\n"
+        "    acc = acc * 3u + (uint32_t)(isalnum(c) != 0) + (uint32_t)(isalpha(c) != 0) * 2u + (uint32_t)(isdigit(c) != 0) * 4u;\n"
+        "    acc += (uint32_t)(isspace(c) != 0) * 8u + (uint32_t)(isupper(c) != 0) * 16u + (uint32_t)(ispunct(c) != 0) * 32u;\n"
+        "    acc += (uint32_t)tolower(c) + (uint32_t)toupper(c) + (uint32_t)(isxdigit(c) != 0); }\n"
+        "  return acc + k; }\n",
+    )
+)
+# ... refused alike: a cast to no pointer as a base, in the oracle's words
+_CSUB5C_REFUSED = (
+    (_CSUB5C_HDR + "uint32_t f(uint32_t k){ uint32_t w[2] = {1, 2}; return ((int)k)[w]; }\n",
+     "unsupported base expression Cast"),
+    (_CSUB5C_HDR + "struct P { uint32_t a; };\nuint32_t f(uint32_t k){ return ((uint32_t)k)->a; }\n",
+     "unsupported base expression Cast"),
+)  # fmt: skip
+# ... every library function the slice declares, called where no run reaches, so its declaration meets the library's
+_CSUB5C_DECLS_UNIT = (
+    "#define _POSIX_C_SOURCE 200809L\n#include <stdint.h>\n#include <stddef.h>\n#include <string.h>\n"
+    "#include <ctype.h>\n#include <unistd.h>\n"
+    "uint32_t f(uint32_t k){\n  if (k != 0x7a3b9c1du) return k + 1u;\n  char a[16] = {0}; char b[16] = {0}; uint32_t acc = 0u;\n"
+    '  acc += (uint32_t)(strcpy(a, "x") != 0) + (uint32_t)(strncpy(a, "y", 2u) != 0) + (uint32_t)(strcat(a, b) != 0);\n'
+    '  acc += (uint32_t)(strncat(a, b, 1u) != 0) + (uint32_t)(strtok(a, ",") != 0);\n'
+    "  acc += (uint32_t)isalnum(1) + (uint32_t)isalpha(1) + (uint32_t)isblank(1) + (uint32_t)iscntrl(1);\n"
+    "  acc += (uint32_t)isdigit(1) + (uint32_t)isgraph(1) + (uint32_t)islower(1) + (uint32_t)isprint(1);\n"
+    "  acc += (uint32_t)ispunct(1) + (uint32_t)isspace(1) + (uint32_t)isupper(1) + (uint32_t)isxdigit(1);\n"
+    "  acc += (uint32_t)tolower(1) + (uint32_t)toupper(1);\n"
+    "  acc += (uint32_t)close(3) + (uint32_t)fsync(3) + (uint32_t)read(3, a, 1u) + (uint32_t)write(3, b, 1u);\n"
+    '  acc += (uint32_t)unlink("x") + (uint32_t)getpid() + (uint32_t)fork();\n'
+    "  if (acc == 7u) _exit(1);\n  return acc; }\n"
+)
+#: The runtime's units the slice brings under the verified compiler: each lowers to one digest on both rails. Each is
+#: compiled alone, no link set, so the tools and the library unit are two literals (the manifest's M10 reads a literal
+#: naming both as one)
+_CSUB5C_UNITS = ("bcir_etl_tool.c", "bcir_microbench.c", "bcir_bundle_cli.c") + ("bcir_q8_model.c",)
+
+
+def test_a_for_inits_comma_a_cast_base_and_the_string_writes_lower_alike_and_run_as_clangs_build():
+    """CSUB-5c. On both rails a `for` init's comma expression, a cast to a pointer type as a base -- a subscript, a
+    member, a sum's deref, as a store, a compound store, a step, an assignment's value and an address -- `<string.h>`'s
+    writes and `<ctype.h>`'s functions lower alike, R18 clean, and each rail's emit runs as the host compiler's build of
+    the source and compiles as C11 strictly. A cast to no pointer is no base on either rail, in the oracle's words. A
+    call of the function being defined, whose result is a struct, is typed by that struct on both rails, so both reach
+    R18's cycle (the twin had refused it as the struct's initializer). And the four tools the slice brings in each lower
+    to one digest on both rails."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    host = _glibc_host_target() is not None
+    with tempfile.TemporaryDirectory() as d:
+        for n, src in enumerate(_CSUB5C_LOWERED):
+            summary, r, entry = _oracle(src)
+            assert " ok=1 " in summary, (src[-300:], summary)
+            if exe is None:
+                continue
+            path = os.path.join(d, f"c{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin_summary, twin_emit = _c_run(exe, path)
+            assert twin_summary == summary, (src[-300:], twin_summary, summary)
+            if not host:
+                continue
+            assert _clang_c23_accepts(src) in (True, None), src
+            oracle_emit = "\n".join(r.emitted.values())
+            for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                assert _equiv(src, emit, entry) == "MATCH", (rail, src[-300:])
+            _emits_compile_strictly(d, src, {"oracle": oracle_emit, "twin": twin_emit})
+        for n, (src, why) in enumerate(_CSUB5C_REFUSED):
+            assert _oracle_refusal(src) == why, (src, _oracle_refusal(src))
+            if exe is None:
+                continue
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout + run.stderr, (
+                src[-200:],
+                run.stdout[:300],
+            )
+        # the function being defined, called for its struct: R18's cycle on both rails
+        src = (
+            "#include <stdint.h>\ntypedef struct { unsigned long long v; int u; } ppv;\n"
+            "static ppv g(int n){ ppv r = {0, 0}; if (n > 0) { ppv s = g(n - 1); r.v = s.v + 1u; } return r; }\n"
+            "uint32_t f(uint32_t k){ ppv x = g((int)(k & 3u)); return (uint32_t)x.v; }\n"
+        )
+        summary = _summary_line(compile_unit(src, check_clang=False))
+        assert " ok=0 " in summary, summary
+        if exe is not None:
+            path = os.path.join(d, "self.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            cc = _build_bcir_cc(_session_build_dir())
+            run = subprocess.run([cc, path], capture_output=True, text=True)
+            assert "R18: recursive call cycle" in run.stdout + run.stderr, run.stdout + run.stderr
+    for unit in _CSUB5C_UNITS:
+        text = open(os.path.join(_C, unit), encoding="utf-8").read()
+        summary = _summary_line(
+            compile_unit(text, check_clang=False, search_paths=[_C], filename=unit)
+        )
+        assert " ok=1 " in summary, (unit, summary)
+        if _CC:
+            cc = _build_bcir_cc(_session_build_dir())
+            run = subprocess.run(
+                [cc, "-I", _C, os.path.join(_C, unit)], capture_output=True, text=True
+            )
+            assert run.returncode == 0 and run.stdout.split(": ", 1)[-1].strip() == summary, (
+                unit,
+                run.stdout,
+                summary,
+            )
+
+
+def test_unistd_is_one_text_on_both_rails_and_the_c_librarys_declarations():
+    """CSUB-5c. `<unistd.h>` is one text on both rails for each of the five targets -- its `ssize_t` glibc's `long`
+    where pointers are 64 bits and its `int` where they are 32 -- and on Windows, whose UCRT has no `<unistd.h>`, no
+    header at all, read as nothing as any other unsupplied header is. `<ctype.h>` is no header the rails supply: its
+    functions are libc edges, as `<string.h>`'s are, and the artifact includes the library's own, since a library may
+    define each as a function-like macro too (C11 7.1.4p1) -- glibc does, and an `extern int isspace(int);` beside its
+    header does not compile. And on a glibc host every function the slice declares or recognizes, called where no run
+    reaches, lowers alike, R18 clean, and each rail's emit compiles beside the library's own headers as C11 strictly,
+    POSIX's declarations in view."""
+    from bcir.frontends.cfront.abi import TARGETS
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <unistd.h>\n@ ssize_t @\n"
+    for name, abi in TARGETS.items():
+        ours = _cpp._tokens(_cpp.preprocess(unit, abi=abi))
+        windows = name.endswith("windows")
+        assert ("pid_t" in ours) == (not windows), (name, ours[:40])
+        if not windows:
+            assert ("long" if abi.pointer_size == 8 else "int") in ours[
+                : ours.index("ssize_t") + 1
+            ], name
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "posix.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            r = subprocess.run(
+                [exe, "--target", name, "--emit-cpp", path], capture_output=True, text=True
+            )
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert _cpp._tokens(r.stdout) == ours, name
+    if exe is None or _glibc_host_target() is None:
+        return
+    src = _CSUB5C_DECLS_UNIT
+    summary, r, entry = _oracle(src)
+    assert " ok=1 " in summary, summary
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "decls.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        twin_summary, twin_emit = _c_run(exe, path)
+        assert twin_summary == summary, (twin_summary, summary)
+        oracle_emit = "\n".join(r.emitted.values())
+        for rail, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+            path = os.path.join(d, f"decls_{rail}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src + '\n#include "bcir_quarantine.h"\n' + emit + "\n")
+            run = subprocess.run(
+                [_CC, "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-fsyntax-only", "-I", _C,
+                 "-Werror=incompatible-pointer-types", "-Werror=int-conversion", path],
+                capture_output=True, text=True,
+            )  # fmt: skip
+            assert run.returncode == 0, (rail, run.stderr[-1500:])
 
 
 # CF-STEP: a for-step is a statement, as the oracle's `_for_step` lowers it -- a store to a member, an element or through

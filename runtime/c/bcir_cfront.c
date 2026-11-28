@@ -4442,6 +4442,41 @@ static int paren_deref_form(CC *c, int k){
   const venv *v=lookup(c,tat(c,k+2));
   return v && v->type.kind==2 && (v->type.ptr_depth?v->type.ptr_depth:1)>1 && !v->type.ptr_to_fp;
 }
+/* The token past the balanced group opening at `k` (a `(`, `[` or `{`), or 0 where it does not close. */
+static int group_end(CC *c, int k){
+  int d=0, j=k;
+  do{ const tok *t=tat(c,j); if(t->k==T_END) return 0;
+    if(tok_is(t,"(")||tok_is(t,"[")||tok_is(t,"{")) d++; else if(tok_is(t,")")||tok_is(t,"]")||tok_is(t,"}")) d--;
+    j++; }while(d>0);
+  return j;
+}
+/* The token past the unary expression a cast's operand is, from `j`: its prefix operators, a name, a constant or a
+ * parenthesized group, and its postfix chain -- or 0. A syntactic reach, so a cast base is recognized before a
+ * claim is made; the operand is then lowered as the value path lowers it. */
+static int unary_operand_end(CC *c, int j){
+  while(tok_is(tat(c,j),"*")||tok_is(tat(c,j),"&")||tok_is(tat(c,j),"-")||tok_is(tat(c,j),"~")||tok_is(tat(c,j),"!")
+        ||tok_is(tat(c,j),"+")) j++;
+  const tok *t=tat(c,j);
+  if(t->k==T_ID||t->k==T_INT) j++;
+  else if(tok_is(t,"(")){ j=group_end(c,j); if(!j) return 0; }
+  else return 0;
+  for(;;){ t=tat(c,j);
+    if(tok_is(t,"[")||tok_is(t,"(")){ j=group_end(c,j); if(!j) return 0; continue; }
+    if((tok_is(t,".")||tok_is(t,"->")) && tat(c,j+1)->k==T_ID){ j+=2; continue; }
+    if(tok_is(t,"++")||tok_is(t,"--")){ j++; continue; }
+    return j; }
+}
+/* The tokens of a parenthesized pointer base at `k` followed by `->` or `[`, or 0: `( * q )` of a `T **` (A6), or
+ * `( ( type-name ) operand )`, a cast whose value is the base, as the oracle's `_addr` takes a cast to a pointer
+ * type (CSUB-5c: `((char *)b)[len] = 0`). */
+static int paren_base_len(CC *c, int k){
+  if(paren_deref_form(c,k)) return 4;
+  if(!tok_is(tat(c,k),"(") || !tok_is(tat(c,k+1),"(") || !type_name_tok(c,tat(c,k+2))) return 0;
+  int j=group_end(c,k+1); if(!j || tok_is(tat(c,j),"{")) return 0;   /* `((T){...})`: a compound literal */
+  j=unary_operand_end(c,j); if(!j || !tok_is(tat(c,j),")")) return 0;
+  const tok *nx=tat(c,j+1); if(!tok_is(nx,"->") && !tok_is(nx,"[")) return 0;
+  return j+1-k;
+}
 static int chain_end(CC *c, int j){
   for(;;){ const tok *t=tat(c,j);
     if(t->k==T_PUN && ((t->n==1 && t->s[0]=='.') || (t->n==2 && t->s[0]=='-' && t->s[1]=='>'))){ j+=2; continue; }
@@ -4450,10 +4485,18 @@ static int chain_end(CC *c, int j){
     return j; }
 }
 static int paren_deref_base(CC *c, uint32_t *ptr, field *pf){
-  if(!paren_deref_form(c,c->i)) return 0;
-  const venv *v=lookup(c,tat(c,c->i+2)); uint32_t qrid=v->rid;
-  c->i+=4;                                            /* `( * q )` */
-  uint32_t p=emit_deref_rid(c,qrid); if(c->failed) return 0;
+  int len=paren_base_len(c,c->i); if(!len) return 0;
+  uint32_t p;
+  if(len==4 && paren_deref_form(c,c->i)){
+    const venv *v=lookup(c,tat(c,c->i+2)); uint32_t qrid=v->rid;
+    c->i+=4;                                            /* `( * q )` */
+    p=emit_deref_rid(c,qrid); if(c->failed) return 0; }
+  else { int close=c->i+len-1; c->i++;                 /* `( (T *) operand )`: the cast's value */
+    p=p_unary(c); if(c->failed) return 0;
+    if(c->i!=close){ fail(c,")"); return 0; }
+    c->i++;
+    const bcir_resource *cr=res_of(c->fn,p);
+    if(!cr || cr->kind!=BCIR_RK_POINTER || cr->is_funcptr){ fail(c,"unsupported base expression Cast"); return 0; } }
   const bcir_resource *r=res_of(c->fn,p); if(!r){ fail(c,CC_DEREF_NOT); return 0; }
   memset(pf,0,sizeof *pf); pf->sidx=-1; pf->elem_sidx=-1;
   pf->is_ptr=1; pf->size=cc_abi(c)->pointer_size; pf->access_bytes=pf->size;
@@ -4864,11 +4907,30 @@ static int is_string_mem(const char *s, int n) {
  * `strstr`, and `strlen`, freestanding since C23 (4p7): external libc edges like the memory routines (verbatim, opaque
  * to R18, NOT bcir_-renamed), each typed by its declared result: 1 a comparison's `int`, 2 `memchr`'s `void *`, 3
  * `strlen`'s `size_t`, 4 a string search's `char *`, else 0 (CSUB-5). The oracle's `_STRING_READ`. */
+/* <string.h> writes -- `strcpy`, `strncpy`, `strcat` and `strncat`, which write a string into their first operand, and
+ * `strtok`, which writes its token's end there: libc edges like the reads, each typed by its declared result, a
+ * `char *` (4, as `string_read` kinds it), else 0 (CSUB-5c). The oracle's `_STRING_WRITE`; `string_read` answers for
+ * both, as the oracle's `_STRING_TYPED`. */
+static int string_write(const char *s, int n) {
+  static const char *const W[]={"strcpy","strncpy","strcat","strncat","strtok",0};
+  for(int i=0;W[i];i++) if((int)strlen(W[i])==n && !strncmp(W[i],s,(size_t)n)) return 4;
+  return 0;
+}
+/* <ctype.h> -- C's character classification and case mapping (C11 7.4), each an `int (int)`: libc edges like the
+ * <string.h> routines, recognized by name and never declared by the emit, whose artifact includes the library's
+ * <ctype.h> instead -- a library may define each as a function-like macro as well (C11 7.1.4p1), as glibc does
+ * (CSUB-5c). The oracle's `_CTYPE_CALLS`. */
+static const char *const ctype_calls[]={"isalnum","isalpha","isblank","iscntrl","isdigit","isgraph","islower",
+                                        "isprint","ispunct","isspace","isupper","isxdigit","tolower","toupper",0};
+static int ctype_call(const char *s, int n) {
+  for(int i=0;ctype_calls[i];i++) if((int)strlen(ctype_calls[i])==n && !strncmp(ctype_calls[i],s,(size_t)n)) return 1;
+  return 0;
+}
 static int string_read(const char *s, int n) {
   static const struct { const char *name; int kind; } M[]={{"memcmp",1},{"strcmp",1},{"strncmp",1},{"memchr",2},
                                                             {"strchr",4},{"strrchr",4},{"strstr",4},{"strlen",3},{0,0}};
   for(int i=0;M[i].name;i++) if((int)strlen(M[i].name)==n && !strncmp(M[i].name,s,(size_t)n)) return M[i].kind;
-  return 0;
+  return string_write(s,n);
 }
 
 /* B-breadth (#61) LAPACK: nonzero if s[0..n) is a Fortran-ABI LU/solve driver base name with a trailing
@@ -4928,7 +4990,8 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
   if(libm_float_size(s,n) || libm_is_int(s,n) || libm_is_long(s,n) || libm_is_ld(s,n)) return "-lm";
   /* libc-implicit (malloc/free/realloc/calloc/aligned_alloc, memcpy/memmove/memset + the printf/scanf family)
    * -> no flag. */
-  if(is_stdlib_alloc(s,n) || is_string_mem(s,n) || string_read(s,n) || is_extern_variadic(s,n)) return "";
+  if(is_stdlib_alloc(s,n) || is_string_mem(s,n) || string_read(s,n) || ctype_call(s,n) || is_extern_variadic(s,n))
+    return "";
   /* B5 BLAS: cblas_sgemm and any cblas_* (CBLAS) -> -lcblas (the existing B5 path's choice). */
   if(n>=6 && !strncmp("cblas_",s,6)) return "-lcblas";
   /* B2 FFTW: each precision's library (`fftw_library`): fftwf_* -> -lfftw3f, the B2 wrap's single-precision
@@ -5038,6 +5101,10 @@ static const bcir_ctype *callee_ret(CC *c, const tok *name) {
   if(!c->unit) return NULL;
   for(int i=0;i<c->unit->n_funcs;i++){ const char *fn=c->unit->funcs[i].name;
     if((int)strlen(fn)==name->n && !strncmp(fn,name->s,(size_t)name->n)) return &c->unit->funcs[i].ret; }
+  if(c->fn && (int)strlen(c->fn->name)==name->n && !strncmp(c->fn->name,name->s,(size_t)name->n))
+    return &c->fn->ret;   /* the function being defined, declared from its declarator on (C11 6.2.1p7): its own
+                           * call is typed by its return, as the oracle's `func_rets` types it -- a struct result had
+                           * been an unsigned int, refused as a struct's initializer before R18 saw the cycle */
   return NULL;
 }
 
@@ -5196,6 +5263,7 @@ static uint32_t p_call(CC *c, const tok *name) {
     return t;                                /* not added to fn->calls (opaque to R18) */
   }
   { int sr=string_read(name->s,name->n);     /* <string.h> memcmp/memchr/strlen, typed by its result (CSUB-5) */
+    if(!sr && ctype_call(name->s,name->n)) sr=1;   /* a <ctype.h> function's `int` (CSUB-5c) */
     if(sr && !unit_defines(c,name)){ uint32_t t;
       if(sr==2){ t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");   /* a `void *` */
         if(c->fn->n_res) c->fn->res[c->fn->n_res-1].ptr_depth=1; }
@@ -7643,8 +7711,9 @@ static BCIR_NOINLINE int deref_rvalue_assign_value(CC *c, uint32_t *out){
 }
 static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_assign's frame (BCIR_NOINLINE) */
   int save=c->i;
-  if(paren_deref_form(c,c->i)){                       /* `x = ((*q)->m = v)` of a `T **` (CSUB-2e, A6) */
-    const tok *aop=tat(c,chain_end(c,c->i+4));
+  if(paren_base_len(c,c->i)){                         /* `x = ((*q)->m = v)` of a `T **` (CSUB-2e, A6), and a cast
+                                                       * base's, `((T *)p)[i] = v` (CSUB-5c) */
+    const tok *aop=tat(c,chain_end(c,c->i+paren_base_len(c,c->i)));
     if(tok_is(aop,"=") || is_compound_op(aop)){
       size_t m_res=c->fn->n_res,m_cl=c->fn->n_claims; uint32_t m_rid=c->rid,m_cid=c->cid,m_clc=c->cl_ctr;
       uint32_t dp; field df; plv lv;
@@ -8167,8 +8236,8 @@ static BCIR_NOINLINE int incdec_value(CC *c, uint32_t *out){   /* out of p_unary
   if(deref_incdec(c,out)) return 1;                        /* `++*p` / `(*p)++` (CF-SPLIT2) */
   if(c->failed) return 0;
   { int pre=(is(c,"++")||is(c,"--")), at=c->i+pre;          /* `(*q)->m++`, `--(*q)->m` of a `T **` (CSUB-2e, A6) */
-    if(paren_deref_form(c,at)){
-      const tok *tj=tat(c,chain_end(c,at+4));
+    if(paren_base_len(c,at)){                               /* ... and a cast base's (CSUB-5c) */
+      const tok *tj=tat(c,chain_end(c,at+paren_base_len(c,at)));
       int post=tj->k==T_PUN && tj->n==2 && (tj->s[0]=='+'||tj->s[0]=='-') && tj->s[1]==tj->s[0];
       if(pre || post){
         char dch=pre?pk(c)->s[0]:tj->s[0]; int dsave=c->i;
@@ -9366,6 +9435,27 @@ static void p_simple(CC *c) {
     if(stop>0){ int os=c->step_stop; c->step_stop=stop; p_stmt(c); c->step_stop=os; return; } }
   (void)p_expr(c);
 }
+/* The comma operator in a for-clause's dominant positions: `piece, piece, ...` up to the token at `end`, each piece
+ * read as the oracle's `_for` and `_for_step` read it. The whole list is read, or refused with `endtok`: never a part
+ * of it lowered and the rest dropped (CF-STEP; the init's, CSUB-5c). */
+static void p_simple_list(CC *c, int end, const char *endtok){
+  int ose=c->step_end; c->step_end=end;
+  p_simple(c);
+  while(is(c,",")&&!c->failed){ c->i++; p_simple(c); }
+  if(!c->failed && c->i!=end) fail(c,endtok);
+  c->step_end=ose;
+}
+/* A for-init expression's end, the `;` at its own depth, when a `,` stands at that depth before it (CSUB-5c);
+ * else 0, and the init is read as the statement it is. */
+static int clause_comma_end(CC *c){
+  int d=0, comma=0;
+  for(int k=c->i; k<c->nt; k++){ const tok *t=&c->t[k];
+    if(tok_is(t,"(")||tok_is(t,"[")||tok_is(t,"{")) d++;
+    else if(tok_is(t,")")||tok_is(t,"]")||tok_is(t,"}")){ if(--d<0) return 0; }
+    else if(d==0 && tok_is(t,",")) comma=1;
+    else if(d==0 && tok_is(t,";")) return comma ? k : 0; }
+  return 0;
+}
 /* Store through a loaded POINTER chain (#fieldderef): `s->mid->k = v`, the two-hop `s->mid->leaf->x = v`,
  * the subscript `s->p[i] = v`, and their `OP=` compound forms. `ptr` is the loaded pointer rid, `psidx`
  * its pointee struct (-1 for a pointer-to-scalar), `pfld` the field it came from. Mirrors the member /
@@ -9582,7 +9672,10 @@ static void p_stmt_inner(CC *c) {
     if(is(c,";")) c->i++;             /* empty init */
     else if(at_attr_run(c)){ fail(c,"expected expression"); return; }   /* an attribute leads no for-init on either
                                                                          * rail (the oracle reads one as an expression) */
-    else p_stmt(c);                   /* init: a decl / assignment / expr (consumes its `;`) */
+    else { int iend=0;
+      if(!decl_start_tok(c,pk(c)) && (iend=clause_comma_end(c))>0){ p_simple_list(c,iend,";"); eat(c,";"); }
+      else p_stmt(c); }               /* init: a decl / assignment / expr (consumes its `;`); `r = 0, w = n`
+                                       * the comma's pieces, as the step's are (CSUB-5c) */
     marker(c,"c.loop",0,0);
     uint32_t cond;
     if(is(c,";")){ cond=temp(c,4); bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
@@ -9596,13 +9689,9 @@ static void p_stmt_inner(CC *c) {
     int step_end=c->i; eat(c,")");
     p_block(c);                        /* the loop body */
     marker(c,"c.cont.tgt",0,0);        /* continue -> run the step, then re-test */
-    if(step_end>step_start){ int save=c->i, ose=c->step_end; c->i=step_start;   /* step @ iter end */
-      c->step_end=step_end;
-      p_simple(c);                                             /* `i++, j--, k = …` -- the comma */
-      while(is(c,",")&&!c->failed){ c->i++; p_simple(c); }     /* operator in its dominant position */
-      if(!c->failed && c->i!=step_end) fail(c,")");            /* the whole step read, or refused: never a part
-                                                                * of it lowered and the rest dropped (CF-STEP) */
-      c->step_end=ose; c->i=save; }
+    if(step_end>step_start){ int save=c->i; c->i=step_start;   /* step @ iter end */
+      p_simple_list(c,step_end,")");                           /* `i++, j--, k = …` */
+      c->i=save; }
     c->nenv=env_mark;                  /* pop the loop scope -- restore outer name bindings */
     marker(c,"c.endloop",0,0); return;
   }
@@ -9935,8 +10024,9 @@ static void p_stmt_inner(CC *c) {
    * output parameter / MMIO location). Mirrors the deref-load forms in p_unary: `*p` is a store at
    * offset 0 (imm = [0, size], like a member store); `*(p + i)` is the indexed store `p[i]` (rd =
    * [ptr, idx, val], like the array store). A compound `OP=` loads first (emit_deref / emit_index). */
-  if(paren_deref_form(c,c->i) && member_is_store(c,c->i+4)){   /* `(*q)->m = v`, `(*q)[i] OP= v` of a `T **` (CSUB-2e,
-                                                       * A6): the store through the pointer `*q` holds */
+  if(paren_base_len(c,c->i) && member_is_store(c,c->i+paren_base_len(c,c->i))){   /* `(*q)->m = v`, `(*q)[i] OP= v` of a
+                                                       * `T **` (CSUB-2e, A6): the store through the pointer `*q` holds;
+                                                       * `((char *)b)[len] = 0`, through a cast's value (CSUB-5c) */
     uint32_t dp; field df; if(!paren_deref_base(c,&dp,&df)) return;
     store_through_ptr(c,dp,df.ptee_sidx,df); eat(c,";"); return; }
   if(is(c,"*")){
@@ -12420,7 +12510,8 @@ static const char *lk_includes(CC *c, bcir_cfront_result *out){
   static const char *const stddef_names[]={"size_t","ptrdiff_t","wchar_t","max_align_t",0};
   static const char *const mem_calls[]={"memcpy","memmove","memset",0};
   static const char *const str_calls[]={"memcpy","memmove","memset","memcmp","strcmp","strncmp","memchr","strchr",
-                                        "strrchr","strstr","strlen",0};   /* `_STRING_CALLS` */
+                                        "strrchr","strstr","strlen","strcpy","strncpy","strcat","strncat","strtok",0};
+                                                                      /* `_STRING_CALLS` */
   static const char *const va_names[]={"va_list","va_start","va_arg","va_end","va_copy",0};
   static const char *const bool_names[]={"bool","true","false",0};
   static const char *const align_names[]={"alignas","alignof",0};
@@ -12457,6 +12548,7 @@ static const char *lk_includes(CC *c, bcir_cfront_result *out){
     i=j; }
   lk_trunc(c,w0);
   int f_quar=strstr(s,"BCIR_CHK")!=NULL, f_stdlib=0, f_string=f_mem, f_cconst=0, f_extern=0, f_libm=0, f_other=0;
+  int f_ctype=0;
   for(int f=0; f<out->unit.n_funcs; f++) for(size_t k=0; k<out->unit.funcs[f].n_claims; k++){
     const char *op=out->unit.funcs[f].claims[k].op;
     int libm=!strncmp(op,"c.call.libm:",12) || !strncmp(op,"c.call.libm.void:",17), ext=!strncmp(op,"c.call.extern:",14);
@@ -12467,10 +12559,12 @@ static const char *lk_includes(CC *c, bcir_cfront_result *out){
     if(ext) f_extern=1;
     if(lk_named(nm,strlen(nm),libc)) f_stdlib=1;
     else if(lk_named(nm,strlen(nm),str_calls)) f_string=1;
+    else if(lk_named(nm,strlen(nm),ctype_calls)) f_ctype=1;   /* the library's own declarations (CSUB-5c) */
     else f_other=1; }
-  ctext_putf(c,&c->lktext,"#include <stdint.h>\n%s%s%s%s%s%s%s%s%s%s%s%s",
+  ctext_putf(c,&c->lktext,"#include <stdint.h>\n%s%s%s%s%s%s%s%s%s%s%s%s%s",
              f_stddef?"#include <stddef.h>\n":"", f_quar?"#include \"bcir_quarantine.h\"\n":"",
              f_stdlib?"#include <stdlib.h>\n":"", f_string?"#include <string.h>\n":"",
+             f_ctype?"#include <ctype.h>\n":"",
              f_va?"#include <stdarg.h>\n":"", f_atomic?"#include <stdatomic.h>\n":"",
              (f_cplx||f_cconst)?"#include <complex.h>\n":"", f_bool?"#include <stdbool.h>\n":"",
              f_align?"#include <stdalign.h>\n":"", f_extern?"#include <stdio.h>\n":"",

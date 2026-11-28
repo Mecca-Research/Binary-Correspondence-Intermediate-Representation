@@ -313,6 +313,27 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-28 — CSUB-5c: the tools' next forms on both rails; four more tools under the verified compiler.**
+  - **Forms.** Both rails read:
+    - a `for` init's comma expression;
+    - a cast to a pointer type as a base, `((char *)b)[len] = 0`, in every path a parenthesized `(*q)` base takes;
+    - `<string.h>`'s writes and `<ctype.h>`'s functions, as typed libc edges;
+    - POSIX's `<unistd.h>` on Linux.
+  - **`<ctype.h>`** is no header the rails supply: a library may define its functions as macros too (C11 7.1.4p1).
+    glibc does, so an emitted `extern int isspace(int);` beside its header did not compile; the declarations witness
+    found it, and the artifact includes the library's own.
+  - **One twin defect:** a call of the function being defined, whose result is a struct, was typed an unsigned int and
+    refused as the struct's initializer before R18 saw the cycle.
+  - **Evidence.**
+    - `test_a_for_inits_comma_a_cast_base_and_the_string_writes_lower_alike_and_run_as_clangs_build`: 5 units run as
+      Clang's build, 2 forms refused alike, the self-call reaching R18 on both rails, and the 4 tools to one digest.
+    - `test_unistd_is_one_text_on_both_rails_and_the_c_librarys_declarations`: `<unistd.h>` one text on both rails
+      for the five targets; every declared or recognized function's emit compiled beside glibc's headers.
+  - The ratchet moves to **59 of 68**.
+  - **Standing faults.** `cfront-csub5c.json`, 20, each swept RED; FS5, PE17–PE19, ST4, SR1, SR5 and HP14
+    re-anchored and re-swept. HC14 and HC15 (an artifact without `<ctype.h>`) first survived: both witnesses compiled
+    each emit after the source's own include. The linkable emit's header rows now hold it, compiled alone.
+
 - **2026-11-27 — CSUB-5b: the hosted headers on both rails; eight tools under the verified compiler.**
   - Both rails read `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` as the target's C library
     declares what the runtime's tools call of it: glibc's `struct _IO_FILE` and `__errno_location` on Linux, the

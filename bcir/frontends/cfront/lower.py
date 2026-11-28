@@ -350,7 +350,42 @@ _STRING_READ = {
     "strstr": "char *",
     "strlen": "size_t",
 }
-_STRING_CALLS = _STRING_MEM | frozenset(_STRING_READ)
+# <string.h> writes -- `strcpy`, `strncpy`, `strcat` and `strncat`, which write a string into their first operand, and
+# `strtok`, which writes its token's end there: libc edges like the reads (verbatim, opaque to R18, NOT bcir_-renamed),
+# each typed by its declared result, a `char *` (CSUB-5c). The twin's `string_write`.
+_STRING_WRITE = {
+    "strcpy": "char *",
+    "strncpy": "char *",
+    "strcat": "char *",
+    "strncat": "char *",
+    "strtok": "char *",
+}
+_STRING_TYPED = {**_STRING_READ, **_STRING_WRITE}
+
+# <ctype.h> -- C's character classification and case mapping (C11 7.4), each an `int (int)`: libc edges like the
+# <string.h> routines, recognized by name and never declared by the emit, whose artifact includes the library's
+# <ctype.h> instead -- a library may define each as a function-like macro as well (C11 7.1.4p1), as glibc does, and
+# an `extern int isalnum(int);` beside its header is then no declaration (CSUB-5c). The twin's `ctype_call`.
+_CTYPE_CALLS = frozenset(
+    {
+        "isalnum",
+        "isalpha",
+        "isblank",
+        "iscntrl",
+        "isdigit",
+        "isgraph",
+        "islower",
+        "isprint",
+        "ispunct",
+        "isspace",
+        "isupper",
+        "isxdigit",
+        "tolower",
+        "toupper",
+    }
+)
+_LIBC_TYPED = {**_STRING_TYPED, **dict.fromkeys(_CTYPE_CALLS, "int")}
+_STRING_CALLS = _STRING_MEM | frozenset(_STRING_TYPED)
 
 # GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
 _BUILTIN_INT = frozenset(
@@ -2577,8 +2612,10 @@ class _FuncLowerer:
             ):  # *(p + i) == p[i]
                 lt = self._static_type(operand.lhs)
                 # `*(p + i + j)`, `*(p - 1u + i)`: the left operand is itself a sum, which no subscript
-                # bases -- the pointer value it is, dereferenced below (CF-DEREFSUM)
-                if not isinstance(operand.lhs, cast.Binary) and (lt is None or self._indexable(lt)):
+                # bases -- the pointer value it is, dereferenced below (CF-DEREFSUM). So is `*((T *)b + i)`, a
+                # cast's value plus `i`, as the twin's general deref of a pointer rvalue takes it (CSUB-5c)
+                no_base = isinstance(operand.lhs, (cast.Binary, cast.Cast))
+                if not no_base and (lt is None or self._indexable(lt)):
                     return self._lvalue(cast.Index(operand.lhs, operand.rhs))
                 if not self._indexable(self._static_type(operand)):  # `*(s + 1u)`: no pointer in it
                     raise CLowerError(DEREF_NOT)
@@ -3008,6 +3045,10 @@ class _FuncLowerer:
         if isinstance(node, (cast.CallPtr, cast.CallMember)):
             rid = self._rvalue(node)
             return rid, self.rtypes.get(rid, scalar("uint32_t")), 0
+        # `((char *)b)[len]`, `((T *)p)->m`: a cast to a pointer type, its value the base, as a call's (CSUB-5c)
+        if isinstance(node, cast.Cast) and self._type_of(node).kind == "pointer":
+            rid = self._rvalue(node)
+            return rid, self.rtypes.get(rid, self._type_of(node)), 0
         raise CLowerError(f"unsupported base expression {type(node).__name__}")
 
     def _mmio(self, base_rid: int) -> bool:
@@ -5576,10 +5617,10 @@ class _FuncLowerer:
             # a <string.h> routine: its result is its destination, a `void *`
             t = self._temp(pointer(scalar("void")), f"mem_{node.callee}")
             return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
-        if node.callee in _STRING_READ and node.callee not in self.func_rets:
+        if node.callee in _LIBC_TYPED and node.callee not in self.func_rets:
             # a <string.h> read: a comparison's `int`, `memchr`'s `void *`, a string search's `char *`, `strlen`'s
-            # `size_t` (CSUB-5)
-            rt = _STRING_READ[node.callee]
+            # `size_t` (CSUB-5); a write's `char *`, and a <ctype.h> function's `int` (CSUB-5c)
+            rt = _LIBC_TYPED[node.callee]
             ty = pointer(scalar(rt[:-2], self.abi)) if rt.endswith(" *") else scalar(rt, self.abi)
             t = self._temp(ty, f"str_{node.callee}")
             return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))

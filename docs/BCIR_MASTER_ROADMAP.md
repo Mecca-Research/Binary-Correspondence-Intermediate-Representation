@@ -284,7 +284,7 @@ Current work is maintenance and bounded completion, not another breadth sprint:
   - CSUB-2, table idioms (most of the blocked units wait on it);
   - CSUB-3, `<stdbit.h>`, `<stdckdint.h>` and one `bcir_bytes.h` (landed);
   - CSUB-4, `<stdatomic.h>`'s explicit-order calls (landed);
-  - CSUB-5, a hosted profile (its `<string.h>` reads and hosted headers landed);
+  - CSUB-5, a hosted profile (its `<string.h>` reads, hosted headers and the tools' next forms landed);
   - CSUB-6, AI numerics at the source level.
 
   The ratchet fails a unit that stops compiling clean, and fails a promotion until it is

@@ -123,22 +123,22 @@
    "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
    "label": "PE17 a store through (*q) as an expression",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "  if(paren_deref_form(c,c->i) && member_is_store(c,c->i+4)){",
-   "new": "  if(0 && paren_deref_form(c,c->i) && member_is_store(c,c->i+4)){"
+   "old": "  if(paren_base_len(c,c->i) && member_is_store(c,c->i+paren_base_len(c,c->i))){",
+   "new": "  if(0 && paren_base_len(c,c->i) && member_is_store(c,c->i+paren_base_len(c,c->i))){"
   },
   {
    "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
    "label": "PE18 a step through (*q) not stepped",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "    if(paren_deref_form(c,at)){",
-   "new": "    if(0 && paren_deref_form(c,at)){"
+   "old": "    if(paren_base_len(c,at)){                               /* ... and a cast base's (CSUB-5c) */",
+   "new": "    if(0 && paren_base_len(c,at)){                               /* ... and a cast base's (CSUB-5c) */"
   },
   {
    "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
    "label": "PE19 an assignment as a value through (*q) not stored",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "  if(paren_deref_form(c,c->i)){                       /* `x = ((*q)->m = v)`",
-   "new": "  if(0 && paren_deref_form(c,c->i)){                       /* `x = ((*q)->m = v)`"
+   "old": "  if(paren_base_len(c,c->i)){                         /* `x = ((*q)->m = v)`",
+   "new": "  if(0 && paren_base_len(c,c->i)){                         /* `x = ((*q)->m = v)`"
   },
   {
    "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",

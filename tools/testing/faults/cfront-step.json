@@ -32,8 +32,8 @@
    "expects": "test_a_for_step_store_is_a_statement_on_both_rails",
    "label": "ST4 a for-step read in part is lowered, the rest dropped",
    "path": "runtime/c/bcir_cfront.c",
-   "old": "      if(!c->failed && c->i!=step_end) fail(c,\")\");            /* the whole step read, or refused: never a part\n",
-   "new": "      if(0) fail(c,\")\");            /* the whole step read, or refused: never a part\n"
+   "old": "  if(!c->failed && c->i!=end) fail(c,endtok);\n",
+   "new": "  if(0) fail(c,endtok);\n"
   },
   {
    "expects": "test_a_for_step_store_is_a_statement_on_both_rails",

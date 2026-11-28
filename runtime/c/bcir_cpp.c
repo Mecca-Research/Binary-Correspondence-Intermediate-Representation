@@ -1329,6 +1329,13 @@ static void h_inttypes(const CppState *st, hbuf *b) {
     for (int k = 0; k < 6; k++) hput(b, "#define PRI%s%s \"%s%s\"", C[k], W[w], m, C[k]);
   }
 }
+static void h_unistd(const CppState *st, hbuf *b) {  /* POSIX's, as glibc declares it (never on Windows: the caller) */
+  static const char *const D[] = {"typedef int pid_t;", "int close(int);", "int fsync(int);",
+    "ssize_t read(int, void *, size_t);", "ssize_t write(int, const void *, size_t);", "int unlink(const char *);",
+    "pid_t getpid(void);", "pid_t fork(void);", "void _exit(int);", 0};
+  hput(b, "%s", st->pointer_size == 8 ? "typedef long ssize_t;" : "typedef int ssize_t;");
+  for (int k = 0; D[k]; k++) hput(b, "%s", D[k]);
+}
 static void h_math(hbuf *b) {
   hput(b, "#define NAN (__builtin_nanf(\"\"))"); hput(b, "#define INFINITY (__builtin_inff())");
   hput(b, "#define HUGE_VAL (__builtin_huge_val())"); hput(b, "#define HUGE_VALF (__builtin_huge_valf())");
@@ -1339,7 +1346,8 @@ static void h_math(hbuf *b) {
 }
 static const char *const builtin_names[] = {"stdint.h", "stddef.h", "stdbool.h", "limits.h", "float.h", "iso646.h",
                                             "stdalign.h", "stdckdint.h", "stdatomic.h", "stdbit.h", "math.h",
-                                            "stdio.h", "stdlib.h", "errno.h", "time.h", "inttypes.h", 0};
+                                            "stdio.h", "stdlib.h", "errno.h", "time.h", "inttypes.h", "unistd.h",
+                                            0};
 static int builtin_known(const char *name) {
   for (int k = 0; builtin_names[k]; k++) if (!strcmp(builtin_names[k], name)) return 1;
   return 0;
@@ -1348,6 +1356,7 @@ static int builtin_known(const char *name) {
  * include reads nothing: 1, or 0 for a header the preprocessor does not supply (or, never, one past the buffer). */
 static int builtin_header(CppState *st, const char *name) {
   if (!builtin_known(name)) return 0;
+  if (st->msvc && !strcmp(name, "unistd.h")) return 0;   /* the UCRT has none: read as nothing (CSUB-5c) */
   hbuf b = {st->builtin_text, sizeof st->builtin_text, 0, 0};
   char guard[32]; size_t g = 0;
   g += (size_t)snprintf(guard, sizeof guard, "__BCIR_");
@@ -1370,6 +1379,7 @@ static int builtin_header(CppState *st, const char *name) {
   else if (!strcmp(name, "errno.h")) h_errno(st, &b);
   else if (!strcmp(name, "time.h")) h_time(st, &b);
   else if (!strcmp(name, "inttypes.h")) h_inttypes(st, &b);
+  else if (!strcmp(name, "unistd.h")) h_unistd(st, &b);
   else h_math(&b);
   hput(&b, "#endif");
   if (b.full) { cpp_limit(st, "standard header text too large"); return 0; }

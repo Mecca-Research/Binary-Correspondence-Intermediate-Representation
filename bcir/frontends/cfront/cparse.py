@@ -1929,7 +1929,13 @@ class _Parser:
             elif self._is_decl_start():
                 init = self._decl_stmt()  # a declaration (consumes its `;`)
             else:
-                init = cast.ExprStmt(self._incdec() or self._expr())
+                # one or more comma-separated expressions (`r = 0, w = 0`), run in order once before the loop:
+                # the comma operator in its other dominant position, read as the step's pieces are (CSUB-5c)
+                parts = [cast.ExprStmt(self._incdec() or self._expr())]
+                while self.at("PUNCT", ","):
+                    self.nxt()
+                    parts.append(cast.ExprStmt(self._incdec() or self._expr()))
+                init = parts[0] if len(parts) == 1 else cast.Seq(tuple(parts))
                 self.eat("PUNCT", ";")
             cond = cast.IntLit(1) if self.at("PUNCT", ";") else self._expr()
             self.eat("PUNCT", ";")

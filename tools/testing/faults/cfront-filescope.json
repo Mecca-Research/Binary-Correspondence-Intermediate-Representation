@@ -42,8 +42,8 @@
   {
    "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
    "label": "FS5 the oracle bases a subscript on `*(p + i + j)`'s inner sum (`*(\"abc\" + 1 + i)` refused)",
-   "new": "                if lt is None or self._indexable(lt):\n",
-   "old": "                if not isinstance(operand.lhs, cast.Binary) and (lt is None or self._indexable(lt)):\n",
+   "new": "                no_base = isinstance(operand.lhs, cast.Cast)\n",
+   "old": "                no_base = isinstance(operand.lhs, (cast.Binary, cast.Cast))\n",
    "path": "bcir/frontends/cfront/lower.py"
   },
   {

@@ -52,6 +52,7 @@ NAMES = (
     "errno.h",
     "time.h",
     "inttypes.h",
+    "unistd.h",
 )
 
 _I8, _I16, _I32 = 127, 32767, 2147483647
@@ -576,6 +577,26 @@ def _inttypes(abi: TargetABI) -> list[str]:
     ]
 
 
+def _unistd(abi: TargetABI) -> list[str] | None:
+    # POSIX's descriptor and process calls the runtime's tools make, as glibc declares them: `ssize_t` its `long` where
+    # pointers are 64 bits and its `int` where they are 32. The UCRT has no `<unistd.h>`, so on Windows it is a header
+    # this module does not supply, read as nothing as any other is (CSUB-5c)
+    if _windows(abi):
+        return None
+    return [
+        "typedef long ssize_t;" if abi.pointer_size == 8 else "typedef int ssize_t;",
+        "typedef int pid_t;",
+        "int close(int);",
+        "int fsync(int);",
+        "ssize_t read(int, void *, size_t);",
+        "ssize_t write(int, const void *, size_t);",
+        "int unlink(const char *);",
+        "pid_t getpid(void);",
+        "pid_t fork(void);",
+        "void _exit(int);",
+    ]
+
+
 def _math(abi: TargetABI) -> list[str]:
     # the constants and the classification macros, spelled as glibc spells them: `isinf` its sign-returning builtin
     return [
@@ -609,6 +630,7 @@ _BUILDERS = {
     "errno.h": _errno,
     "time.h": _time,
     "inttypes.h": _inttypes,
+    "unistd.h": _unistd,
 }
 
 
@@ -624,7 +646,8 @@ def header_text(name: str, abi: TargetABI) -> str | None:
     """The text of the standard header `name` on `abi`'s target, guarded so a second include reads nothing; None for
     a header this module does not supply."""
     build = _BUILDERS.get(name)
-    if build is None:
+    lines = None if build is None else build(abi)
+    if lines is None:  # not one, or not on this target (`<unistd.h>` on Windows)
         return None
     guard = "__BCIR_" + name.replace(".", "_").upper()
-    return "\n".join([f"#ifndef {guard}", f"#define {guard} 1", *build(abi), "#endif"]) + "\n"
+    return "\n".join([f"#ifndef {guard}", f"#define {guard} 1", *lines, "#endif"]) + "\n"
