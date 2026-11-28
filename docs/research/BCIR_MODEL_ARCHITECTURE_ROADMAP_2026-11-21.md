@@ -484,8 +484,8 @@ exceeded; `<= 0.04` nat WikiText-2 CE drift — `<= 4.08%` PPL ratio $e^{\Delta\
   (`7.07 B/p`), it wins the `1.024M`-token `T=256` pilot at `4.81` untouched test PPL (`-0.2949`
   nats vs `GQA_Full` `6.47`), faster wall clock than `GQA_Full`, lowest RAM (`8.76 MiB`), `4.84×`
   lower peak activations, and verified crash-atomic 0-bit-drift mid-run checkpoint resume across all 7 optimizers.
-- **Verified `10M` Reference Model — `BCIR-Arch7d-10M` ([BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md), `Modular-AI` PR #230 `f5b9e26`):**
-  Stage 0 sizing & ablation locks in **`Arch7d_10M_B_ff928_gr32_dc128`** (`10.037M` params: `d=512, L=4 [GDN-2×3, NoPE-MLA], h=8, kvh=2, ff=928, mla_dc=128, mla_dr=32, gate_rank=32, tied=1, G1, QK-Norm, Canon-AC, mHC C=2, online_softmax=1`), clearing BCIR's `P4` width gate (`12/12` MLPs `>= 512`, `2.75 MiB` `T=4096` state = `5.82×` vs GQA, `7.79 MiB` `COMP-1` 4K footprint) whereas narrow-deep `d=384, L=8` fails `P4` (`0/24` MLPs, `17.24 MiB` 4K footprint). Across a **3-stage progressive curriculum (`T=128 → 256 → 512`, `1,114,112` real tokens)** with 0-bit-drift cross-stage `Opt_Q8_Muon_BF16Grad` (`68.2 MiB` pers., `-55.5%` vs FP32) handoff, `BCIR-Arch7d-10M` reaches **`val PPL 4.05` (`BPB 2.019`, `58.9%` acc)** and untouched test **`PPL 4.32` (`T=256`) / `4.30` (`T=512`)** (`0.0%` clip hits across Stages 2–3), extrapolates **`4×` zero-shot to `T=2048` (`PPL 4.13`, `BPB 2.048`, `58.5%` acc, `max_abs_act=2.13`, `sink=0.005`, `1.75 MiB` state)**, beats parameter-matched `GQA_Full`, `Arch-2`, and `Arch-7d + Adafactor` controls, ships a permanent `9.87 MiB` `BCIRQ8 v1` checkpoint (`+0.0001` nats vs FP32), and demonstrates **Exact Differentiable Scale-Factor `COMP-1` QAT** (`-0.2903` nats / `42.8%` PTQ gap recovery in 32 steps without STE sign-flip shock).
+- **Verified `10M` Reference Model — `BCIR-Arch7d-10M` ([BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md), `Modular-AI` PR #230 `271a907`):**
+  Stage 0 sizing & ablation locks in **`Arch7d_10M_B_ff928_gr32_dc128`** (`10.037M` params: `d=512, L=4 [GDN-2×3, NoPE-MLA], h=8, kvh=2, ff=928, mla_dc=128, mla_dr=32, gate_rank=32, tied=1, G1, QK-Norm, Canon-AC, mHC C=2, online_softmax=1`), clearing BCIR's `P4` width gate (`12/12` MLPs `>= 512`, `2.75 MiB` `T=4096` state = `5.82×` vs GQA, `7.79 MiB` `COMP-1` 4K footprint) whereas narrow-deep `d=384, L=8` fails `P4` (`0/24` MLPs, `17.24 MiB` 4K footprint). Across a **3-stage progressive curriculum (`T=128 → 256 → 512`, `1,114,112` real tokens)** with 0-bit-drift cross-stage `Opt_Q8_Muon_BF16Grad` (`68.2 MiB` pers., `-55.5%` vs FP32) handoff, `BCIR-Arch7d-10M` reaches **`val PPL 4.05` (`BPB 2.019`, `58.9%` acc)** and untouched test **`PPL 4.32` (`T=256`) / `4.30` (`T=512`)** (`0.0%` clip hits across Stages 2–3), extrapolates **`4×` zero-shot to `T=2048` on SHA-256-verified identical target bytes** (fixed-tail `Win64` flat `4.21` PPL with `-0.0004` nat drift vs `T=512`; fixed `16 kB` span strictly monotonic `4.43 → 4.21` PPL, `max_abs_act=2.17`, `sink=0.005`, `1.75 MiB` state), beats all 4 parameter-matched `T=256` controls and gains an isolated **`-0.1788` nats (`6.56` vs `7.84` PPL)** under equal `LR(tokens)` at `T=128`, ships a permanent `9.87 MiB` `BCIRQ8 v1` checkpoint (`+0.0001` nats vs FP32), and demonstrates **Exact Differentiable Scale-Factor `COMP-1` QAT** (`-0.2903` nats / `42.8%` PTQ gap recovery in 32 steps without STE sign-flip shock).
 - Parameter-matched `6.16M` geometry (`wide_shallow_6m` `d=512, L=2` vs `narrow_deep_6m` `d=256, L=8`,
   within `0.029%` params) proves width/aspect ratio — not parameter count — controls the storage floor
   (`0.37` vs `0.47 BPW`, `2.02×` lower `r=1` floor, `1.69×` faster decode).
@@ -519,11 +519,11 @@ caught in `gp-global` and `wedge-next`):
    covering `GQA`, `SWA`, `Arch-1 DeltaNet`, `Arch-2 Hybrid-DN+GQA`, `Arch-4 MLA`, and `Arch-7`
    (`KDA`, `GDN-2`, `G1`, `QK-Norm`, `Canon-A/C`, `DeepSeek mHC`, `TRAIN-OPT-5` `online_softmax`),
    keeping ABI 5 `bcir_decoder_train.c` untouched.
-2. **Phase M2 (`BCIR-Arch7d-10M` Reference Model, `1.114M`-Token Curriculum & `4×` Extrapolation) — COMPLETED (G1/G4/10M Reference):**
+2. **Phase M2 (`BCIR-Arch7d-10M` Reference Model, `1.114M`-Token Curriculum & `4×` Fixed-Target Extrapolation) — COMPLETED (G1/G4/10M Reference):**
    Locked in `BCIR-Arch7d-10M` (`d=512, L=4, ff=928, mla_dc=128, gate_rank=32`, `10.037M` params) via
    Stage 0 sizing/ablation, verified progressive `T=128 → 256 → 512` curriculum (`1.114M` tokens,
-   untouched test `PPL 4.30` @ `T=512`, `4×` zero-shot `T=2048` `PPL 4.13`, `2.75 MiB` `T=4K` state,
-   permanent `9.87 MiB` `BCIRQ8 v1` checkpoint at `+0.0001` nats, `Modular-AI` PR #230 `f5b9e26`;
+   untouched test `PPL 4.30` @ `T=512`, `4×` zero-shot fixed-target `T=2048` `PPL 4.21` with `-0.0004` nat drift on identical `2 kB` tail targets and `-0.0053` nat improvement on identical `16 kB` spans, `2.75 MiB` `T=4K` state,
+   permanent `9.87 MiB` `BCIRQ8 v1` checkpoint at `+0.0001` nats, `Modular-AI` PR #230 `271a907`;
    prior 10-arch ablation in merged PR #229 `529f3f2`).
 3. **Phase M3 (Native `Arch-7d` Inference Decode Lowering & Tier M `10M`-Token Scaling):**
    - Lower `BCIR-Arch7d-10M` (`GDN-2` + `NoPE-MLA` + `Canon-AC` + `mHC`) onto BCIR's `BCIRQ8 v1` /
@@ -539,7 +539,7 @@ caught in `gp-global` and `wedge-next`):
 5. **Phase M5 (`COMP-1` Deployment Export) — IMPLEMENTED:** Landed `BCIRQ8 v2` hybrid Q8-Attention
    + Sub-1-Bit Packed-LUT4 MLP (`bcir_ai_kernels.{h,c}`, `bcir_q8_model.{h,c}`, `deploy_policy.py`)
    with permanent `bcir.deploy_baseline.v1` baseline checkpoint (`Modular-AI` PR #228 `8cc3f23`) and
-   verified Exact Differentiable Scale-Factor `COMP-1` QAT recovery on `BCIR-Arch7d-10M` (`PR #230` `f5b9e26`).
+   verified Exact Differentiable Scale-Factor `COMP-1` QAT recovery on `BCIR-Arch7d-10M` (`PR #230` `271a907`).
 
 ---
 
@@ -564,4 +564,4 @@ caught in `gp-global` and `wedge-next`):
 - Pinned LittleBit / LittleBit-2 bare-metal C experiment bundle (`littlebit-sub1bit-study`, merged commit `3ec7ee5551b3740c46015b86aef9fe3e52e142bb`, PR #227): https://github.com/Mecca-Research/Modular-AI/tree/3ec7ee5551b3740c46015b86aef9fe3e52e142bb/BCIR%20Model%20Training/littlebit-sub1bit-study
 - Pinned Precision Frontier & Exp 5 Deployment Baseline bundle (`precision-arch-study`, merged commit `8cc3f234be0bc84009b79f152ab55995ada9a499`, PR #228): https://github.com/Mecca-Research/Modular-AI/tree/8cc3f234be0bc84009b79f152ab55995ada9a499/BCIR%20Model%20Training/precision-arch-study
 - Pinned ABI 6 `MIXER-EXT`, `Q8-Muon`, `Arch-7` & `1.024M` Pilot bundle (`mixer-ext-abi6-study`, merged commit `529f3f2eae601c5a39d2ffa5543e0f57795f044d`, PR #229): https://github.com/Mecca-Research/Modular-AI/tree/529f3f2eae601c5a39d2ffa5543e0f57795f044d/BCIR%20Model%20Training/mixer-ext-abi6-study
-- Pinned `BCIR-Arch7d-10M` 6-Stage Curriculum, Controls, `4×` Extrapolation & Deployment bundle (`arch7d-10m-training-study`, commit `f5b9e26dd008990b68f43dcb91434770f513ea7a`, PR #230): https://github.com/Mecca-Research/Modular-AI/tree/f5b9e26dd008990b68f43dcb91434770f513ea7a/BCIR%20Model%20Training/arch7d-10m-training-study
+- Pinned `BCIR-Arch7d-10M` 6-Stage Curriculum, Controls, Fixed-Target `4×` Extrapolation & Deployment bundle (`arch7d-10m-training-study`, commit `271a907000db3907a8e91b339f64d78caa1137cb`, PR #230): https://github.com/Mecca-Research/Modular-AI/tree/271a907000db3907a8e91b339f64d78caa1137cb/BCIR%20Model%20Training/arch7d-10m-training-study

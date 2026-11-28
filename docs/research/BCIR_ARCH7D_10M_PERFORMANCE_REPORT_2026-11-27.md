@@ -1,7 +1,7 @@
 # `BCIR-Arch7d-10M` Performance Report & Reference Architecture Configuration
 
 **Date:** 2026-11-27
-**Status:** Executed bare-metal C11 + Python ctypes 6-stage empirical study on production BCIR ABI 6 `MIXER-EXT` (`runtime/c/{bcir_tensor,bcir_precision,bcir_mixer_ext}.c`, zero duplicated C code); all stage scripts, per-step CSV telemetry (`1,024` logged steps across Stages 1–4), Gate 0 proofs, multi-panel figures, SHA-256 manifest, and runnable deterministic `BCIRQ8 v1` checkpoint (`9.87 MiB`, SHA-256 `bc67f32a2a1a...`) archived in [`Mecca-Research/Modular-AI` PR #230](https://github.com/Mecca-Research/Modular-AI/pull/230) under `BCIR Model Training/arch7d-10m-training-study/` (pinned commit `f5b9e26dd008990b68f43dcb91434770f513ea7a`).
+**Status:** Executed bare-metal C11 + Python ctypes 6-stage empirical study on production BCIR ABI 6 `MIXER-EXT` (`runtime/c/{bcir_tensor,bcir_precision,bcir_mixer_ext}.c`, zero duplicated C code); all stage scripts, per-step CSV telemetry (`1,216` logged steps across Stages 1–4 including the 5th `LR(tokens)`-matched `T=128` control), Gate 0 proofs, multi-panel figures, SHA-256 manifest, and runnable deterministic `BCIRQ8 v1` checkpoint (`9.87 MiB`, SHA-256 `bc67f32a2a1a...`) archived in [`Mecca-Research/Modular-AI` PR #230](https://github.com/Mecca-Research/Modular-AI/pull/230) under `BCIR Model Training/arch7d-10m-training-study/` (pinned commit `271a907000db3907a8e91b339f64d78caa1137cb`).
 **Host & Toolchain Provenance (`P6`):** `Intel(R) Xeon(R) CPU @ 2.30GHz` (2 physical cores, `avx2`, `fma`, no `avx512f`, no AMX, `7.8 GiB` RAM), `Linux 6.18.57 x86_64`, `cc (Ubuntu 13.3.0)` (`-std=c11 -O3 -ffp-contract=off -fno-math-errno -Wall -Wextra -Wpedantic -Werror`). Cross-compiler bit-exact determinism verified (`sha=95dfa233b413`, `0` bit drift) across GCC `-O3`, GCC `-O3 -march=native`, and Clang 23 `-O3 -march=native`.
 **Related BCIR Roadmaps:**
 - [BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md](BCIR_MODEL_ARCHITECTURE_ROADMAP_2026-11-21.md) (`MIXER-EXT`, `Arch-1..7`)
@@ -67,12 +67,12 @@ bcir_ext_spec spec = {
 
 ## 2. Progressive 3-Stage Curriculum Training (`1,114,112` Real Tokens)
 
-Trained on raw UTF-8 WikiText-2 bytes (`10.94M`-byte train stream) using a unified global cosine LR schedule (`warmup=40`, `max_lr=3.0e-3`, `min_lr=2.0e-4` over `640` global steps) with `Opt_Q8_Muon_BF16Grad` (`beta1=0.95, beta2=0.95, wd=0.01, grad_clip=3.0`) and **0-bit-drift cross-stage optimizer state handoff** (`10.77 MiB` serialized state persisted via crash-atomic generation checkpoints across mid-stage chunks and `T=128 → T=256 → T=512` context transitions):
+Trained on raw UTF-8 WikiText-2 bytes (`10.94M`-byte train stream) using a unified global cosine LR schedule (`warmup=40`, `max_lr=3.0e-3`, `min_lr=2.0e-4` over `640` global steps) with `Opt_Q8_Muon_BF16Grad` (`beta1=0.95, beta2=0.95, wd=0.01, grad_clip=3.0`), **0-bit-drift cross-stage optimizer state handoff** (`10.77 MiB` serialized state persisted via crash-atomic generation checkpoints across mid-stage chunks and `T=128 → T=256 → T=512` context transitions), and full-stage resume-aggregated telemetry:
 
-| Stage | Context / Batch (`N`) | Global Steps | Tokens (`Stage` / `Cum.`) | Wall (`s`) / `tok/s` | Med `ms/st` | Grad Norm (`Mean` / `Max`) | Clip % | Val (`CE` / `PPL` / `BPB` / `Acc`) | Test `T=128` (`PPL`) | Test `T=256` (`PPL`) | Test `T=512` (`PPL`) | Max `\|Act\|` / Sink |
+| Stage | Context / Batch (`N`) | Global Steps | Tokens (`Stage` / `Cum.`) | Wall (`s`) / `tok/s` | Med `ms/st` | Grad Norm (`Mean` / `Max`) | Clip % | Val (`CE` / `PPL` / `BPB` / `Acc`) | Test `T=128` (`PPL`) | Test `T=256` (`PPL`) | Test `T=512` (`PPL`) | Peak `\|Act\|` / Sink |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | **Stage 1** | `T=128, B=8` (`1,024`) | `0 → 192` | `196.6k` / `0.197M` | `648.2` / `303.3` | `3,174` | `3.09` / `9.78` | `26.6%` | `1.8806` / `6.56` / `2.713` / `47.1%` | `6.84` | `6.74` | `6.65` | `1.80` / `0.041` |
-| **Stage 2** | `T=256, B=8` (`2,048`) | `192 → 512` | `655.4k` / `0.852M` | `1,841.5` / `355.9` | `5,358` | `1.49` / `2.81` | **`0.0%`** | `1.4373` / `4.21` / `2.074` / `58.3%` | `4.58` | `4.47` | `4.46` | `2.13` / `0.025` |
+| **Stage 2** | `T=256, B=8` (`2,048`) | `192 → 512` | `655.4k` / `0.852M` | `1,841.5` / `355.9` | `5,358` | `1.49` / `2.81` | **`0.0%`** | `1.4373` / `4.21` / `2.074` / `58.3%` | `4.58` | `4.47` | `4.46` | `2.25` / `0.025` |
 | **Stage 3** | `T=512, B=4` (`2,048`) | `512 → 640` | `262.1k` / **`1.114M`** | `810.0` / `323.6` | `5,962` | `1.53` / `2.44` | **`0.0%`** | **`1.3998` / `4.05` / `2.019` / `58.9%`** | **`4.44`** | **`4.32`** | **`4.30`** | **`2.17` / `0.013`** |
 
 **Scale-Up Efficiency vs `1.22M` `pilot1m` (`PR #229`):**
@@ -82,44 +82,48 @@ Trained on raw UTF-8 WikiText-2 bytes (`10.94M`-byte train stream) using a unifi
 
 ---
 
-## 3. Parameter-Matched 10M Controls: Architecture × Optimizer × Curriculum Co-Design
+## 3. Parameter-Matched 10M Controls: Architecture × Optimizer × Matched-LR Context Co-Design
 
-Controlled 4-way benchmark at identical `B=8, T=256`, `96` steps (`196,608` real tokens), compared directly against Stage 1 progressive `T=128` (`192 × 1,024 = 196,608` tokens):
+Controlled 5-way benchmark at identical **`196,608` real tokens** under the **identical token-indexed LR schedule** (`warmup = 32,768` tokens, half-cosine `3.0e-3 → 3.0e-4` over `163,840` tokens), alongside the Stage 1 640-step recipe snapshot for reference:
 
-| Model + Optimizer (`196,608` Tokens) | Params | Pers. RAM (`MiB`) | `T=4K` State | Val CE (`T=256`) | Test `T=256` (`CE` / `PPL` / `Acc`) | Zero-Shot `T=512` (`PPL`) | `BCIRQ8` `Delta` | `COMP-1` PTQ `Delta` | Max `\|Act\|` | Wall (`s`) / `tok/s` |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `GQA_Full_10M + Adafactor` | `9.835M` | `112.7` | `16.00 MiB` | `2.2308` | `2.2574` / `9.56` / `35.2%` | `9.53` | `-0.0001` | `+0.1367` | `5.39` | `389.5` / `505` |
-| `Arch7d_10M + Adafactor` | `10.037M` | `115.1` | **`2.75 MiB`** | `2.0916` | `2.1267` / `8.39` / `38.8%` | `8.34` | `+0.0003` | `+0.1884` | `2.31` | `437.5` / `449` |
-| `Arch2_Hybrid_10M + Adafactor` | `9.860M` | `113.0` | `4.75 MiB` | `2.0425` | `2.0738` / `7.95` / `40.4%` | `7.92` | `+0.0003` | `+0.3237` | `3.54` | **`359.6` / `547`** |
-| **`Arch7d_10M + Q8-Muon (Flat T=256)`** | `10.037M` | **`68.2`** | **`2.75 MiB`** | **`2.0185`** | **`2.0593` / `7.84` / `41.0%`** | **`7.84`** | **`-0.0000`** | `+0.4721` | **`1.40`** | `575.4` / `342` |
-| **`Arch7d_10M + Q8-Muon (Stage 1 T=128)`** | `10.037M` | **`68.2`** | **`2.75 MiB`** | **`1.8551`** | **`1.9082` / `6.74` / `46.0%`** | **`6.65`** | `+0.0002` | — | `1.80` | `648.2` / `303` |
+| Model + Optimizer (`196,608` Tokens) | Schedule (`St × N`, `LR_end`) | Pers. RAM (`MiB`) | `T=4K` State | Val CE (`T=256`) | Test `T=256` (`CE` / `PPL` / `Acc`) | Zero-Shot `T=512` (`PPL`) | `BCIRQ8` `Delta` | `COMP-1` PTQ `Delta` | Max `\|Act\|` | Wall (`s`) / `tok/s` |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `GQA_Full_10M + Adafactor` | `96 × 2048`, `3.0e-4` | `112.7` | `16.00 MiB` | `2.2308` | `2.2574` / `9.56` / `35.2%` | `9.53` | `-0.0001` | `+0.1367` | `5.39` | `389.5` / `505` |
+| `Arch7d_10M + Adafactor` | `96 × 2048`, `3.0e-4` | `115.1` | **`2.75 MiB`** | `2.0916` | `2.1267` / `8.39` / `38.8%` | `8.34` | `+0.0003` | `+0.1884` | `2.31` | `437.5` / `449` |
+| `Arch2_Hybrid_10M + Adafactor` | `96 × 2048`, `3.0e-4` | `113.0` | `4.75 MiB` | `2.0425` | `2.0738` / `7.95` / `40.4%` | `7.92` | `+0.0003` | `+0.3237` | `3.54` | **`359.6` / `547`** |
+| `Arch7d_10M + Q8-Muon (Flat T=256)` | `96 × 2048`, `3.0e-4` | **`68.2`** | **`2.75 MiB`** | `2.0185` | `2.0593` / `7.84` / `41.0%` | `7.84` | **`-0.0000`** | `+0.4721` | **`1.40`** | `575.4` / `342` |
+| **`Arch7d_10M + Q8-Muon (Matched-LR T=128)`** | **`192 × 1024`, `3.0e-4`** | **`68.2`** | **`2.75 MiB`** | **`1.8355`** | **`1.8805` / `6.56` / `46.4%`** | **`6.53`** | **`+0.0001`** | `+0.4709` | `1.45` | `689.3` / `285` |
+| *Ref: Stage 1 Recipe (`640`-st schedule)* | *`192 × 1024`, `2.58e-3`* | *`68.2`* | *`2.75 MiB`* | *`1.8551`* | *`1.9082` / `6.74` / `46.0%`* | *`6.65`* | *`+0.0002`* | *—* | *`1.80`* | *`648.2` / `303`* |
 
 **Two Operational Laws Established at 10M Scale:**
-1. **`Arch-7d` × `Opt_Q8_Muon_BF16Grad` Co-Design Law:** Under diagonal `Adafactor` at 96 steps, `Arch-7d` (`8.39` PPL) warms up slightly slower than `Arch-2` (`7.95`); pairing `Arch-7d` with **`Opt_Q8_Muon_BF16Grad`** flips the ranking to `#1` (`7.84` PPL) while cutting persistent RAM `40%` (`115.1 → 68.2 MiB`), cutting peak activations `2.52×` vs `Arch-2` (`1.40` vs `3.54`), and passing `Arch7d + Adafactor`'s full 96-step validation loss at step 72 (`419.6 s` vs `425.0 s` — winning on **both equal tokens AND equal wall time**!).
-2. **Progressive Context Curriculum Multiplier:** On `GDN-2 + NoPE-MLA`, spending the first `196,608` tokens at `T=128` (`192` Muon steps) instead of flat `T=256` (`96` Muon steps) improves zero-shot `T=256` untouched test CE by **`-0.1511` nats (`6.74` vs `7.84` PPL)** and `T=512` test CE by **`-0.1633` nats (`6.65` vs `7.84` PPL)** in only `1.13×` wall time (`648.2 s` vs `575.4 s`).
+1. **`Arch-7d` × `Opt_Q8_Muon_BF16Grad` Co-Design Law:** Under diagonal `Adafactor` at 96 steps (`T=256`), `Arch-7d` (`8.39` PPL) warms up slightly slower than `Arch-2` (`7.95`); pairing `Arch-7d` with **`Opt_Q8_Muon_BF16Grad`** flips the ranking to `#1` (`7.84` PPL among `T=256` controls) while cutting persistent RAM `40%` (`115.1 → 68.2 MiB`), cutting peak activations `2.52×` vs `Arch-2` (`1.40` vs `3.54`), and passing `Arch7d + Adafactor`'s full 96-step validation loss at step 72 (`419.6 s` vs `425.0 s` — winning on **both equal tokens AND equal wall time**).
+2. **Isolated Equal-`LR(tokens)` Short-Context / Step-Frequency Advantage:** Holding both token budget (`196,608` tok) and `LR(tokens)` (`warmup = 32,768` tok, cosine `3.0e-3 → 3.0e-4`) strictly identical, `Arch7d_10M + Q8-Muon (Matched-LR T=128)` (`192 × 1,024`) beats `Flat T=256` (`96 × 2,048`) by **`-0.1788` nats (`6.56` vs `7.84` PPL)** on `T=256` test and **`-0.1829` nats (`6.53` vs `7.84` PPL)** on zero-shot `T=512` test, while beating `Flat T=256` at equal wall time (`val_ce = 1.9233` at `497.0 s` vs `2.0185` at `575.4 s`) and cutting arena RAM `43%` (`484.6` vs `850.7 MiB`). Stage 1 (`6.74` PPL, `LR_end = 2.58e-3`) sits `+0.0277` nats behind `Matched-LR T=128` strictly because the 640-step recipe keeps LR high for seamless continuation into Stages 2–3.
 
 ---
 
-## 4. `4×` Zero-Shot Context Extrapolation & Structural Forensics
+## 4. `4×` SHA-256-Verified Fixed-Target Context Extrapolation & Structural Forensics
 
-### 4.1 Untouched Test Scaling (`T=64 → T=2048`) & Per-Position Adaptation
+### 4.1 Fixed-Target Scaling (`T=64 → T=2048`) & Per-Position Adaptation
 
-| Horizon `T` | Regime | Test CE | Test PPL | Test BPB | Top-1 Acc | Max `\|Act\|` | Attn Sink | Inference State (`MiB`) | Eval Arena (`MiB`) |
-|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `64` | In-distribution | `1.5042` | `4.50` | `2.170` | `55.9%` | `2.15` | `0.067` | `0.78` | `204.2` |
-| `128` | In-distribution | `1.4897` | `4.44` | `2.149` | `57.0%` | `2.17` | `0.044` | `0.81` | `293.0` |
-| `256` | In-distribution | `1.4538` | `4.28` | `2.097` | `57.4%` | `2.19` | `0.025` | `0.88` | `471.2` |
-| `512` | Max Train `T` | `1.4580` | `4.30` | `2.103` | `57.8%` | `2.17` | `0.013` | `1.00` | `486.0` |
-| **`1024`** | **Zero-Shot `2×`** | **`1.4560`** | **`4.29`** | **`2.101`** | `57.3%` | `2.17` | `0.007` | **`1.25`** | `488.3` |
-| **`2048`** | **Zero-Shot `4×`** | **`1.4192`** | **`4.13`** | **`2.048`** | **`58.5%`** | **`2.13`** | **`0.005`** | **`1.75`** | `854.0` |
+Evaluated on the tracked `BCIRQ8 v1` checkpoint (`sha256=bc67f32a2a1a`, `+0.0001` nats vs FP32) under two SHA-256-asserted identical-target protocols (zero sample-difficulty confounding across horizons):
 
-- **Per-position in-context gain (`T=512`):** `pos 0–15` (`1.6511` CE / `5.21` PPL / `52.3%` acc) → `pos 384–511` (`1.4170` CE / `4.12` PPL / `58.8%` acc, **`-0.2341` nats**). On zero-shot `T=1024`, positions `512–767` sustain `1.4185` CE (`4.13` PPL, `57.7%` acc) with zero extrapolation drift.
+| Horizon `T` | Regime | Fixed Tail `Win64` (`2,048` Identical Bytes, `sha=79ffbbc2ca7f`): CE / PPL / Acc | Fixed Span `16 kB` (`16,384` Identical Bytes, `sha=22da92d8dcbc`): CE / PPL / BPB / Acc | Max `\|Act\|` | Attn Sink | Inference State (`MiB`) | Eval Arena (`MiB`) |
+|---:|---|---|---|---:|---:|---:|---:|
+| `64` | In-distribution | `1.4723` / `4.36` / `57.5%` | `1.4890` / `4.43` / `2.148` / `56.8%` | `2.16` | `0.079` | `0.78` | `204.2` |
+| `128` | In-distribution | `1.4363` / `4.21` / `58.8%` | `1.4604` / `4.31` / `2.107` / `57.6%` | `2.17` | `0.043` | `0.81` | `293.0` |
+| `256` | In-distribution | `1.4378` / `4.21` / `58.9%` | `1.4490` / `4.26` / `2.091` / `57.8%` | `2.17` | `0.026` | `0.88` | `471.2` |
+| `512` | Max Train `T` | `1.4381` / `4.21` / `58.7%` | `1.4426` / `4.23` / `2.081` / `57.9%` | `2.17` | `0.014` | `1.00` | `486.0` |
+| **`1024`** | **Zero-Shot `2×`** | **`1.4380` / `4.21` / `58.8%`** | **`1.4385` / `4.21` / `2.075` / `57.9%`** | `2.17` | `0.008` | **`1.25`** | `488.3` |
+| **`2048`** | **Zero-Shot `4×`** | **`1.4377` / `4.21` / `58.8%`** | **`1.4373` / `4.21` / `2.074` / `57.9%`** | **`2.17`** | **`0.005`** | **`1.75`** | `854.0` |
+
+- **Zero Extrapolation Collapse on Identical Targets:** Fixed-tail `Win64` drops `-0.0360` nats from `T=64 → 128` (`4.36 → 4.21` PPL) and holds rock-flat `4.21` PPL with `-0.0004` nat drift at `T=2048` (`4×` train `T`). Fixed-span `16 kB` improves **strictly monotonically across all six doublings (`4.43 → 4.31 → 4.26 → 4.23 → 4.21 → 4.21` PPL, `-0.0517` nats total, `-0.0053` nats beyond `T=512`)**.
+- **Per-position in-context profile (fixed `16 kB` spans):** At `T=512`, `pos 0–15` (`1.7142` CE / `5.55` PPL / `53.1%` acc) drops `-0.2719` nats to `pos 384–511` (`1.4423` CE / `4.23` PPL). On zero-shot `T=2048`, positions `1024–2047` (`8,192` bytes, `2×–4×` past max training horizon) sustain **`1.4187` CE (`4.13` PPL, `2.047` BPB, `58.2%` acc)** with zero extrapolation drift.
 
 ### 4.2 Per-Layer Spectral, `Canon-AC` & `mHC` Structural Forensics
 
 - **Muon Spectral Conditioning (`Init → Stage 3`):** Total Frobenius norm stays virtually flat (`215.00 → 216.94`, `+0.9%`), MLP mean 90%-energy rank holds at **`64.50%`** (`stable_rank = 167.58`), and mixer/attention `r90` holds at **`73.48%`**. Distributing energy uniformly across singular values maximizes representational capacity per parameter while making converged Muon MLPs inherently harder to truncate post-hoc to 1 bit without QAT (explaining the `+0.47` to `+0.68` nat PTQ delta vs Adafactor's `+0.19` at 197k tokens).
 - **Learned `Canon-AC` Causal Kernels:** All 8 `conv1d k=4` layers converge to clean monotonically decaying byte-lag filters (`Tap -1` `0.085–0.148` RMS > `Tap -2` `0.080–0.143` > `Tap -3` `0.067–0.115` > `Tap -0` `0.037–0.049`), with pre-MLP `Canon-C` consistently `~1.5×` stronger than pre-mixer `Canon-A`.
-- **Learned `mHC` `C=2` Birkhoff Matrices:** All 8 residual stream mixers remain strictly doubly-stochastic (`diag ≈ 0.953–0.961`, `off-diag ≈ 0.039–0.047`), holding `max_abs_act` flat at `2.13–2.19` across all horizons `T=64..2048`.
+- **Learned `mHC` `C=2` Birkhoff Matrices:** All 8 residual stream mixers remain strictly doubly-stochastic (`diag ≈ 0.953–0.961`, `off-diag ≈ 0.039–0.047`), holding `max_abs_act` flat at `2.16–2.17` across all fixed-target horizons `T=64..2048` (stage-wide training peak `2.25` in Stage 2).
 
 ---
 
@@ -147,6 +151,6 @@ From measured 2-core Haswell AVX2 throughput (`355.9 tok/s` @ `T=256`, `323.6 to
 
 **Immediate Architecture Plan Updates Driven by This Report:**
 1. **Standardize `BCIR-Arch7d-10M` (`d=512, L=4, ff=928, mla_dc=128, gate_rank=32`)** as the canonical 10M reference configuration and apply the compact-latent (`dc = d/4`) + wide-SwiGLU + `d >= 512` `P4` sizing rule when scaling to 50M (`d=768, L=8, mla_dc=192, gate_rank=48`).
-2. **Mandate Progressive Context Curriculum + Cross-Stage `Opt_Q8_Muon_BF16Grad` Handoff** (`T=128 → T=256 → T=512`) as BCIR's standard Tier M/L training recipe (`-0.1511` nats free gain at equal early tokens + `55.5%` persistent RAM reduction + `0.0%` post-warmup clip rate).
+2. **Mandate Progressive Context Curriculum + Cross-Stage `Opt_Q8_Muon_BF16Grad` Handoff** (`T=128 → T=256 → T=512`) as BCIR's standard Tier M/L training recipe (isolated equal-`LR(tokens)` `T=128` warmup gain `-0.1788` nats + `43%` smaller warmup arena + `55.5%` persistent RAM reduction + `0.0%` post-warmup clip rate).
 3. **Adopt Exact Differentiable Scale-Factor `COMP-1` QAT** (never naive periodic re-ITQ STE) as the official `COMP-1` QAT primitive for closing the Muon-trained 1-bit MLP gap, while shipping **`BCIRQ8 v1`** (`9.87 MiB`, `+0.0001` nats) immediately for near-lossless edge deployment.
 4. **Next Native Runtime Priority:** Lower `BCIR-Arch7d-10M` (`GDN-2` + `NoPE-MLA` + `Canon-AC` + `mHC`) onto BCIR's `BCIRQ8 v1` / `BCIRQ8 v2 LUT4-LANES` inference decode engine (`runtime/c/bcir_q8_model.{h,c}` + `bcir_ai_kernels.{h,c}`) so trained `Arch-7d` checkpoints serve natively at `12.62 MiB` (`BCIRQ8 v1`) / `7.79 MiB` (`COMP-1`) total `T=4096` footprint.
