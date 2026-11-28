@@ -19,6 +19,10 @@
 >   [`training/SLM_ROADMAP.md`](../../training/SLM_ROADMAP.md)
 > - Bare-metal C LittleBit / LittleBit-2 sub-1-bit compression study (`COMP-1`):
 >   [BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md](BCIR_LITTLEBIT_SUB1BIT_STUDY_2026-11-22.md)
+> - `BCIR-Arch7d-10M` reference build, curriculum & `4×` extrapolation report:
+>   [BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md)
+> - Weight-Space Programming, Live State-Space Programming & Self-Improvement Memory (`SIM`) hybrid report:
+>   [BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md)
 
 The GEM+ measurement discipline
 ([BCIR_GEMPLUS_ROADMAP.md §0](BCIR_GEMPLUS_ROADMAP.md#0-the-measurement-discipline-and-why-it-comes-first))
@@ -493,6 +497,35 @@ exceeded; `<= 0.04` nat WikiText-2 CE drift — `<= 4.08%` PPL ratio $e^{\Delta\
   `N = 1..256` (`35.9×` at `N=1`, `1.84×` at `N=256`) and crosses unpacked `LowRank-FP32` at
   `N ≈ 32` (`140.9` vs `135.2 us`), reinforcing per-host/shape/thread calibration of the prefill boundary.
 
+### 3-Tier Hybrid Control-Surface Law: `SSP-Live × WSP × SIM` ([BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md), `Modular-AI` PR #231 `320a110`)
+
+Re-auditing Takehi et al. (*Sparks of Weight-Space Programming*, Nov 2026) and Google's *Self-Improvement
+Memory* (`arXiv:2611.18856`, Nov 2026) via bare-metal C11 experiments linking against unmodified ABI 6
+`bcir_mixer_ext.c` (`<= 1.29e-5` stateful decode parity) establishes where State-Space Programming,
+Weight-Space Programming, and `SIM` fit inside `BCIR-Arch7d`:
+
+- **`Qwen3.5-0.8B` ↔ `BCIR-Arch7d` Structural Isomorphism:** `Qwen3.5-0.8B` is a `3:1` hybrid
+  (`18× linear_attention [GDN] + 6× full_attention`, `attn_output_gate=true`, `conv k=4`), and Astra's
+  winning Exp 8 edits landed strictly on deep `full_attention` layers (`L15, L19 ≡ 3 mod 4`) — directly
+  isomorphic to `BCIR-Arch7d`'s `NoPE-MLA + G1` anchors (`L3` at 4L/10M; `L3, L7` at 8L/50M).
+- **Tier 1 (`SSP-Live` + Decoding Harness — Recurrent `GDN-2` State `S_t`, Zero KL):** Adaptive online
+  `GDN-2` state-echo damping (`S_t` damp + erase boost triggered on 4-gram echo) gains **`+10.30` pts**
+  (`20.18 → 30.48`, `0` weight mutations, `0.0000` KL) on `BCIR-Arch7d-10M`, beating every single-layer
+  static WSP edit; adaptive `NgramGuard` reaches **`78.93` (`loop 100% → 40.6%`, `0` KL)**.
+- **Tier 2 (`WSP-1..4` — Global `NoPE-MLA` Anchors `l ≡ 3 mod 4`):** On `BCIR-Arch7d-10M`, activation
+  contrast peaks at `L3` (`6.121`), where sparse `L3.wdown` (`k=64`, `0.326%` coords) gains **`+7.45`**
+  (beating `L0–L2`, dense `L3`, and matched-norm random `-0.01`), and **`3` `L3.bg` `G1` scalars**
+  (`0.00003%`) beat zeroing `32,430` `L3.wo` coords (`21.15` vs `20.66`, `KL=0.00031`). Parameter-matched
+  uniform `GQA_Full_2M` fails WSP on **`0/4` layers (`-7.77` to `-0.55`)**, while `Canon-AC`, `mHC`, and
+  static global `GDN-2` gate edits are verified traps/invariants.
+- **Tier 3 (`SIM-1..3` — Outer-Loop CRSI Orchestrator):** A problem-grouped `bcir.sim.v1` ledger on the
+  Proposer+Selector finishes #1 (or ceiling-tied at `99+`, timed from strictly isolated cold caches)
+  across **`5/5` real BCIR shifts** (`mean 98.19` vs `86.57` Transfer, `+11.62` pts; `+4.20` Cross-Dataset,
+  **`+6.24` Cross-Family `GQA-2M → Arch7d-10M`** at `1.37×` faster cold wall & `9.3×` source retention,
+  and **`+47.65` Cross-Precision `BCIRQ8 → established COMP-1 1b`** rescuing negative transfer at `1.28×`
+  faster cold wall & `4.58×` source retention), cutting trap-locus wasted probes `2.0–2.6×` while proving
+  via `n = 10` paired seeds (`p = 0.197` at `n = 6` Evolve) that production CRSI requires `>= 30–50` Evolve tasks.
+
 ---
 
 ## 3. Unified Architecture Qualification Ladder (`ARCH-GATE`)
@@ -523,23 +556,28 @@ caught in `gp-global` and `wedge-next`):
    Locked in `BCIR-Arch7d-10M` (`d=512, L=4, ff=928, mla_dc=128, gate_rank=32`, `10.037M` params) via
    Stage 0 sizing/ablation, verified progressive `T=128 → 256 → 512` curriculum (`1.114M` tokens,
    untouched test `PPL 4.30` @ `T=512`, `4×` zero-shot fixed-target `T=2048` `PPL 4.21` with `-0.0004` nat drift on identical `2 kB` tail targets and `-0.0053` nat improvement on identical `16 kB` spans, `2.75 MiB` `T=4K` state,
-   permanent `9.87 MiB` `BCIRQ8 v1` checkpoint at `+0.0001` nats, `Modular-AI` PR #230 `271a907`;
-   prior 10-arch ablation in merged PR #229 `529f3f2`).
-3. **Phase M3 (Native `Arch-7d` Inference Decode Lowering & Tier M `10M`-Token Scaling):**
-   - Lower `BCIR-Arch7d-10M` (`GDN-2` + `NoPE-MLA` + `Canon-AC` + `mHC`) onto BCIR's `BCIRQ8 v1` /
+   permanent `9.87 MiB` `BCIRQ8 v1` checkpoint at `+0.0001` nats, merged `Modular-AI` PR #230 `8039838`;
+   prior 10-arch ablation in merged PR #229 `529f3f2`; `WSP`/`SSP-Live`/`SIM` 3-tier control study in
+   PR #231 `320a110`).
+3. **Phase M3 (Native `Arch-7d` Inference Decode Lowering, `SSP-Live` Runtime Hooks & Tier M `10M`-Token Scaling):**
+   - Lower `BCIR-Arch7d-10M` (`GDN-2` + `NoPE-MLA` + `Canon-AC` + `mHC`) together with **Tier 1 `SSP-Live`
+     (`GDN-2` adaptive state-echo damping + `NoPE-MLA` repeat-key bias)** onto BCIR's `BCIRQ8 v1` /
      `BCIRQ8 v2 LUT4-LANES` inference engine (`runtime/c/bcir_q8_model.{h,c}`, `bcir_ai_kernels.{h,c}`)
      with Exact Differentiable Scale-Factor `COMP-1` KD-QAT (`200–500` steps) to close the Muon 1-bit MLP gap.
+   - Standardize `bcir.wsp1.weight_patch.v1` and `bcir.sim.v1` outer-loop CRSI governance alongside
+     `bcir/frontends/models/deploy_policy.py`.
    - Execute full Tier M (`10M` tokens, `~1.2 hrs` est. on 16-core AVX2 / `~0.43 hrs` on 32-core AVX-512)
      on `BCIR-Arch7d-10M` using the progressive `T=128 → 256 → 512` curriculum + `Opt_Q8_Muon_BF16Grad`,
      and implement `Arch-5` (`BCIR-BLT` 4-byte / UAX #29 patches after UC-6).
-4. **Phase M4 (`BCIR-Arch7d-50M` & `BCIR-MoE` Scaling):** Apply the verified `P4` width-gate &
+4. **Phase M4 (`BCIR-Arch7d-50M` & `BCIR-MoE` Scaling):** Apply the verified `P4` width-gate, `3:1`
+   global-anchor stratum (`L3, L7` `NoPE-MLA + G1` anchors for `WSP` / `SSP-Live` controllability), and
    compact-latent sizing law (`d=768, L=8 [3:1 × 2], mla_dc=192 = d/4, gate_rank=48`) to scale
    `Arch-7d` and `BCIR-MoE` to 50M+ parameters (`>= 10M–50M` tokens) using `Opt_Q8_Muon_BF16Grad`
    (`~342 MiB` persistent state at `50.7M` params) and archive checkpoints/logs in `Mecca-Research/Modular-AI`.
 5. **Phase M5 (`COMP-1` Deployment Export) — IMPLEMENTED:** Landed `BCIRQ8 v2` hybrid Q8-Attention
    + Sub-1-Bit Packed-LUT4 MLP (`bcir_ai_kernels.{h,c}`, `bcir_q8_model.{h,c}`, `deploy_policy.py`)
    with permanent `bcir.deploy_baseline.v1` baseline checkpoint (`Modular-AI` PR #228 `8cc3f23`) and
-   verified Exact Differentiable Scale-Factor `COMP-1` QAT recovery on `BCIR-Arch7d-10M` (`PR #230` `271a907`).
+   verified Exact Differentiable Scale-Factor `COMP-1` QAT recovery on `BCIR-Arch7d-10M` (merged `PR #230` `8039838`).
 
 ---
 
@@ -554,6 +592,9 @@ caught in `gp-global` and `wedge-next`):
 - Allen-Zhu, *Physics of Language Models: Part 4.1, Architecture Design and the Magic of Canon Layers* (2025): https://arxiv.org/abs/2512.17351
 - DeepSeek-AI, *mHC: Manifold-Constrained Hyper-Connections* (2025): https://arxiv.org/abs/2512.24880
 - *8-bit Muon (`Muon-8L/AdamW-32`)* (2025): https://arxiv.org/abs/2509.23106
+- Takehi et al., *Sparks of Weight-Space Programming* (MIT CSAIL, Nov 2026): https://rikiyat.github.io/blog/weight-space-programming/
+- Yu et al., *Self-Improvement Memory Enables Continual Recursive Self-Improvement* (Google, Nov 2026): https://arxiv.org/abs/2611.18856
+- Qwen Team, `Qwen/Qwen3.5-0.8B` `3:1` Hybrid GDN + Full-Attention + G1 configuration: https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/config.json
 - Lieber et al., *Jamba: A Hybrid Transformer-Mamba Language Model* (2024): https://arxiv.org/abs/2403.19887
 - Ren et al., *Samba: Simple Hybrid State Space Models for Efficient Unlimited Context Language Modeling* (2024): https://arxiv.org/abs/2406.07522
 - DeepSeek-AI, *DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model* (MLA & MoE, 2024): https://arxiv.org/abs/2405.04434
@@ -564,4 +605,5 @@ caught in `gp-global` and `wedge-next`):
 - Pinned LittleBit / LittleBit-2 bare-metal C experiment bundle (`littlebit-sub1bit-study`, merged commit `3ec7ee5551b3740c46015b86aef9fe3e52e142bb`, PR #227): https://github.com/Mecca-Research/Modular-AI/tree/3ec7ee5551b3740c46015b86aef9fe3e52e142bb/BCIR%20Model%20Training/littlebit-sub1bit-study
 - Pinned Precision Frontier & Exp 5 Deployment Baseline bundle (`precision-arch-study`, merged commit `8cc3f234be0bc84009b79f152ab55995ada9a499`, PR #228): https://github.com/Mecca-Research/Modular-AI/tree/8cc3f234be0bc84009b79f152ab55995ada9a499/BCIR%20Model%20Training/precision-arch-study
 - Pinned ABI 6 `MIXER-EXT`, `Q8-Muon`, `Arch-7` & `1.024M` Pilot bundle (`mixer-ext-abi6-study`, merged commit `529f3f2eae601c5a39d2ffa5543e0f57795f044d`, PR #229): https://github.com/Mecca-Research/Modular-AI/tree/529f3f2eae601c5a39d2ffa5543e0f57795f044d/BCIR%20Model%20Training/mixer-ext-abi6-study
-- Pinned `BCIR-Arch7d-10M` 6-Stage Curriculum, Controls, Fixed-Target `4×` Extrapolation & Deployment bundle (`arch7d-10m-training-study`, commit `271a907000db3907a8e91b339f64d78caa1137cb`, PR #230): https://github.com/Mecca-Research/Modular-AI/tree/271a907000db3907a8e91b339f64d78caa1137cb/BCIR%20Model%20Training/arch7d-10m-training-study
+- Pinned `BCIR-Arch7d-10M` 6-Stage Curriculum, Controls, Fixed-Target `4×` Extrapolation & Deployment bundle (`arch7d-10m-training-study`, merged commit `803983803b72b7d313924fe5d4c3c644d969385e`, PR #230): https://github.com/Mecca-Research/Modular-AI/tree/803983803b72b7d313924fe5d4c3c644d969385e/BCIR%20Model%20Training/arch7d-10m-training-study
+- Pinned `WSP` / `SSP-Live` / `SIM` Hybrid Control Study bundle (`wsp-sim-hybrid-study`, commit `320a110e3f17511a88dec99de7ff9cf8714944be`, PR #231): https://github.com/Mecca-Research/Modular-AI/tree/320a110e3f17511a88dec99de7ff9cf8714944be/BCIR%20Model%20Training/wsp-sim-hybrid-study
