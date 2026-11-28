@@ -194,6 +194,18 @@ static const bcir_abi *bcir_abi_by_name(const char *name){
   for(int i=0;i<BCIR_N_TARGETS;i++) if(!strcmp(g_targets[i].name,name)) return &g_targets[i];
   return NULL;
 }
+int bcir_cfront_target_cpp(const char *target, int *long_size, int *pointer_size, int *long_double, int *msvc,
+                           int *flt_eval){
+  const bcir_abi *a=bcir_abi_by_name(target);
+  if(!a) return 1;
+  int x86 = !strncmp(a->triple,"x86_64",6) || !strncmp(a->triple,"i386",4);   /* the oracle's `stdheaders._facts` */
+  if(long_size) *long_size=a->long_size;
+  if(pointer_size) *pointer_size=a->pointer_size;
+  if(long_double) *long_double = a->long_double_size==8 ? 0 : x86 ? 1 : 2;
+  if(msvc) *msvc = strstr(a->triple,"msvc")!=NULL;
+  if(flt_eval) *flt_eval = !strncmp(a->triple,"i386",4) ? 2 : 0;
+  return 0;
+}
 int bcir_cfront_target_chars(const char *target, int *char_signed, int *wchar_size, int *wchar_signed){
   const bcir_abi *a=bcir_abi_by_name(target);
   if(!a) return 1;
@@ -1318,6 +1330,8 @@ static long long ce_dim(CC *c,int probe);   /* fwd: an array dimension, an integ
 /* Parse `struct|union [tag] [attrs] { members } [attrs]` (NO trailing `;`). Registers an sdef and
  * returns its index (-1 on error). An anonymous aggregate (no tag, e.g. `typedef struct {...} N;`)
  * gets a synthesized internal tag so a typedef can alias it. */
+static int static_assert_at(CC *c);   /* fwd: a static assertion at the cursor (CSUB-1) */
+static void p_static_assert(CC *c);
 static int p_struct_body(CC *c) {
   int is_union = is(c,"union");
   c->i++; int packed=0,aligned=0; attrs(c,&packed,&aligned);
@@ -1341,6 +1355,8 @@ static int p_struct_body(CC *c) {
   if(!eat(c,"{"))return -1;
   long long dbits=0;int maxsz=0;   /* dbits: a bit cursor (Itanium/packed layout) */
   while(!is(c,"}")&&!c->failed){
+    if(static_assert_at(c)){                          /* a member declaration list takes one (C11 6.7.2.1p1) */
+      p_static_assert(c); if(c->failed) return -1; S=&c->s[my]; continue; }
     int mpk=0,maln=0; attrs(c,&mpk,&maln);            /* member-leading `_Alignas(N)`/`aligned(N)`: over-aligns
                                                        * every declarator off this specifier (mpk ignored) */
     /* an INLINE aggregate member `struct {...}` / `union {...}`: parse + register its body, then either PROMOTE
@@ -1580,6 +1596,36 @@ static BCIR_NOINLINE int ce_cast_type(CC *c,kval *t){
   t->bits=ty.size*8; t->sgn=ty.signd; return 1; }
 static int ce_expr(CC *c,int minp,int live,kval *out);
 static int ce_sizeof(CC *c,kval *out);   /* fwd: `sizeof`/`_Alignof` of a type-name (CF-CONSTEXPR2) */
+static int offsetof_value(CC *c,long long *off);   /* fwd: `__builtin_offsetof` (CSUB-1) */
+/* The floating builtin <math.h>'s constants spell at token k -- `__builtin_nan*("")`, `__builtin_inf*()`,
+ * `__builtin_huge_val*()` (the headers the preprocessor supplies; the oracle's `cparse._FLOAT_BUILTINS`): 'f' for the
+ * `float` form, 'l' the `long double` one, 'd' the `double` one, 0 when none is (CSUB-1). */
+static int float_builtin_at(CC *c,int k){
+  const tok *t=tat(c,k);
+  if(t->k!=T_ID || !tok_is(tat(c,k+1),"(")) return 0;
+  static const char *const base[]={"__builtin_nan","__builtin_inf","__builtin_huge_val",0};
+  for(int b=0;base[b];b++){ int L=(int)strlen(base[b]);
+    if(t->n<L || t->n>L+1 || strncmp(t->s,base[b],(size_t)L)) continue;
+    if(t->n==L) return 'd';
+    if(t->s[L]=='f') return 'f';
+    if(t->s[L]=='l') return 'l'; }
+  return 0;
+}
+/* The size of the floating builtin's type, by its class (`float_builtin_at`): the target lays `long double` out. */
+static int float_builtin_size(CC *c,int cls){ return cls=='f' ? 4 : cls=='l' ? cc_abi(c)->long_double_size : 8; }
+/* ... and the index just past its `)`, 0 when its operand is not the one it takes: the empty string literal for a
+ * `__builtin_nan*`, nothing for the rest (refused, with `fail`, where `refuse`). */
+static int float_builtin_end(CC *c,int k,int refuse){
+  const tok *t=tat(c,k); int j=k+2;
+  if(t->n>=13 && !strncmp(t->s,"__builtin_nan",13)){
+    const tok *a=tat(c,j);
+    if(a->k!=T_STR || a->n!=2 || a->s[0]!='"'){
+      if(refuse){ char m[96]; snprintf(m,sizeof m,"%.*s takes the empty string literal",t->n,t->s); fail(c,m); }
+      return 0; }
+    j++; }
+  if(!tok_is(tat(c,j),")")){ if(refuse) fail(c,")"); return 0; }
+  return j+1;
+}
 /* A floating constant, in any parentheses, at the cursor: the operand `ce_float_cast` takes. */
 static int float_operand_at(CC *c){
   int k=c->i; while(tok_is(tat(c,k),"(")) k++;
@@ -1620,6 +1666,10 @@ static int ce_primary(CC *c,int live,kval *out){
   if(isk(c,T_INT)){ tok k=adv(c); int sz,sg; lit_int_type(k.s,k.n,cc_abi(c),&sz,&sg);
     *out=kint((unsigned long long)k.v,sz*8,sg); ok=1; }
   else if(is(c,"sizeof")||is(c,"_Alignof")||is(c,"alignof")) ok=ce_sizeof(c,out);   /* of a type-name (6.6p6) */
+  else if(is(c,"true")||is(c,"false")){ unsigned long long b=is(c,"true"); c->i++;   /* C23's: a `bool` (6.4.4.6) */
+    *out=kint(b,1,0); out->kind=1; ok=1; }
+  else if(is(c,"__builtin_offsetof")){ long long o;   /* <stddef.h>'s `offsetof`: a `size_t` (CSUB-1) */
+    ok=offsetof_value(c,&o); if(ok) *out=kint((unsigned long long)o,cc_abi(c)->pointer_size*8,0); }
   else if(isk(c,T_ID)){ int e=visible_enum(c,pk(c)->s,pk(c)->n);   /* a hidden one is an object: no constant */
     if(e>=0){ c->i++; *out=kint((unsigned long long)c->ec[e].val,32,1); ok=1; } }
   else if(is(c,"(")){ c->i++;
@@ -1666,6 +1716,26 @@ static long long ce_value(CC *c){ kval v; return ce_fold(c,0,&v) ? kvalue(&v) : 
  * `_BitInt(N)`'s width, `aligned(N)` and `alignas(N)` -- 0 with it refused (the oracle's `_const_int`, CF-CONSTEXPR2):
  * `enum { W = 3 }; ... uint32_t a : W;` had been laid out with a width of 0, a member as wide as its type. */
 static int ce_int(CC *c,long long *v){ kval k; if(!ce_fold(c,0,&k)) return 0; *v=kvalue(&k); return 1; }
+/* The reason both rails refuse a static assertion whose constant expression is zero (C11 6.7.10p2; the oracle's
+ * `STATIC_ASSERT_FAILED`, CSUB-1): the message is not part of it -- the source holds it. */
+#define CC_STATIC_ASSERT "static assertion failed"
+static int static_assert_at(CC *c){ return is(c,"_Static_assert") || is(c,"static_assert"); }
+/* `_Static_assert ( constant-expression , string-literal ) ;` (C11 6.7.10), or `static_assert` and C23's form with no
+ * message, the cursor on the keyword -- at file scope, in a block, or among an aggregate's members: the expression an
+ * integer constant expression folded on the target (`ce_fold`: a `sizeof`, `_Alignof` or `offsetof` of the unit's types
+ * laid out so far), a zero one refused (`CC_STATIC_ASSERT`), any other declaring nothing. Both rails had read one as a
+ * call of a function of that name (`R18: call to undefined function _Static_assert`) or refused it at file scope (the
+ * oracle's `cparse._static_assert`, CSUB-1). */
+static void p_static_assert(CC *c){
+  kval v;
+  c->i++;
+  if(!eat(c,"(") || !ce_fold(c,0,&v)) return;
+  if(is(c,",")){ c->i++;
+    if(!isk(c,T_STR)){ fail(c,"expected a string literal"); return; }
+    while(isk(c,T_STR)) c->i++; }              /* adjacent literals are one (translation phase 6) */
+  if(!eat(c,")") || !eat(c,";")) return;
+  if(v.p==0) fail(c,CC_STATIC_ASSERT);
+}
 /* A bit-field's width, the cursor past its `:` (`ce_int`), for a member of type `ty`, `named` or not: one that is
  * negative, wider than its type -- 1 bit for a `_Bool`, a `_BitInt(N)`'s own check aside -- or, named, zero, is refused
  * (`CC_BF_WIDTH`, C11 6.7.2.1p4; the oracle's `_bit_width` and `BF_WIDTH`). 1 on a refusal. */
@@ -4030,7 +4100,10 @@ static const char *const g_libm[] = {
 /* <math.h> functions with a fixed *integer* result (the f/l suffix types only the argument): ilogb
  * returns int -- exactly the 4-byte value model. (lround/llround/lrint/llrint return long/long long;
  * they need the twin's wide-integer model and are handled in the 8-byte-return slice.) */
-static const char *const g_libm_int[] = { "ilogb", 0 };
+static const char *const g_libm_int[] = { "ilogb",
+  /* <math.h>'s classification macros as the C library spells them (the headers the preprocessor supplies, CSUB-1):
+   * compiler builtins, each an `int`, no libm edge (`bcir_lib_for_callee`); the oracle's `_LIBM_INT` */
+  "__builtin_isfinite", "__builtin_isnan", "__builtin_isinf_sign", "__builtin_signbit", "__builtin_isnormal", 0 };
 
 /* <math.h> functions returning an 8-byte integer: lround/lrint -> long, llround/llrint -> long long.
  * The result temp is 8 bytes (declared uint64_t in the emit -- a lossless round-trip to the function's
@@ -4198,6 +4271,7 @@ static const char *fftw_library(const char *s, int n, int *is_fftw) {
 }
 static const char *bcir_lib_for_callee(const char *s, int n) {
   if(n<=0) return NULL;
+  if(n>10 && !strncmp(s,"__builtin_",10)) return "";   /* a compiler builtin (<math.h>'s classification macros) */
   /* <math.h> / <complex.h> (incl. the f/l-suffixed + fixed-int/long variants) -> -lm. */
   if(libm_float_size(s,n) || libm_is_int(s,n) || libm_is_long(s,n) || libm_is_ld(s,n)) return "-lm";
   /* libc-implicit (malloc/free/realloc/calloc/aligned_alloc, memcpy/memmove/memset + the printf/scanf family)
@@ -4403,7 +4477,11 @@ static uint32_t p_call(CC *c, const tok *name) {
          : libm_is_ld(name->s,name->n)   ? cc_abi(c)->long_double_size   /* sinl/sqrtl/... -> long double */
          : libm_float_size(name->s,name->n);
   if(lz){                                  /* a <math.h> call -> a typed external library edge */
-    uint32_t t = lz<0 ? temp(c,-lz) : tempf(c,lz);  /* lround -> 8-byte int, ilogb -> 4-byte int, else float */
+    uint32_t t = lz<0 ? tempi(c,-lz,1) : tempf(c,lz);   /* lround -> a `long`, ilogb and the classification
+                                                      * builtins -> an `int`: SIGNED, as C types them and the
+                                                      * oracle's `_LIBM_INT` does (an unsigned temp had read a
+                                                      * negative `ilogb`, `lround` or `isinf` as large, CSUB-1);
+                                                      * else a float */
     char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
@@ -5202,10 +5280,18 @@ static BCIR_NOINLINE int ce_sizeof(CC *c,kval *out){
                                                                      * its type's size -- `sizeof(L'a')` the target's
                                                                      * `wchar_t`'s (the oracle's `_kfold_node`) */
     const tok *v=tat(c,k);
-    if(!align && (v->k==T_INT || v->k==T_FLT)){
+    int fbc = align ? 0 : float_builtin_at(c,k);
+    if(fbc){                                           /* `sizeof NAN`: the floating builtin's type (CSUB-1) */
+      int j=float_builtin_end(c,k,0);
+      if(!j) return 0;
+      for(int z=0;z<open;z++){ if(!tok_is(tat(c,j),")")) return 0; j++; }
+      c->i=j;
+      *out=kint((unsigned long long)float_builtin_size(c,fbc),cc_abi(c)->pointer_size*8,0); return 1; }
+    if(!align && (v->k==T_INT || v->k==T_FLT || tok_is(v,"true") || tok_is(v,"false"))){
       int sz=0, sg;
       for(int j=1;j<=open;j++) if(!tok_is(tat(c,k+j),")")) return 0;
-      if(v->k==T_INT) lit_int_type(v->s,v->n,cc_abi(c),&sz,&sg);
+      if(v->k==T_ID) sz=1;                               /* C23's `true`/`false`: a `bool` (CSUB-1) */
+      else if(v->k==T_INT) lit_int_type(v->s,v->n,cc_abi(c),&sz,&sg);
       else { char last=v->n>0 ? v->s[v->n-1] : 0;
         sz = (last=='f'||last=='F') ? 4 : (last=='l'||last=='L') ? cc_abi(c)->long_double_size : 8; }
       c->i=k+1+open;
@@ -5221,6 +5307,61 @@ static BCIR_NOINLINE int ce_sizeof(CC *c,kval *out){
   else n=szt_bytes(c,&t);
   if(n<=0) return 0;
   *out=kint((unsigned long long)n,cc_abi(c)->pointer_size*8,0); return 1;
+}
+/* The reasons `__builtin_offsetof` is refused for (the oracle's `lower.OFFSETOF_*`, CSUB-1). */
+#define CC_OFFSETOF_NOT_AGG "offsetof of a type that is not a struct or union"
+#define CC_OFFSETOF_BITFIELD "offsetof of a bit-field member"
+#define CC_OFFSETOF_DESIGNATOR "invalid offsetof member designator"
+#define CC_OFFSETOF_INCOMPLETE "offsetof of an incomplete struct or union"
+/* `__builtin_offsetof ( type-name , member-designator )`, the cursor on the keyword -- <stddef.h>'s `offsetof` (C11
+ * 7.19p3): 1 with *off the designated member's byte offset in the type, laid out on the target; 0 with it refused. The
+ * designator is a member's name, then any run of `.name` and `[constant]`, each subscript an integer constant
+ * expression (`ce_int`) no less than 0, stepping a member array's dimension with the stride of what is under it.
+ * Refused: a type no struct or union (`CC_OFFSETOF_NOT_AGG`), an incomplete one, a member the aggregate lacks or a
+ * step into one no aggregate or array (`CC_OFFSETOF_DESIGNATOR`), a bit-field (`CC_OFFSETOF_BITFIELD`). The oracle's
+ * `cparse._offsetof`. BCIR_NOINLINE: its bcir_ctype stays out of the recursive frames. */
+static BCIR_NOINLINE int offsetof_value(CC *c,long long *off){
+  bcir_ctype ty; int si=-1;
+  c->i++;
+  if(!eat(c,"(")) return 0;
+  if(is(c,"struct")||is(c,"union")){           /* an incomplete tag, before the type reader refuses it for its own
+                                                * reason: the oracle's `OFFSETOF_INCOMPLETE` (a pointer to one is no
+                                                * aggregate, refused below) */
+    const tok *tg=tat(c,c->i+1), *nx=tat(c,c->i+2);
+    int ts = tg->k==T_ID ? find_struct(c,tg->s,tg->n) : -1;
+    if(tg->k==T_ID && (ts<0 || c->s[ts].incomplete) && !tok_is(nx,"{") && !tok_is(nx,"*")){
+      fail(c,CC_OFFSETOF_INCOMPLETE); return 0; } }
+  if(p_type(c,&ty,&si)) return 0;
+  if(ty.kind!=1 || si<0 || c->td_nd || !is(c,",")){
+    if(!c->failed) fail(c,CC_OFFSETOF_NOT_AGG); return 0; }
+  if(c->s[si].incomplete){ fail(c,CC_OFFSETOF_INCOMPLETE); return 0; }
+  c->i++;
+  int cur=si, dim=0, need=1; long long o=0; const field *f=NULL;
+  for(;;){
+    if(need){
+      if(!isk(c,T_ID) || cur<0){ fail(c,CC_OFFSETOF_DESIGNATOR); return 0; }
+      tok fn=adv(c); const sdef *S=&c->s[cur]; int fi=-1;
+      for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fn.n && !strncmp(S->f[k].name,fn.s,(size_t)fn.n)){ fi=k; break; }
+      if(fi<0){ fail(c,CC_OFFSETOF_DESIGNATOR); return 0; }
+      f=&S->f[fi];
+      if(f->bit_w>0){ fail(c,CC_OFFSETOF_BITFIELD); return 0; }
+      o+=f->byte_off; dim=0; need=0;
+      cur = farr(f) ? -1 : f->sidx;        /* a value struct member: what a `.` steps into */
+    }
+    if(is(c,".")){ c->i++; need=1; continue; }
+    if(is(c,"[")){
+      long long k; c->i++;
+      if(!ce_int(c,&k) || !eat(c,"]")) return 0;
+      if(!f || !farr(f) || dim>=(f->nadims>0?f->nadims:1) || k<0){ fail(c,CC_OFFSETOF_DESIGNATOR); return 0; }
+      long long stride=f->size;
+      for(int d=dim+1; d<f->nadims; d++) stride*=f->adims[d];
+      o+=k*stride; dim++;
+      if(dim==(f->nadims>0?f->nadims:1)){ cur=f->elem_sidx; f=NULL; }   /* past the last dimension: the element */
+      continue; }
+    break;
+  }
+  if(!eat(c,")")) return 0;
+  *off=o; return 1;
 }
 /* A call of the name `id`, the cursor on its `(`: an atomic builtin, a call through a function-pointer object (p_icall)
  * or a direct named call (p_call), a struct or pointer result taking its postfix. `id(x)` -- and `(*id)(x)`, whose `*`
@@ -5293,6 +5434,19 @@ static uint32_t p_primary(CC *c) {
   }
   if(is(c,"_Alignof")||is(c,"alignof")) return p_alignof(c);   /* the type's alignment, a folded size_t */
   if(is(c,"sizeof")) return p_sizeof(c);   /* the operand's own type (CF-SIZEOF), a folded size_t */
+  if(is(c,"true")||is(c,"false")){                 /* C23's predefined constants: a `bool` (6.4.4.6; CSUB-1) */
+    long long b=is(c,"true"); c->i++;
+    uint32_t r=tempi(c,1,0); if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;
+    bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=b;}
+    return r; }
+  if(is(c,"__builtin_offsetof")){ long long o; if(!offsetof_value(c,&o)) return 0; return size_result(c,o); }
+  { int fbc=float_builtin_at(c,c->i);               /* `__builtin_inff()` (<math.h>'s INFINITY): its spelling */
+    if(fbc){ tok nm=*pk(c); int j=float_builtin_end(c,c->i,1); if(!j) return 0;
+      int nan = nm.n>=13 && !strncmp(nm.s,"__builtin_nan",13);
+      c->i=j;
+      uint32_t r=tempf(c,float_builtin_size(c,fbc));
+      char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.fconst:%.*s(%s)",nm.n,nm.s,nan?"\"\"":"");
+      bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;} return call_value(c,r); } }
   if(is(c,"(")){
     { tok nm; int at=deref_named_callee(c,&nm); if(at){ c->i=at; return p_named_call(c,nm); } }   /* `(*fp)(x)` */
     c->i++;uint32_t r=p_expr(c);
@@ -8140,6 +8294,7 @@ static void p_stmt(CC *c) {
 }
 static void p_stmt_inner(CC *c) {
   if(is(c,";")){c->i++;return;}          /* empty statement -> a no-op (`for(...);`, `if(c);`, `;;`) */
+  if(static_assert_at(c)){ p_static_assert(c); return; }   /* a block item that declares nothing (CSUB-1) */
   if(is(c,"return")){c->i++;
     if(!is(c,";")){uint32_t rv=p_expr(c);
       if(void_value(c,rv)){                            /* `return f();` of a void f: made for its effects, and a void
@@ -8839,7 +8994,8 @@ static uint32_t p_stmt_expr(CC *c){
   int is_value = last_save>=0;
   if(last_save>=0){ const tok *lt=&c->t[last_save];
     if(tok_is(lt,"if")||tok_is(lt,"for")||tok_is(lt,"while")||tok_is(lt,"do")||tok_is(lt,"switch")
-       ||tok_is(lt,"return")||tok_is(lt,"break")||tok_is(lt,"continue")||tok_is(lt,"goto")||tok_is(lt,"{")) is_value=0;
+       ||tok_is(lt,"return")||tok_is(lt,"break")||tok_is(lt,"continue")||tok_is(lt,"goto")||tok_is(lt,"{")
+       ||tok_is(lt,"_Static_assert")||tok_is(lt,"static_assert")) is_value=0;
     else if(lt->k==T_ID && c->t[last_save+1].k==T_PUN && c->t[last_save+1].n==1 && c->t[last_save+1].s[0]==':') is_value=0;
     else if(lt->k==T_ID && (scalar_size(lt->s,lt->n)>=0||tok_is(lt,"struct")||tok_is(lt,"union")||tok_is(lt,"enum")
             ||tok_is(lt,"const")||tok_is(lt,"volatile")||tok_is(lt,"_Atomic")||tok_is(lt,"static")||tok_is(lt,"_BitInt")
@@ -11083,6 +11239,12 @@ static int compile_target_mode(bcir_cfront_context *context, const char *src, co
     /* A1.3: a leading C23 `[[unsequenced]]`/`[[reproducible]]` (or any `[[...]]`) attribute precedes a
      * function/global. Consume it here and carry the value-neutral hint flag into the next p_func (the
      * emit drops it). No run -> repro stays 0, every existing item undisturbed. */
+    if(static_assert_at(c)){ p_static_assert(c); continue; }   /* checked, then gone (CSUB-1) */
+    if(is(c,"__bcir_builtin") && tok_is(tat(c,c->i+1),"typedef")){   /* a typedef of a standard header the
+                                          * preprocessor supplies: defined, and never written out again by the
+                                          * linkable emit, which includes the real header (the oracle's
+                                          * `_toplevel_item`, CSUB-1) */
+      c->i++; p_typedef(c); continue; }
     int lead_repro=0; c23_attrs(c,&lead_repro);
     if(c->failed) break;
     if(try_top_decl(c)) continue;       /* typedef / enum / struct|union defs, interleaved */

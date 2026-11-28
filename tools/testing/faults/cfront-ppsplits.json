@@ -45,8 +45,8 @@
       "expects": "test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
       "label": "PS5 the twin's invocation reader takes any number of arguments for a macro's parameters, as it did",
       "path": "runtime/c/bcir_cpp.c",
-      "old": "            if (!m->variadic && given > m->np) cpp_limit(state, \"too many macro arguments\");\n            else if (given < need) cpp_limit(state, \"too few macro arguments\"); }\n",
-      "new": "            (void)m; (void)need; (void)given; }\n"
+      "old": "  if (a->n > BCIR_CPP_ARGS || (!m->variadic && given > m->np)) { cpp_limit(st, \"too many macro arguments\"); return 0; }\n  if (given < need) { cpp_limit(st, \"too few macro arguments\"); return 0; }\n",
+      "new": "  (void)m; (void)need; (void)given;\n"
     },
     {
       "expects": "test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
@@ -122,15 +122,15 @@
       "label": "PS16 the twin's line reader splices no `\\\\\\r\\n`, as it did",
       "path": "runtime/c/bcir_cpp.c",
       "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
-      "old": "      if(*p=='\\\\'&&p[1]=='\\r'&&p[2]=='\\n'){p+=3;continue;}",
-      "new": "      if(*p=='\\\\'&&p[1]=='\\r'&&p[2]=='\\f'){p+=3;continue;}"
+      "old": "    if(*p=='\\\\'&&p[1]=='\\r'&&p[2]=='\\n'){p+=3;continue;}",
+      "new": "    if(*p=='\\\\'&&p[1]=='\\r'&&p[2]=='\\f'){p+=3;continue;}"
     },
     {
       "label": "PS17 the twin's line reader reads a CRLF's `\\r` into the line, as it did: the longest line is one byte too long",
       "path": "runtime/c/bcir_cpp.c",
       "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
-      "old": "      if(*p=='\\r'&&p[1]=='\\n'){p++;continue;}\n",
-      "new": "      if(*p=='\\r'&&p[1]=='\\f'){p++;continue;}\n"
+      "old": "    if(*p=='\\r'&&p[1]=='\\n'){p++;continue;}\n",
+      "new": "    if(*p=='\\r'&&p[1]=='\\f'){p++;continue;}\n"
     },
     {
       "label": "PS18 a lone carriage return is no white space on the twin: `#if K ==\\r2u` is malformed there",

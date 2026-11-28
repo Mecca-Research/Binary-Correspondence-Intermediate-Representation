@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 from ..._artifact_json import read_bounded_text
 from .abi import HOST, TargetABI
+from .stdheaders import header_text
 from .clex import (
     IDENT_MAX,
     NONASCII,
@@ -130,16 +131,65 @@ class CPPError(Exception):
         self.pos = pos
 
 
+#: The reasons both rails give when a function-like macro's invocation runs past its line (C11 6.10.3p10: a new-line
+#: is white space inside one): its argument list never closes before the end of the unit, a directive stands where
+#: the arguments continue (6.10.3p11 leaves that undefined; both rails refuse it), or `__LINE__` stands on a
+#: continued line -- Clang and GCC give such a token its own line, which neither rail tracks per token (CSUB-1).
+UNTERMINATED_ARGS = "unterminated macro argument list"
+DIRECTIVE_IN_ARGS = "preprocessing directive inside macro arguments"
+LINE_IN_CONTINUED_ARGS = "__LINE__ on a continued line of a macro invocation"
+
+
+class _Incomplete(Exception):
+    """A source line's expansion ended inside a function-like macro invocation (`open`: its argument list is open)
+    or on a function-like macro's name with nothing after it: the next line may continue it (C11 6.10.3p10).
+    Raised only by a rescan of a source line's text (`top`); `_run` joins the next line and expands again."""
+
+    def __init__(self, open_: bool):
+        super().__init__("open" if open_ else "name")
+        self.open = open_
+
+
+#: The empty hide set (C11 6.10.3.4: the macros a token may no longer be replaced by).
+_NO_HIDE: frozenset = frozenset()
+#: The deepest an argument's prescan nests: an argument is rescanned as if it were the rest of the file (6.10.3.1), and
+#: an invocation inside it prescans its own arguments in turn. C11 5.2.4.1's 63 nesting levels; the twin's
+#: `PPX_MAX_DEPTH`. The oracle had recursed without a bound, to a `RecursionError` at some 400 levels (L1).
+_MAX_PRESCAN_DEPTH = 63
+#: The most work one expansion -- a source line, or a directive's operand -- does before it is refused: each token
+#: taken from what is pending, each token written into a replacement, each byte of a token a rescan outputs or a `#`
+#: or `##` spells, and each element of a hide set first made count one. An expansion the blue-paint rule bounds can
+#: still grow exponentially (`#define L1 L0 L0`, ...), and a bound is where the resource commits (L3): this one bounds
+#: the time and the memory alike, and the twin counts the same events (`PPX_MAX_WORK`), so both refuse one unit.
+_MAX_WORK = 1 << 22
+EXPANSION_TOO_LARGE = "macro expansion is too large"
+EXPANSION_TOO_DEEP = "macro expansion nesting too deep"
+
+
 @dataclass
 class Macro:
     name: str
-    body: list  # replacement tokens
+    body: list  # replacement tokens: (token, whether white space comes before it)
     params: list | None = None  # None == object-like; [] == nullary function-like
     variadic: bool = False
 
 
 def _tokens(s: str) -> list[str]:
     return _TOKEN_RE.findall(s)
+
+
+def _width(t: str) -> int:
+    """The bytes of the spelling `t` in UTF-8: what the twin charges a spelling's work by (`_charge`)."""
+    return len(t) if t.isascii() else len(t.encode("utf-8", "surrogatepass"))
+
+
+def _tokens_ws(s: str) -> list[tuple[str, bool]]:
+    """`_tokens(s)`, each with whether white space comes just before it in `s`: what the `#` operator keeps of the
+    spacing between an argument's tokens (C11 6.10.3.2p2)."""
+    return [
+        (m.group(), m.start() > 0 and s[m.start() - 1] in _ASCII_SPACE)
+        for m in _TOKEN_RE.finditer(s)
+    ]
 
 
 def _is_id(t: str) -> bool:
@@ -263,13 +313,13 @@ class Preprocessor:
         self.embeds = embeds or {}  # name -> bytes
         self.search_paths = list(search_paths or [])  # -I dirs (+ the source dir): on-disk headers
         self._disk_cache: dict[str, str | None] = {}  # resolved header name -> text (or None)
-        self.macros: dict[str, Macro] = {n: Macro(n, _tokens(v)) for n, v in _PREDEFINED.items()}
+        self.macros: dict[str, Macro] = {n: Macro(n, _tokens_ws(v)) for n, v in _PREDEFINED.items()}
         date, clock = _translation_datetime()  # __DATE__/__TIME__: object macros (string bodies)
-        self.macros["__DATE__"] = Macro("__DATE__", _tokens(f'"{date}"'))
-        self.macros["__TIME__"] = Macro("__TIME__", _tokens(f'"{clock}"'))
+        self.macros["__DATE__"] = Macro("__DATE__", _tokens_ws(f'"{date}"'))
+        self.macros["__TIME__"] = Macro("__TIME__", _tokens_ws(f'"{clock}"'))
         for n, v in (defines or {}).items():  # -D name[=value]  (value "" -> defined as 1)
             _macro_name(n, "macro name must be an identifier")  # read as `#define` reads it
-            self.macros[n] = Macro(n, _tokens(str(v) if v != "" else "1"))
+            self.macros[n] = Macro(n, _tokens_ws(str(v) if v != "" else "1"))
         self._depth = 0
         self._cur_file = "<source>"  # __FILE__: the file currently being processed
         self._cur_line = 0  # __LINE__: its presumed line number
@@ -355,7 +405,10 @@ class Preprocessor:
         saved = (self._cur_file, self._cur_line, self._presumed)
         self._cur_file, self._presumed = name, 1
         try:
-            for raw in lines:
+            i = 0
+            while i < len(lines):
+                raw = lines[i]
+                i += 1
                 self._cur_line = self._presumed
                 self._presumed += 1
                 line = raw.lstrip(_DIRECTIVE_SPACE)
@@ -363,11 +416,56 @@ class Preprocessor:
                     self._directive(line[1:].lstrip(_DIRECTIVE_SPACE), cond, out, name, active)
                     continue
                 if active():
-                    self._out(out, self._expand_text(raw))
+                    text, extra = self._source_line(raw, lines, i)
+                    self._out(out, text)
+                    # each line the invocation continued onto keeps its place: an empty output line of its own, so
+                    # every line after it maps back to where it is (`linemap`, `__LINE__`)
+                    for _ in range(extra):
+                        self._cur_line = self._presumed
+                        self._presumed += 1
+                        self._out(out, "")
+                    i += extra
         finally:
             self._cur_file, self._cur_line, self._presumed = saved
         if cond:
             raise CPPError(f"unterminated #if in {name}")
+
+    def _source_line(self, raw: str, lines: list[str], i: int) -> tuple[str, int]:
+        """The expansion of the text line `raw`, whose next line is `lines[i]`, and how many lines after it the
+        expansion took. A new-line is white space inside a function-like macro's invocation (C11 6.10.3p10), so an
+        argument list still open at the end of the line continues on the next, and a function-like macro's name
+        that ends a line is invoked by a `(` that opens the next line that is not blank. Each line taken is joined to
+        the text with a space and the whole expanded again (`_Incomplete`), held to the line bound. A directive
+        where the arguments continue is refused (6.10.3p11), and so is `__LINE__` on a continued line, whose line
+        neither rail tracks per token (`LINE_IN_CONTINUED_ARGS`). The twin's `cpp_process` joins the same lines."""
+        text, extra = raw, 0
+        while True:
+            try:
+                return self._expand_text(text, top=True), extra
+            except _Incomplete as inc:
+                j = i + extra
+                if inc.open:
+                    if j >= len(lines):
+                        raise CPPError(UNTERMINATED_ARGS) from None
+                    take = j + 1
+                else:
+                    k = j
+                    while k < len(lines) and not lines[k].strip(_ASCII_SPACE):
+                        k += 1
+                    if k >= len(lines) or not lines[k].lstrip(_ASCII_SPACE).startswith("("):
+                        return self._expand_text(
+                            text
+                        ), extra  # the name invokes nothing: it is itself
+                    take = k + 1
+                for nxt in lines[j:take]:
+                    if nxt.lstrip(_DIRECTIVE_SPACE).startswith("#"):
+                        raise CPPError(DIRECTIVE_IN_ARGS) from None
+                    if "__LINE__" in _tokens(nxt) and "__LINE__" not in self.macros:
+                        raise CPPError(LINE_IN_CONTINUED_ARGS) from None
+                    text += " " + nxt
+                extra = take - i
+                if len(text.encode("utf-8")) > _MAX_LINE:
+                    raise CPPError("preprocessor line too long") from None
 
     def _directive(self, d: str, cond, out, name, active) -> None:
         op = _DIRECTIVE_NAME.match(d).group()
@@ -437,9 +535,9 @@ class Preprocessor:
         if nameend < len(rest) and rest[nameend] == "(":  # function-like
             params, i = _params(rest, nameend + 1)
             variadic = bool(params) and params[-1] == "__VA_ARGS__"
-            self.macros[nm] = Macro(nm, _tokens(self._body(rest[i:])), params, variadic)
+            self.macros[nm] = Macro(nm, _tokens_ws(self._body(rest[i:])), params, variadic)
         else:  # object-like
-            self.macros[nm] = Macro(nm, _tokens(self._body(rest[nameend:])))
+            self.macros[nm] = Macro(nm, _tokens_ws(self._body(rest[nameend:])))
 
     @staticmethod
     def _body(text: str) -> str:
@@ -468,7 +566,7 @@ class Preprocessor:
         `digits` (decimal), and __FILE__ becomes `"file"` if given. Operands are macro-expanded
         first (C23 6.10.5). The number is a decimal digit sequence (6.10.4p3) in 1..2147483647, or the directive
         is refused, as the twin refuses it (CF-PPSPLITS: `#line 12abc` once read 12 here, nothing there)."""
-        toks = self._expand(_tokens(rest), set())
+        toks = self._expand(_tokens_ws(rest))
         if not toks or not re.fullmatch(r"[0-9]+", toks[0], re.ASCII):
             raise CPPError("#line number is not a decimal digit sequence")
         number = int(toks[0])
@@ -486,10 +584,13 @@ class Preprocessor:
         system = rest_x.startswith("<")
         target = self._header_name(rest)
         text = self._resolve(target)
+        if text is None and system:
+            # a standard header no search path holds: the frontend's own, for the target (`stdheaders`, CSUB-1) --
+            # else one it models intrinsically (its types; the twin's `builtin_header`)
+            text = header_text(target, self.abi)
+            if text is None:
+                return
         if text is None:
-            if system:
-                return  # an unmapped <system> header: the frontend
-                #                                          models the standard types intrinsically.
             raise CPPError(
                 f"#include {target!r} not found (in {name}); searched the mount + "
                 f"{len(self.search_paths)} -I path(s)"
@@ -506,6 +607,16 @@ class Preprocessor:
         finally:
             self._incstack.pop()
             self._depth -= 1
+
+    def _has_header(self, operand: str) -> bool:
+        """`__has_include`'s answer for `operand`: the header resolves, or is a `<...>` one this frontend supplies
+        itself (`stdheaders`), as `#include` reads it (CSUB-1)."""
+        target = self._header_name(operand)
+        if self._resolve(target) is not None:
+            return True
+        return self._expand_text(operand).strip(_ASCII_SPACE).startswith("<") and (
+            header_text(target, self.abi) is not None
+        )
 
     def _embed(self, rest: str) -> str:
         target = self._header_name(rest.split()[0] if rest else rest)
@@ -534,130 +645,234 @@ class Preprocessor:
         esc = self._cur_file.replace("\\", "\\\\").replace('"', '\\"')  # __FILE__: a string literal
         return f'"{esc}"'
 
-    def _expand_text(self, text: str) -> str:
-        return _join(self._expand(_tokens(text), set()))
+    def _expand_text(self, text: str, top: bool = False) -> str:
+        return _join(self._expand(_tokens_ws(text), top))
 
-    def _expand(self, toks: list[str], hide: set) -> list[str]:
-        out: list[str] = []
-        i = 0
-        while i < len(toks):
-            t = toks[i]
-            if _is_id(t) and t in self.macros and t not in hide:
+    def _expand(self, toks: list, top: bool = False) -> list[str]:
+        """`toks` -- pairs of a token and whether white space comes before it -- fully macro-replaced (`_rescan`), each
+        starting with no hide set. One expansion: its work (`_charge`) and the hide sets it makes (`_hide`) are counted
+        afresh, so each source line and each directive's operand is held to the bounds on its own."""
+        self._work = 0
+        self._hides = {_NO_HIDE: _NO_HIDE}
+        return [t for t, _, _ in self._rescan([(t, _NO_HIDE, ws) for t, ws in toks], top, 0)]
+
+    def _charge(self, n: int) -> None:
+        """Count `n` units of this expansion's work, refused past `_MAX_WORK` (`EXPANSION_TOO_LARGE`)."""
+        self._work += n
+        if self._work > _MAX_WORK:
+            raise CPPError(EXPANSION_TOO_LARGE)
+
+    def _hide(self, hs: frozenset) -> frozenset:
+        """The hide set `hs`, kept once per expansion: one not seen before is charged an element each, as the twin's
+        interned sets are (`hs_intern`)."""
+        seen = self._hides.get(hs)
+        if seen is None:
+            self._charge(len(hs))
+            self._hides[hs] = seen = hs
+        return seen
+
+    def _rescan(self, items: list, top: bool, depth: int) -> list:
+        """Macro replacement of `items` -- triples of a token, its hide set and whether white space comes before it --
+        by Prosser's algorithm (the one C11 6.10.3.4 describes): a macro's replacement is rescanned *along with the
+        tokens after it* (6.10.3.4p1), so a replacement that ends in a function-like macro's name is invoked by a `(`
+        that follows it (`#define G F`, `G(1)`), and a replacement may take its arguments from what follows (`#define
+        LP f(`, `LP 1)`). A token once passed is output and never looked at again: `f LP 1)` of `#define LP (` leaves
+        `f` itself. A token whose hide set holds its macro is painted (6.10.3.4p2) and stays itself. An object-like
+        macro's replacement adds its name to the hide set of the name's token; a function-like one's adds its name to
+        the intersection of the name's and the closing `)`'s. Iterative over a stack, so a long replacement chain
+        recurses nowhere; only an argument's prescan recurses, `depth` deep, to `_MAX_PRESCAN_DEPTH`. `top`: the
+        items are a source line's, which the next line may continue -- the end of them inside an invocation, or just
+        after a function-like macro's name, raises `_Incomplete` (`_source_line`). The oracle had rescanned a
+        replacement on its own, so `G(1)` stayed `F(1)`; the twin had rescanned a whole line until it stopped
+        changing, with no hide sets, so `f(1)(2)` of `#define f(x) (x) + f` was `(1) + (2) + f` there, where C gives
+        `(1) + f(2)` (CSUB-1)."""
+        stack = items[::-1]
+        out: list = []
+        while stack:
+            self._charge(1)
+            t, hs, ws = stack.pop()
+            if _is_id(t) and t in self.macros and t not in hs:
                 mac = self.macros[t]
                 if mac.params is None:  # object-like
-                    # C 6.10.4.3: `##` pastes ANY two adjacent replacement-list tokens, not only ones
-                    # adjacent to a parameter -- so an OBJECT-macro body `a##c` / `1##2` pastes too. Run
-                    # the body through the SHARED substitute/paste path (with no args: `#`/`##` then see
-                    # only literal tokens) so object + function macros use ONE paste engine, then rescan.
-                    out += self._expand(self._substitute(mac, []), hide | {t})
-                    i += 1
+                    # C 6.10.4.3: `##` pastes ANY two adjacent replacement-list tokens, not only ones adjacent to a
+                    # parameter -- so an OBJECT-macro body `a##c` / `1##2` pastes too: the one substitute/paste path
+                    self._push(
+                        stack, *self._substitute(mac, [], self._hide(hs | {t}), depth, []), ws
+                    )
                     continue
-                # function-like: needs a '(' next
-                j = i + 1
-                if j < len(toks) and toks[j] == "(":
-                    args, j = self._collect_args(toks, j)
+                if stack and stack[-1][0] == "(":  # function-like: invoked by a `(` next
+                    args, close, commas = self._collect_args(stack, top)
                     self._check_arity(mac, args)
-                    out += self._expand(self._substitute(mac, args), hide | {t})
-                    i = j
+                    hide = self._hide(self._hide(hs & close) | {t})
+                    self._push(stack, *self._substitute(mac, args, hide, depth, commas), ws)
                     continue
+                if top and not stack:  # its `(` may open the next line
+                    raise _Incomplete(False)
             elif _is_id(t) and t in _DYNAMIC:  # __FILE__ / __LINE__ (a #define wins)
-                out.append(self._dynamic_value(t))
-                i += 1
+                t = self._dynamic_value(t)
+            elif t == "_Pragma" and stack and stack[-1][0] == "(":
+                self._collect_args(
+                    stack, top
+                )  # _Pragma("..."): a lowering no-op (like #pragma) -- consume
                 continue
-            elif t == "_Pragma" and i + 1 < len(toks) and toks[i + 1] == "(":
-                _, i = self._collect_args(toks, i + 1)  # _Pragma("..."): a lowering no-op
-                continue  # (like #pragma) — consume, emit nothing
-            out.append(t)
-            i += 1
+            self._charge(_width(t))
+            out.append((t, hs, ws))
         return out
 
     @staticmethod
-    def _collect_args(toks, j):
-        depth, args, cur = 0, [], []
-        assert toks[j] == "("
-        j += 1
-        while j < len(toks):
-            t = toks[j]
+    def _push(stack: list, rep: list, carry: bool, ws: bool) -> None:
+        """`rep`, the replacement of a macro whose name had white space before it or not (`ws`), onto the pending
+        `stack`: its first token takes the name's spacing, and the next pending token after it takes the white space
+        an empty run at its end handed on (`carry`) -- or, where it is empty, the name's too: what `#` keeps of it
+        (6.10.3.2p2), as Clang and GCC keep it (`S(a E/b)` of an empty `E` through a two-level `S` spells `"a /b"`,
+        and `S(H()y)` of `#define H(p) x p` `"x y"`)."""
+        if (carry or (ws and not rep)) and stack:
+            t, h, _ = stack[-1]
+            stack[-1] = (t, h, True)
+        if rep:
+            t, h, _ = rep[0]
+            rep[0] = (t, h, ws)
+            stack.extend(reversed(rep))
+
+    def _collect_args(self, stack: list, top: bool) -> tuple[list, frozenset, list]:
+        """The arguments of the invocation whose `(` is on top of the reversed `stack`, popped through the `)` that
+        closes it: lists of (token, hide set, white space) split at the commas outside nested parentheses, the
+        closing `)`'s hide set, and whether white space came before each comma between them (which `#__VA_ARGS__`
+        spells). Running out of tokens is `_Incomplete` for a source line (`top`), else refused."""
+        self._charge(1)
+        stack.pop()  # the `(`
+        depth, args, cur, commas = 0, [], [], []
+        while stack:
+            self._charge(1)
+            item = stack.pop()
+            t = item[0]
             if t == "(":
                 depth += 1
-                cur.append(t)
             elif t == ")":
                 if depth == 0:
                     args.append(cur)
-                    return args, j + 1
+                    return args, item[1], commas
                 depth -= 1
-                cur.append(t)
             elif t == "," and depth == 0:
                 args.append(cur)
+                commas.append(item[2])
                 cur = []
-            else:
-                cur.append(t)
-            j += 1
-        raise CPPError("unterminated macro argument list")
+                continue
+            cur.append(item)
+        if top:
+            raise _Incomplete(True)
+        raise CPPError(UNTERMINATED_ARGS)
 
-    def _substitute(self, mac: Macro, args: list) -> list:
+    def _substitute(
+        self, mac: Macro, args: list, hs: frozenset, depth: int, commas: list
+    ) -> tuple[list, bool]:
+        """The replacement of an invocation of `mac` with `args`, each token's hide set joined with `hs` (Prosser's
+        `hsadd`). C11/C23 6.10.4.1: a parameter has TWO replacement forms. As an operand of `#` or `##` it is the
+        RAW argument (6.10.4.2, 6.10.4.3) -- an empty one a placemarker; everywhere else the argument COMPLETELY
+        macro-replaced first, as if it were the rest of the file (the argument prescan, at `depth + 1`, refused past
+        `_MAX_PRESCAN_DEPTH`) -- what makes the two-level `XSTR(__LINE__)` the line NUMBER, and an argument that is
+        itself a macro call (`INC(VAL)` with `VAL == INC(5)`) expand all the way down. A prescan runs only for a
+        parameter that is replaced so, and at most once: `S(F(1))` of `#define S(x) #x` stringizes `F(1)` even where
+        `F` takes two arguments. `commas`: the spacing of the commas between the arguments, which the variadic
+        part keeps, with no hide set. With the replacement, the white space an empty run at its end hands on."""
         params = mac.params or []
-        # C11/C23 6.10.4.1: a parameter has TWO replacement forms. When it is an operand of `#` or `##`
-        # the RAW (unexpanded) argument tokens are used; everywhere else the argument is COMPLETELY
-        # macro-expanded *first* (argument prescan) and that expansion is substituted. We build both maps:
-        # `amap` (raw) feeds `#`/`##`; `eamap` (prescanned) feeds the ordinary substitution -- this is what
-        # makes the classic two-level `XSTR(__LINE__)` -> the line NUMBER, and an argument that is itself a
-        # macro call (`INC(VAL)` with `VAL == INC(5)`) expand all the way down.
         amap: dict[str, list] = {}
-        eamap: dict[str, list] = {}
         for k, p in enumerate(params):
             if p == "__VA_ARGS__":
-                rest = args[k:] if k < len(args) else []
                 flat: list = []
-                for n, a in enumerate(rest):
+                for n, a in enumerate(args[k:]):
                     if n:
-                        flat.append(",")
+                        flat.append((",", _NO_HIDE, commas[k + n - 1]))
                     flat += a
                 amap[p] = flat
             else:
                 amap[p] = args[k] if k < len(args) else []
-            eamap[p] = self._expand(
-                list(amap[p]), set()
-            )  # prescan: full expansion in a fresh context
-        return self._subst_tokens(list(mac.body), amap, eamap)
+        prescanned: dict[str, list] = {}
 
-    def _subst_tokens(self, body: list, amap: dict, eamap: dict | None = None) -> list:
-        # `amap` = raw arguments (for `#`/`##`); `eamap` = prescanned arguments (for plain substitution).
-        # `eamap is None` -> a nested `__VA_OPT__` body re-enters with the same pair (passed through below).
-        if eamap is None:
-            eamap = amap
+        def expanded(p: str) -> list:
+            if p not in prescanned:
+                if depth >= _MAX_PRESCAN_DEPTH:
+                    raise CPPError(EXPANSION_TOO_DEEP)
+                prescanned[p] = self._rescan(list(amap[p]), False, depth + 1)
+            return prescanned[p]
+
+        out, carry = self._subst_tokens(mac.body, amap, expanded)
+        rep = [
+            (t, self._hide(h | hs), ws) for t, h, ws in out if t
+        ]  # a placemarker is gone once the pastes are done
+        return rep, carry
+
+    def _subst_tokens(self, body: list, amap: dict, expanded) -> tuple[list, bool]:
+        """`body`'s tokens -- pairs of a token and whether white space comes before it -- with each parameter replaced
+        (`_substitute`), `#` stringized and `##` pasted, as triples of a token, its hide set and its spacing: a body
+        token's hide set empty, a pasted one's the intersection of its operands' (Prosser's `glue`). An empty operand
+        of `##` is a placemarker (C 6.10.4.3): `a ## b` with an empty side yields the other side and no literal `##`,
+        and `x a##b` of an empty `a` keeps `x` its own token. The left operand of `##` is the RAW argument too:
+        `CAT(X, 2)` of `#define CAT(a, b) a##b` is `X2` whatever `X` names -- the oracle had pasted the prescanned one
+        (`12`), and spliced an empty operand into the token before it (CSUB-1). A `#` stringizes only a parameter
+        (6.10.3.2p1); before anything else it is a token (`#define H # x`). Each run a body token puts here -- itself,
+        an argument, a stringized or pasted token, `__VA_OPT__`'s content -- takes that body token's spacing on its
+        first token, and an empty run hands its white space on to the next (`put`) -- past the end of the list too,
+        returned with the tokens: what `#` keeps (6.10.3.2p2)."""
         out: list = []
+        carry = False  # white space an empty run handed on
+
+        def put(run: list, ws: bool) -> None:
+            nonlocal carry
+            self._charge(len(run))
+            if not run:
+                carry = carry or ws
+                return
+            t, h, _ = run[0]
+            out.append((t, h, ws or carry))
+            out.extend(run[1:])
+            carry = False
+
         i = 0
         while i < len(body):
-            t = body[i]
-            if t == "__VA_OPT__" and i + 1 < len(body) and body[i + 1] == "(":  # C23 __VA_OPT__
+            t, ws = body[i]
+            nxt = body[i + 1][0] if i + 1 < len(body) else None
+            if t == "__VA_OPT__" and nxt == "(":  # C23 __VA_OPT__
                 content, i = _balanced(body, i + 1)
-                if amap.get("__VA_ARGS__"):  # __VA_ARGS__ non-empty -> the content
-                    out += self._subst_tokens(content, amap, eamap)
+                inner, inner_carry = (
+                    self._subst_tokens(content, amap, expanded)
+                    if amap.get("__VA_ARGS__")
+                    else ([], False)
+                )
+                put(inner, ws)
+                carry = carry or inner_carry
                 continue
-            if t == "#" and i + 1 < len(body) and body[i + 1] in amap:  # stringize (RAW arg)
-                out.append(_stringize(amap[body[i + 1]]))
+            if t == "#" and nxt in amap:  # stringize (RAW arg)
+                spelled = _stringize(amap[nxt])
+                self._charge(_width(spelled))
+                put([(spelled, _NO_HIDE, False)], ws)
                 i += 2
                 continue
-            if t == "##" and i + 1 < len(body):  # paste (RAW args; placemarkers)
-                right = amap.get(body[i + 1], [body[i + 1]])
-                left = out.pop() if out else ""
-                # An empty operand acts as a placemarker (C 6.10.4.3): `a ## b` with an empty side yields
-                # just the non-empty side and NO literal `##`. Gluing only happens when both inner tokens
-                # exist; otherwise the surviving side passes through untouched. (Pasting against an empty
-                # `out` -- the left arg expanded to nothing -- still elides the `##` instead of emitting it.)
-                if left == "":
-                    out += right  # empty left -> result is the right operand
-                elif right:
-                    out.append(left + right[0])  # glue the inner tokens, keep the right's tail
-                    out += right[1:]
+            if t == "##" and nxt is not None:  # paste (RAW operands; placemarkers)
+                right = amap[nxt] if nxt in amap else [(nxt, _NO_HIDE, body[i + 1][1])]
+                if out and out[-1][0]:  # a token on the left
+                    if right:
+                        lt, lh, lws = out[-1]
+                        glued = lt + right[0][0]
+                        self._charge(_width(glued))
+                        out[-1] = (glued, self._hide(lh & right[0][1]), lws)
+                        put(right[1:], right[1][2] if len(right) > 1 else False)
+                    # x ## placemarker -> x
+                else:  # a placemarker on the left: it takes the right side's place
+                    pws = out.pop()[2] if out else False
+                    put(right if right else [("", _NO_HIDE, False)], pws)
+                i += 2
+                continue
+            if t in amap:
+                if nxt == "##":  # the left operand of `##`: the raw argument
+                    put(amap[t] if amap[t] else [("", _NO_HIDE, False)], ws)
                 else:
-                    out.append(left)  # empty right -> result is the left operand
-                i += 2
+                    put(expanded(t), ws)  # the prescanned argument
+                i += 1
                 continue
-            out += eamap.get(t, [t])  # prescanned arg or literal
+            put([(t, _NO_HIDE, ws)], ws)
             i += 1
-        return out
+        return out, carry
 
     # --- constant-expression evaluation (#if / #elif) ---
     def _defined_walk(self, expr: str) -> str:
@@ -713,7 +928,7 @@ class Preprocessor:
         expr = self._defined_walk(expr)
         expr = re.sub(
             r"\b__has_include\s*\(([^)]*)\)",
-            lambda m: "1" if self._resolve(self._header_name(m.group(1))) is not None else "0",
+            lambda m: "1" if self._has_header(m.group(1)) else "0",
             expr,
         )
         expr = re.sub(
@@ -731,7 +946,9 @@ class Preprocessor:
         )
         expr = re.sub(r"\b__has_builtin\s*\([^)]*\)", "0", expr)
         expr = re.sub(r"\b__has_c_attribute\s*\([^)]*\)", "0", expr)
-        toks = self._expand(_bound_names(_tokens(expr)), set())
+        items = _tokens_ws(expr)
+        _bound_names([t for t, _ in items])
+        toks = self._expand(items)
         return _ConstEval(toks, self.abi).parse()
 
 
@@ -754,18 +971,18 @@ def _translation_datetime() -> tuple[str, str]:
 
 
 def _balanced(toks: list, k: int) -> tuple[list, int]:
-    """The tokens strictly inside the parenthesis at ``toks[k] == '('`` and the index just past the
-    matching ``')'`` (used for ``__VA_OPT__(...)``)."""
+    """The items -- pairs of a replacement-list token and its spacing -- strictly inside the parenthesis at
+    ``toks[k]`` (a ``(``) and the index just past the matching ``)`` (used for ``__VA_OPT__(...)``)."""
     j, depth, inner = k + 1, 1, []
     while j < len(toks):
-        t = toks[j]
+        t = toks[j][0]
         if t == "(":
             depth += 1
         elif t == ")":
             depth -= 1
             if depth == 0:
                 return inner, j + 1
-        inner.append(t)
+        inner.append(toks[j])
         j += 1
     return inner, j
 
@@ -873,8 +1090,9 @@ def _pastes(prev: str, t: str) -> bool:
     """Whether the token `t`, written right after the token `prev`, would lex as part of another token:
     two words run together, a comment opens (`y / *p` spelled `y/*p`, C 6.4.9), a punctuator runs on
     into a longer one, two `.` start an ellipsis (`..` is no punctuator, so maximal munch over two
-    tokens cannot see it), a pp-number runs on through a `.` or an exponent's sign, or a `.` begins a
-    number. A space between them keeps them two (the twin's `pastes`, byte for byte)."""
+    tokens cannot see it), a pp-number runs on through a `.`, an exponent's sign or a `'` (C23's digit separator,
+    6.4.8: `1.5 'c'` spelled `1.5'c'` is one pp-number, on both rails until CSUB-1), or a `.` begins a number. A
+    space between them keeps them two (the twin's `pastes`, byte for byte)."""
     a, b = prev[-1], t[0]
     if (_is_id(a) or _digit(a)) and (_is_id(b) or _digit(b)):
         return True
@@ -884,7 +1102,7 @@ def _pastes(prev: str, t: str) -> bool:
         m = _PUNCT_RE.match(prev + t[:2])
         if m is not None and len(m.group()) > len(prev):
             return True
-    if _is_ppnum(prev) and (b == "." or (a in "eEpP" and b in "+-")):
+    if _is_ppnum(prev) and (b in ".'" or (a in "eEpP" and b in "+-")):
         return True
     if b == "'" and a in "LuU8":  # a word that may be an encoding prefix (CF-PPARITH)
         return True
@@ -905,22 +1123,26 @@ def _join(toks: list[str]) -> str:
     return out
 
 
-def _stringize(toks: list[str]) -> str:
-    """The `#`-operator spelling of an argument (C 6.10.4.2): the argument's preprocessing tokens joined
-    with single spaces, leading/trailing whitespace removed, wrapped in `"..."`. A `\\` is inserted before
-    each `"` and `\\` *that is part of a character-constant or string-literal token* -- and ONLY there: a
-    bare backslash floating in the token stream (`S(a\\b)` -> `"a\\b"`, like clang/gcc) is NOT doubled, but
-    one inside a literal is (`S("q")` -> `"\\"q\\""`, `S("c:\\t")` -> `"\\"c:\\\\t\\""`). So the escape is
-    applied per-token to literals, not blanket to the joined text."""
-    esc = []
-    for t in toks:
+def _stringize(items: list) -> str:
+    """The `#`-operator spelling of an argument (C11 6.10.3.2p2): its preprocessing tokens -- `items`, each a token,
+    its hide set and whether white space came before it -- with one space where white space came between two of them
+    and none elsewhere, the leading and trailing white space gone, wrapped in `"..."`: `S(a + b)` is `"a + b"` and
+    `S(a+b)` `"a+b"`, as Clang and GCC spell them (both rails had spelled the tokens as `_join` writes a line, `"a+b"`
+    for both, CSUB-1). A `\\` is inserted before each `"` and `\\` *that is part of a character-constant or
+    string-literal token* -- and ONLY there: a bare backslash floating in the token stream (`S(a\\b)` -> `"a\\b"`,
+    like clang/gcc) is NOT doubled, but one inside a literal is (`S("q")` -> `"\\"q\\""`, `S("c:\\t")` ->
+    `"\\"c:\\\\t\\""`). So the escape is applied per-token to literals, not blanket to the joined text."""
+    out = []
+    for n, (t, _, ws) in enumerate(items):
+        if n and ws:
+            out.append(" ")
         if (t[:1] in ('"', "'") or _CHAR_TOKEN.match(t)) and len(
             t
         ) >= 2:  # a literal -> escape \ and "
-            esc.append(t.replace("\\", "\\\\").replace('"', '\\"'))
+            out.append(t.replace("\\", "\\\\").replace('"', '\\"'))
         else:  # any other token, incl. a bare `\`, verbatim
-            esc.append(t)
-    return '"' + _join(esc) + '"'
+            out.append(t)
+    return '"' + "".join(out) + '"'
 
 
 #: The reasons both rails refuse a `#if`/`#elif` expression for (CF-PPARITH; the twin's `bcir_cpp.c` gives the same

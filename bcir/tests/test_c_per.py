@@ -22,9 +22,12 @@ import shutil
 import subprocess
 import tempfile
 
+from bcir.asn1.codec import Asn1Error
 from bcir.asn1.per import (
+    BitReader,
     BitWriter,
     PerVariant,
+    _decode_constrained,
     _encode_constrained,
     _encode_normally_small,
     _encode_normally_small_length,
@@ -191,6 +194,49 @@ def test_bits_for_range_agrees_across_rails():
             parts = reply.split()
             assert parts[0] == "OK", reply
             assert int(parts[2]) == width, f"C spent {parts[2]} bits where Python spends {width}"
+
+
+def test_an_indefinite_length_naming_more_octets_than_the_range_holds_is_refused_on_both_rails():
+    """11.5.7.4 / 13.2.6 a): the octet count of an ALIGNED constrained whole number whose range exceeds 64K is itself
+    a constrained whole number, 1..the octets that hold the range. For INTEGER (0..2^40) that is 1..6, read in three
+    bits -- so the field can also spell 7 and 8, which no conforming encoder writes. A decoder that believed them would
+    read seven or eight octets and, where the leading ones are zero, land on a value in range: a second spelling of
+    it (class A). Both rails refuse both spellings, and both still read the field's last legal value, six octets,
+    the encoder's own output."""
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        if binary is None:
+            return
+        lb, ub = 0, 1 << 40
+        legal_hex, _ = _encoded(_encode_constrained, PerVariant.ALIGNED, ub, lb, ub)
+        assert bytes.fromhex(legal_hex)[0] >> 5 == 0b101, (
+            legal_hex
+        )  # the length field says 1 + 5 = 6 octets
+        # 0b110 / 0b111 then the pad bits, then 7 / 8 octets whose value (5) is in range.
+        bad = [
+            bytes([0b110 << 5]) + (5).to_bytes(7, "big"),
+            bytes([0b111 << 5]) + (5).to_bytes(8, "big"),
+        ]
+        lines = [f"constrained {lb} {ub} 1 {legal_hex}"] + [
+            f"constrained {lb} {ub} 1 {b.hex()}" for b in bad
+        ]
+        replies = _run(binary, lines)
+        assert replies[0].split()[:2] == ["OK", str(ub)], replies[0]
+        assert (
+            _decode_constrained(BitReader(bytes.fromhex(legal_hex), PerVariant.ALIGNED), lb, ub)
+            == ub
+        )
+        for data, reply in zip(bad, replies[1:]):
+            assert reply.split()[0] == "ERR", (
+                f"C read a {data[0] >> 5}-coded length the range cannot need: {reply}"
+            )
+            try:
+                got = _decode_constrained(BitReader(data, PerVariant.ALIGNED), lb, ub)
+            except Asn1Error:
+                continue
+            raise AssertionError(
+                f"Python read {data.hex()} as {got}: the length field is out of its range"
+            )
 
 
 def test_fragmented_length_reports_more_and_terminates():

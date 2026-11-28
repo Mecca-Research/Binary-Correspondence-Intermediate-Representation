@@ -39,7 +39,11 @@ class TargetABI:
     One with a negative enumerator is `int` everywhere (CF-ENUMOBJ). `char_signed`: plain `char` is signed (Clang's
     `__CHAR_UNSIGNED__` undefined) on x86-64 and i386 Linux and on Windows, unsigned on AArch64 and RISC-V Linux --
     which a character constant in `#if` reads by: Clang and GCC sign-extend its byte where `char` is signed, and read
-    it as a `uintmax_t` where it is not (CF-PPARITH)."""
+    it as a `uintmax_t` where it is not (CF-PPARITH). `march`: the CPU the target names (Clang's `-march`) where its
+    triple alone no longer fixes one. i386 Linux is the psABI's `i686` baseline: x87 arithmetic, so `<float.h>`'s
+    `FLT_EVAL_METHOD` is 2 -- what GCC 13's `-m32` and Clang 18 give, and the x87 code `llc` (18 and 23) emits for
+    the triple with no `-mcpu`. Clang 23 takes `pentium4` as that triple's default (SSE2, `FLT_EVAL_METHOD` 0), so a
+    Clang asked about this target is asked with `-march=i686`. Empty elsewhere, where Clang 18 and 23 agree."""
 
     name: str  # short id, e.g. "x86_64-linux"
     triple: str  # the Clang target triple (for `-target` / provenance)
@@ -55,6 +59,12 @@ class TargetABI:
     wchar_signed: bool = True
     enum_unsigned: bool = True
     char_signed: bool = True
+    march: str = ""
+
+    @property
+    def clang_target(self) -> list[str]:
+        """The options that ask Clang about this target: `--target=<triple>`, and `-march` where one is named."""
+        return [f"--target={self.triple}", *([f"-march={self.march}"] if self.march else [])]
 
     @property
     def wchar_type(self) -> str:
@@ -119,6 +129,7 @@ TARGETS: dict[str, TargetABI] = {
         long_double_align=4,
         atomic_promote_size=8,
         eight_byte_align=4,
+        march="i686",
     ),
 }
 

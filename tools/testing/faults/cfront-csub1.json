@@ -1,0 +1,102 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_a_macro_invocation_runs_across_lines_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_static_assertion_is_checked_at_file_block_and_member_scope_on_both_rails",
+    "bcir.tests.test_c_cfront:test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_target",
+    "bcir.tests.test_c_cfront:test_the_standard_headers_lay_out_their_types_as_clang_on_every_target",
+    "bcir.tests.test_c_cfront:test_offsetof_and_the_header_typedefs_lower_and_refuse_alike_on_both_rails",
+    "bcir.tests.test_csub_ratchet:test_the_ratchet_refuses_every_way_the_compiler_and_the_record_disagree",
+    "bcir.tests.test_c_per:test_per_primitives_agree_across_the_python_and_c_rails",
+    "bcir.tests.test_c_per:test_an_indefinite_length_naming_more_octets_than_the_range_holds_is_refused_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_target",
+      "label": "CS1 twin header: WINT_MAX on 2-byte wchar",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "hput(b, \"#define WINT_MIN 0\"); hput(b, \"#define WINT_MAX 65535\");",
+      "new": "hput(b, \"#define WINT_MIN 0\"); hput(b, \"#define WINT_MAX 65535U\");"
+    },
+    {
+      "expects": "test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_target",
+      "label": "CS2 oracle header: INT64_C suffix",
+      "path": "bcir/frontends/cfront/stdheaders.py",
+      "old": "out += [f\"#define INT64_C(c) c ## {s64}\"",
+      "new": "out += [f\"#define INT64_C(c) c ## LL\""
+    },
+    {
+      "expects": "test_the_standard_headers_lay_out_their_types_as_clang_on_every_target",
+      "label": "CS3 oracle header: max_align_t member alignment",
+      "path": "bcir/frontends/cfront/stdheaders.py",
+      "old": "_Alignas(8) long long __bcir_max_align_ll; ",
+      "new": "long long __bcir_max_align_ll; "
+    },
+    {
+      "expects": "test_the_standard_headers_lay_out_their_types_as_clang_on_every_target",
+      "label": "CS4 oracle offsetof: subscript stride",
+      "path": "bcir/frontends/cfront/cparse.py",
+      "old": "cur, off, member = elem, off + k * elem.size, False",
+      "new": "cur, off, member = elem, off + k, False"
+    },
+    {
+      "expects": "test_the_standard_headers_lay_out_their_types_as_clang_on_every_target",
+      "label": "CS5 twin offsetof: subscript stride",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "      o+=k*stride; dim++;",
+      "new": "      o+=k; dim++;"
+    },
+    {
+      "expects": "test_a_static_assertion_is_checked_at_file_block_and_member_scope_on_both_rails",
+      "label": "CS6 twin static_assert: a zero passes",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(v.p==0) fail(c,CC_STATIC_ASSERT);",
+      "new": "  (void)v;"
+    },
+    {
+      "expects": "test_a_static_assertion_is_checked_at_file_block_and_member_scope_on_both_rails",
+      "label": "CS7 oracle static_assert: a zero passes",
+      "path": "bcir/frontends/cfront/cparse.py",
+      "old": "        if value == 0:\n            raise CParseError(STATIC_ASSERT_FAILED, pos=at)",
+      "new": "        pass"
+    },
+    {
+      "expects": "test_a_macro_invocation_runs_across_lines_alike_on_both_rails",
+      "label": "CS8 twin multi-line: a directive in the arguments joins",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "      if (nx[z] == '#') { if(err&&errcap)snprintf(err,errcap,\"%s\",PP_DIRECTIVE_IN_ARGS); return 1; }",
+      "new": ""
+    },
+    {
+      "expects": "test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_target",
+      "label": "CS9 twin math: isinf as isinf (no sign)",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "hput(b, \"#define isinf(x) __builtin_isinf_sign(x)\");",
+      "new": "hput(b, \"#define isinf(x) __builtin_isinf(x)\");"
+    },
+    {
+      "expects": "test_the_ratchet_refuses_every_way_the_compiler_and_the_record_disagree",
+      "label": "CS10 ratchet: a promotion passes",
+      "path": "tools/c/csub_ratchet.py",
+      "old": "        elif entry[\"verdict\"] == \"blocked\" and got == \"clean\":\n",
+      "new": "        elif False:\n"
+    },
+    {
+      "expects": "test_per_primitives_agree_across_the_python_and_c_rails",
+      "label": "CS11 the PER twin reads an indefinite length's count one octet long",
+      "path": "runtime/c/bcir_per.c",
+      "old": "  *octets = 1u + offset;",
+      "new": "  *octets = 2u + offset;"
+    },
+    {
+      "expects": "test_an_indefinite_length_naming_more_octets_than_the_range_holds_is_refused_on_both_rails",
+      "label": "CS12 the PER twin believes a length field past its range",
+      "path": "runtime/c/bcir_per.c",
+      "old": "  if (offset > span) return BCIR_PER_RANGE;\n  *octets = 1u + offset;",
+      "new": "  *octets = 1u + offset;"
+    }
+  ]
+}

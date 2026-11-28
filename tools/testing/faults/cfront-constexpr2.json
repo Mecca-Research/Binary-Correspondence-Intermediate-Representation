@@ -219,8 +219,8 @@
     {
       "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
       "label": "KO30 the oracle folds a `long double` constant as a `double`",
-      "new": "    if len(text) > _FLOAT_SPELLING:\n        raise CLowerError(ICE_NOT)\n    v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix.replace(\"l\", \"\")])\n",
-      "old": "    if suffix == \"l\" or len(text) > _FLOAT_SPELLING:\n        raise CLowerError(ICE_NOT)\n    v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix])\n",
+      "new": "    if len(text) > _FLOAT_SPELLING or text.startswith(\"__builtin_\"):\n        raise CLowerError(ICE_NOT)\n    v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix.replace(\"l\", \"\")])\n",
+      "old": "    if suffix == \"l\" or len(text) > _FLOAT_SPELLING or text.startswith(\"__builtin_\"):\n        raise CLowerError(ICE_NOT)\n    v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix])\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
@@ -471,8 +471,8 @@
     {
       "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
       "label": "KT26 the twin sizes every integer constant an `int`",
-      "new": "      if(v->k==T_INT) sz=4;",
-      "old": "      if(v->k==T_INT) lit_int_type(v->s,v->n,cc_abi(c),&sz,&sg);",
+      "new": "else if(v->k==T_INT) sz=4;",
+      "old": "else if(v->k==T_INT) lit_int_type(v->s,v->n,cc_abi(c),&sz,&sg);",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

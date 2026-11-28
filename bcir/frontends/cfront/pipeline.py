@@ -29,6 +29,7 @@ from .abi import abi_contract_for, verify_abi_contract, HOST, target as resolve_
 from .clex import CLexError
 from .cparse import CParseError, parse_unit, parse_with_recovery
 from .cpp import CPPError, preprocess
+from .stdheaders import clang_source
 from .diagnostics import DiagnosticReport, SourceDiagnostic, Span
 from .emit import emit_function, respell_anon
 from .linkflags import derive_link_flags, format_link_flags
@@ -124,6 +125,7 @@ def diagnose(
     search_paths: list | None = None,
     defines: dict | None = None,
     filename: str = "<source>",
+    target: str | None = None,
 ) -> DiagnosticReport:
     """Run the front end (preprocess -> parse -> lower) for diagnostics only, returning a
     `DiagnosticReport`: the source diagnostics plus the text their caret spans index into. An empty
@@ -132,7 +134,11 @@ def diagnose(
 
     The parser recovers in panic mode, so a single run reports *every* syntax error it can resynchronize
     past (not just the first). Preprocess and lex errors are still one-shot; semantic (lowering)
-    diagnostics report the first, and only run once the parse is clean."""
+    diagnostics report the first, and only run once the parse is clean. `target` is the ABI the unit is
+    checked for, as `compile` takes it: the standard headers, the constants folded at parse and the layout are
+    its (CSUB-1 -- the diagnostics had read every unit as the host's, so `-fsyntax-only --target` gave a static
+    assertion the host's verdict)."""
+    abi = resolve_target(target) if target else HOST
     try:
         pp, line_map = preprocess(
             source,
@@ -142,19 +148,20 @@ def diagnose(
             defines=defines,
             name=filename,
             return_map=True,
+            abi=abi,
         )
     except CPPError as e:
         return DiagnosticReport([_diag_from(e, "preprocess")], source, filename)
     try:
         unit, parse_diags = parse_with_recovery(
-            pp
+            pp, abi
         )  # panic-mode recovery: collect all syntax errors
     except CLexError as e:  # a lexer error is not recovered (separate concern)
         return DiagnosticReport([_diag_from(e, "lex")], pp, filename, line_map)
     if parse_diags:  # syntax errors -> report them all; AST is partial
         return DiagnosticReport(parse_diags, pp, filename, line_map)
     try:
-        lower_unit(unit)  # only lower a syntactically clean unit
+        lower_unit(unit, abi)  # only lower a syntactically clean unit
     except CLowerError as e:
         return DiagnosticReport([_diag_from(e, "lower")], pp, filename, line_map)
     return DiagnosticReport([], pp, filename, line_map)
@@ -219,7 +226,8 @@ def compile_unit(
             explicit_target  #   __atomic_thread_fence, so the default emit compiles on any host
         )
     h, theta, policy = host_channel().profile, Theta.cool(), PERF
-    res = CompileResult(source=source, unit=unit, lowered=lowered, target=abi.name)
+    # the source a C compiler reads beside the real headers: the frontend's own header typedefs blank (CSUB-1)
+    res = CompileResult(source=clang_source(source), unit=unit, lowered=lowered, target=abi.name)
 
     # --- per-function: plan, verify (R1–R9), emit, explain ---
     for name, lf in lowered.functions.items():
@@ -324,7 +332,7 @@ def compile_unit(
     # --- behaviour equivalence vs Clang (clang-gated; host ABI only -- a cross-target layout is not
     #     byte-compatible with the host compiler, so equivalence there would be meaningless) ---
     if check_clang and abi is HOST:
-        res.equivalence = _equivalence(source, lowered)
+        res.equivalence = _equivalence(res.source, lowered)  # the text Clang reads (CSUB-1)
     elif abi is not HOST:
         res.equivalence = f"skip:cross-target:{abi.name}"
 
@@ -562,6 +570,7 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
             f'            printf("MISMATCH@%d", trial); return 0; }}'
         )
     return f"""#include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>

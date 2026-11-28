@@ -1,0 +1,291 @@
+{
+  "schema": "bcir.csub-ratchet/1",
+  "about": "What bcir-cc (the C rail of the verified C compiler, default target x86_64-linux, -I runtime/c) makes of each production unit runtime/c/MEMORY_CLASSIFICATION.txt lists: clean (R1-R18 clean), or blocked, with its first refusal, the construct it is about and the CSUB rung that lifts it. Held exact by tools/c/csub_ratchet.py (docs/research/BCIR_C_SUBSET_AUDIT_2026-11-10.md section 4).",
+  "units": {
+    "bcir_ab_listing.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "an untagged `static const struct { ... } t[]` table",
+      "rung": "CSUB-2"
+    },
+    "bcir_ai_kernels.c": {
+      "verdict": "clean"
+    },
+    "bcir_ai_microbench.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "rung": "CSUB-5"
+    },
+    "bcir_artifact_bundle.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: a static initializer is not an integer constant expression",
+      "construct": "a static table whose initializers are address constants (C11 6.6p9): a string table",
+      "rung": "CSUB-2"
+    },
+    "bcir_asn1.c": {
+      "verdict": "clean"
+    },
+    "bcir_asn1_bench.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "rung": "CSUB-5"
+    },
+    "bcir_asn1_streampack.c": {
+      "verdict": "clean"
+    },
+    "bcir_binrec.c": {
+      "verdict": "clean"
+    },
+    "bcir_bpe.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "a struct-typed member of an array element, read or copied (`t[i].m.f`): the record table",
+      "rung": "CSUB-2"
+    },
+    "bcir_bundle_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'stderr'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_cc.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: (",
+      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
+      "rung": "CSUB-2"
+    },
+    "bcir_cfront.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: input too large",
+      "construct": "the verified compiler's own C rail: a hosted tool past the frontend's input bound",
+      "rung": "outside"
+    },
+    "bcir_channel.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: (",
+      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
+      "rung": "CSUB-2"
+    },
+    "bcir_control_plane.c": {
+      "verdict": "clean"
+    },
+    "bcir_cpp.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_decode.c": {
+      "verdict": "clean"
+    },
+    "bcir_decoder_gem.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
+      "construct": "an lvalue form the lowering does not take yet: an address-of, increment or assignment through a loaded pointer",
+      "rung": "CSUB-2"
+    },
+    "bcir_decoder_pack.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: a static initializer is not an integer constant expression",
+      "construct": "a static table whose initializers are address constants (C11 6.6p9): a string table",
+      "rung": "CSUB-2"
+    },
+    "bcir_decoder_train.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "a struct-typed member of an array element, read or copied (`t[i].m.f`): the record table",
+      "rung": "CSUB-2"
+    },
+    "bcir_diag.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "a struct-typed member of an array element, read or copied (`t[i].m.f`): the record table",
+      "rung": "CSUB-2"
+    },
+    "bcir_ed25519.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: partial indexing of a multi-dimensional array (a row used as a value) is not yet supported",
+      "construct": "a row of a multi-dimensional array used as a value (`fe t[4][10]; f(t[1])`)",
+      "rung": "CSUB-2"
+    },
+    "bcir_emit.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "an untagged `static const struct { ... } t[]` table",
+      "rung": "CSUB-2"
+    },
+    "bcir_encode.c": {
+      "verdict": "clean"
+    },
+    "bcir_exec.c": {
+      "verdict": "clean"
+    },
+    "bcir_handoff.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: )",
+      "construct": "an array parameter in a function-pointer type, `const uint8_t digest[32]` (bcir_shard_manifest.h)",
+      "rung": "CSUB-2"
+    },
+    "bcir_hydrate.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: (",
+      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
+      "rung": "CSUB-2"
+    },
+    "bcir_jer.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: a static initializer is not an integer constant expression",
+      "construct": "a static table whose initializers are address constants (C11 6.6p9): a string table",
+      "rung": "CSUB-2"
+    },
+    "bcir_kplan.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: )",
+      "construct": "a member read through a local's address, `(&v)->data`, which a macro writes",
+      "rung": "CSUB-2"
+    },
+    "bcir_llama.c": {
+      "verdict": "clean"
+    },
+    "bcir_llama_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_make.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'stderr'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_microbench.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "rung": "CSUB-5"
+    },
+    "bcir_oer.c": {
+      "verdict": "clean"
+    },
+    "bcir_pack_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'stderr'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_per.c": {
+      "verdict": "clean"
+    },
+    "bcir_per_plan.c": {
+      "verdict": "clean"
+    },
+    "bcir_plan.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: (",
+      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
+      "rung": "CSUB-2"
+    },
+    "bcir_plan_sign.c": {
+      "verdict": "clean"
+    },
+    "bcir_provenance.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: array-of-structs non-scalar element field",
+      "construct": "a struct-typed member of an array element, read or copied (`t[i].m.f`): the record table",
+      "rung": "CSUB-2"
+    },
+    "bcir_q4_kernel.c": {
+      "verdict": "clean"
+    },
+    "bcir_q8_model.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown type",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_qualify_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: unknown struct",
+      "construct": "<time.h>'s `struct timespec` (a benchmark's clock)",
+      "rung": "CSUB-5"
+    },
+    "bcir_quarantine.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: inc/dec of this lvalue form is a follow-on",
+      "construct": "an lvalue form the lowering does not take yet: an address-of, increment or assignment through a loaded pointer",
+      "rung": "CSUB-2"
+    },
+    "bcir_quarantine_recover.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: inc/dec of this lvalue form is a follow-on",
+      "construct": "an lvalue form the lowering does not take yet: an address-of, increment or assignment through a loaded pointer",
+      "rung": "CSUB-2"
+    },
+    "bcir_ring.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: not an integer constant expression",
+      "construct": "<stdatomic.h>: `ATOMIC_LLONG_LOCK_FREE` in a static assertion, then the explicit-order calls",
+      "rung": "CSUB-4"
+    },
+    "bcir_runtime.c": {
+      "verdict": "clean"
+    },
+    "bcir_runtime_channel.c": {
+      "verdict": "clean"
+    },
+    "bcir_sha256.c": {
+      "verdict": "clean"
+    },
+    "bcir_shard_manifest.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: )",
+      "construct": "an array parameter in a function-pointer type, `const uint8_t digest[32]` (bcir_shard_manifest.h)",
+      "rung": "CSUB-2"
+    },
+    "bcir_sp_listing.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: a static initializer is not an integer constant expression",
+      "construct": "a static table whose initializers are address constants (C11 6.6p9): a string table",
+      "rung": "CSUB-2"
+    },
+    "bcir_spm.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: address-of this lvalue through a loaded pointer is a follow-on",
+      "construct": "an lvalue form the lowering does not take yet: an address-of, increment or assignment through a loaded pointer",
+      "rung": "CSUB-2"
+    },
+    "bcir_telemetry_envelope.c": {
+      "verdict": "clean"
+    },
+    "bcir_telemetry_frame.c": {
+      "verdict": "clean"
+    },
+    "bcir_tensor.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: ;",
+      "construct": "`_Alignas(64)` on a block-scope array object",
+      "rung": "CSUB-2"
+    },
+    "bcir_tokenize_cli.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: use of undeclared identifier 'stderr'",
+      "construct": "<stdio.h>: `stderr`, `FILE` and the stream calls of a hosted tool",
+      "rung": "CSUB-5"
+    },
+    "bcir_train.c": {
+      "verdict": "clean"
+    },
+    "bcir_verify.c": {
+      "verdict": "blocked",
+      "blocker": "parse error: (",
+      "construct": "a pointer-to-array member, `char (*calls)[N]` (bcir_cir.h)",
+      "rung": "CSUB-2"
+    },
+    "bcir_xer.c": {
+      "verdict": "clean"
+    }
+  }
+}

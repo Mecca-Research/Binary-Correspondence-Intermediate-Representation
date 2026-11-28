@@ -145,6 +145,9 @@ show_section sp_listing || exit 1
 echo "[c-runtime] MC1 BCAB listing (PORT-1): bcir-bundle's list/hexdump/select/extract/dis/mnemonics == the oracle's"
 show_section bundle_listing || exit 1
 
+echo "[c-runtime] tokenizers (PORT-2): bcir-tokenize's BPE and SentencePiece loads, ids and octets == the oracle's"
+show_section tokenizer || exit 1
+
 echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
 show_section decoder_train || exit 1
 
@@ -220,6 +223,9 @@ echo "[c-runtime] bcir-cc compiler driver: compile a driver (sibling header) + e
 # bcir_cc.c is the cc-like driver over the full C pipeline (bcir_cpp_run_ex -I/-D -> bcir_cfront ->
 # plan -> hydrate). It must compile a driver with sibling headers via a normal compile command.
 show_section bcir_cc || exit 1
+
+echo "[c-runtime] the C subset's ratchet (CSUB-1): bcir-cc over every production unit == runtime/c/csub_ratchet.json"
+show_section csub_ratchet || exit 1
 
 echo "[c-runtime] bcir-cc --emit-c links the runtime: self-contained masked unit (#emitlink)"
 show_section emitlink || exit 1

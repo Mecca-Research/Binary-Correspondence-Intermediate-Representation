@@ -91,6 +91,12 @@ int bcir_cfront_compile_linkable(const char *src, const char *target, bcir_cfron
  * whether plain `char` is signed, and `wchar_t`'s size in bytes and signedness -- for `bcir_cpp_set_chars`. NULL is
  * the default target (x86-64 Linux). Returns 0, or 1 for an unknown target name (the outputs untouched). */
 int bcir_cfront_target_chars(const char *target, int *char_signed, int *wchar_size, int *wchar_signed);
+/* ... and the rest of it the standard headers the preprocessor supplies read (CSUB-1), for `bcir_cpp_set_target`:
+ * sizeof(long) and sizeof(void *), the `long double` format (0 `double`, 1 the x87 80-bit one, 2 IEEE binary128),
+ * whether the environment is MSVC's, and FLT_EVAL_METHOD (2 on i386, which evaluates on the x87 stack). Returns 0, or
+ * 1 for an unknown target name (the outputs untouched). */
+int bcir_cfront_target_cpp(const char *target, int *long_size, int *pointer_size, int *long_double, int *msvc,
+                           int *flt_eval);
 
 /* Release every owned allocation and restore the valid empty state. Idempotent. */
 void bcir_cfront_free(bcir_cfront_result *out);

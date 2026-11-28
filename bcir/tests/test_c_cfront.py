@@ -129,6 +129,8 @@ _PREPROC = [
     "cfront_ppinc.c",
     "cfront_comments.c",
     "cfront_paste.c",  # tokens that would lex as others, written apart: `a + ++g` (CF-PASTE)
+    "cfront_stdheaders.c",  # the standard headers both rails supply, static assertions at every scope, and
+    #   invocations across lines, each value equal to Clang's through its own headers (CSUB-1)
 ]  # L7: exercise the preprocessor
 _ABI = [
     "cfront_structret.c",
@@ -541,6 +543,7 @@ def _equiv(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
     # (`source` is preprocessed, its `#include`s gone: what a fixture includes, the harness does -- <stdarg.h> for a
     # variadic function's `va_list`, CF-FPRET)
     harness = f"""#include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -6957,23 +6960,14 @@ def test_preprocessor_fuzz_differential_seed_b():
 # --- DUAL-RAIL C TWIN preprocessor differential (bonus) -----------------------------------------
 # The C twin `bcir_cpp_run` preprocesses then feeds the frontend; `test_cfront.c --emit-cpp` now dumps
 # the preprocessed text and exits, so the C rail's preprocessor can be differentialed against the SAME
-# reference -- catching a Python<->C preprocessor divergence. The C twin is the production port and is
-# NOT yet at parity with the (now-fixed) Python oracle on three adversarial classes; those are PINNED
-# below with a recorded reason + TODO (fixing the C twin's prescan / stringize-escaping / 3-cycle
-# blue-paint is fragile surgery in a separate ~500-line C engine whose expand_line uses non-reentrant
-# static buffers -- out of scope for this Python-side gate). The differential still runs on every fixture
-# where the C twin AGREES with the reference, so a future Python<->C regression on the clean subset is
-# caught, and the pinned set is asserted to stay BOUNDED (it must not silently grow).
-_PP_CTWIN_PIN = {
-    "cfront_pp_stringize.c": "C twin (bcir_cpp.c) does not prescan a two-level XSTR argument and does "
-    'not escape `"`/`\\` inside a stringized string-literal token -- '
-    "TODO(bcir_cpp): add argument prescan + spec stringize escaping.",
-    "cfront_pp_predefined.c": "C twin does not prescan `__LINE__` through the two-level XSTR "
-    '(emits "__LINE__" not the number) -- TODO(bcir_cpp): prescan dynamic '
-    "predefineds in argument position.",
-    "cfront_pp_bluepaint.c": "C twin mis-handles a 3-macro indirect self-reference cycle (p->q->r->p) "
-    "-- TODO(bcir_cpp): paint the whole active replacement chain, not one level.",
-}
+# reference -- catching a Python<->C preprocessor divergence. A fixture the twin is known to get wrong is
+# PINNED below with its reason, and a pin whose divergence is gone fails as STALE, so the set cannot rot.
+# It is empty: the twin's engine was the oracle's port of Prosser's algorithm from CSUB-1 on (hide sets,
+# the argument prescan, one rescan, `#`'s spacing), and the three pins it had -- the two-level XSTR
+# prescan with stringize escaping (cfront_pp_stringize.c), `__LINE__` prescanned through XSTR
+# (cfront_pp_predefined.c) and the p->q->r->p blue-paint cycle (cfront_pp_bluepaint.c) -- each agree
+# with the reference now, and are differentialed like every other fixture.
+_PP_CTWIN_PIN: dict[str, str] = {}
 
 
 def _ctwin_emit_cpp(fx: str):
@@ -6987,11 +6981,10 @@ def _ctwin_emit_cpp(fx: str):
 
 
 def test_c_twin_preprocessor_differential_against_reference():
-    """DUAL-RAIL C-TWIN preprocessor differential (bonus). For each adversarial fixture where the C twin
-    is at parity, assert its `--emit-cpp` token-normalized output equals the reference (on the fair,
-    single-truth fixtures) -- catching a Python<->C preprocessor divergence on the clean subset. The
-    three known C-twin-immature classes are PINNED in `_PP_CTWIN_PIN` (recorded reason + TODO; fixing
-    the C engine is fragile surgery, out of scope). Self-skips if no C compiler / reference is present.
+    """DUAL-RAIL C-TWIN preprocessor differential (bonus). For each adversarial fixture, assert the C twin's
+    `--emit-cpp` token-normalized output equals the reference (on the fair, single-truth fixtures) --
+    catching a Python<->C preprocessor divergence. A fixture pinned in `_PP_CTWIN_PIN` (none since CSUB-1)
+    must still diverge, or fails as a stale pin. Self-skips if no C compiler / reference is present.
     Asserts the pinned set stays BOUNDED (a new C-twin divergence must be triaged, not silently pinned)
     and that a non-trivial subset actually ran (anti-degeneration)."""
     if not _CC or not (shutil.which("clang") or shutil.which("gcc")):
@@ -7044,6 +7037,262 @@ def test_c_twin_preprocessor_differential_against_reference():
         f"C-twin preprocessor differential degenerated: only {tested} fixtures ran "
         f"(pinned={pinned}) -- a real differential must exercise the clean subset"
     )
+
+
+# --- CSUB-1: one macro-replacement engine on both rails, generated --------------------------------------------
+# The twin's preprocessor is the oracle's engine (Prosser's algorithm, the argument prescan, one rescan, `#`'s spacing)
+# ported step for step, with the same bounds counted at the same events. The fixtures pin its corners; this generates
+# macro programs -- object and function-like macros, `#`, `##`, `__VA_ARGS__` and `__VA_OPT__`, self-reference, empty
+# and nested arguments, two-level stringizing, each token spaced or not -- and holds the two rails to one answer on
+# every one: the same preprocessed text, or the same refusal. Where clang -E -P and gcc -E -P agree (and form no
+# invalid paste, which C leaves undefined), the oracle must also give their tokens.
+_PPG_IDS = ("a", "b", "x", "y", "E", "P", "Q", "F", "G", "S", "XS", "CAT", "V", "f", "g")
+_PPG_PUNCT = (
+    "+",
+    "-",
+    "*",
+    "/",
+    "(",
+    ")",
+    ",",
+    "<",
+    "<<",
+    "=",
+    "==",
+    "!",
+    "&",
+    "&&",
+    ".",
+    "[",
+    "]",
+)
+_PPG_LITS = ("1", "23", "0x1f", "1.5", '"s"', '"a b"', "'c'", '"q\\"x"')
+
+
+def _ppg_spaced(toks, rng) -> str:
+    """`toks` as text, a space before each at random -- and wherever two would lex as one."""
+    out, prev = "", ""
+    for t in toks:
+        if out and (
+            rng.random() < 0.5 or _cpp._pastes(prev, t) or (out[-1] == "/" and t[0] in "*/")
+        ):
+            out += " "
+        out += t
+        prev = t
+    return out
+
+
+def _ppg_body(rng, params, variadic):
+    toks = []
+    for _ in range(rng.randint(0, 7)):
+        r = rng.random()
+        if params and r < 0.25:
+            toks.append(rng.choice(params))
+        elif params and r < 0.33:
+            toks += ["#", rng.choice(params)]
+        elif r < 0.43 and toks:
+            toks += ["##", rng.choice(list(params) + list(_PPG_IDS[:4]))]
+        elif variadic and r < 0.5:
+            toks += ["__VA_OPT__", "(", rng.choice(list(_PPG_IDS[:4]) + [","] + list(params)), ")"]
+        elif r < 0.65:
+            toks.append(rng.choice(_PPG_IDS))
+        elif r < 0.85:
+            toks.append(rng.choice(_PPG_PUNCT))
+        else:
+            toks.append(rng.choice(_PPG_LITS))
+    while toks and toks[0] == "##":
+        toks.pop(0)
+    while toks and toks[-1] in ("##", "#"):
+        toks.pop()
+    return toks
+
+
+def _ppg_program(rng) -> str:
+    lines = ["#define S(x) #x", "#define XS(x) S(x)", "#define CAT(a, b) a ## b"]
+    names = ["S", "XS", "CAT"]
+    for nm in rng.sample(["E", "P", "Q", "F", "G", "V", "f", "g"], rng.randint(2, 5)):
+        if rng.random() < 0.4:
+            lines.append(f"#define {nm} {_ppg_spaced(_ppg_body(rng, [], False), rng)}")
+        else:
+            ps = [chr(ord("p") + k) for k in range(rng.randint(0, 2))]
+            variadic = rng.random() < 0.3
+            params = ps + (["__VA_ARGS__"] if variadic else [])
+            decl = ", ".join(ps + (["..."] if variadic else []))
+            lines.append(
+                f"#define {nm}({decl}) {_ppg_spaced(_ppg_body(rng, params, variadic), rng)}"
+            )
+        names.append(nm)
+
+    def use(depth):
+        nm = rng.choice(names + list(_PPG_IDS[:4]))
+        if rng.random() < 0.6 and depth < 3:
+            args = []
+            for _ in range(rng.randint(0, 3)):
+                parts = [
+                    use(depth + 1)
+                    if rng.random() < 0.3
+                    else rng.choice(_PPG_IDS + _PPG_LITS + ("+", "-"))
+                    for _ in range(rng.randint(0, 3))
+                ]
+                args.append(
+                    _ppg_spaced(parts, rng) if parts else (" " if rng.random() < 0.3 else "")
+                )
+            return nm + ("(" if rng.random() < 0.8 else " (") + ",".join(args) + ")"
+        return nm
+
+    for _ in range(rng.randint(1, 4)):
+        u = use(0)
+        lines.append(f"XS({u})" if rng.random() < 0.4 else u)
+    return "\n".join(lines) + "\n"
+
+
+def _ppg_reference(path: str):
+    """clang's and gcc's token-normalized expansion of `path` where they agree and form no invalid paste, else None."""
+    got = []
+    for cc, std in (("clang", "c23"), ("gcc", _pp_gcc_std())):
+        r = subprocess.run([cc, f"-std={std}", "-E", "-P", path], capture_output=True, text=True)
+        if (
+            r.returncode != 0
+            or "pasting formed" in r.stderr
+            or "valid preprocessing token" in r.stderr
+        ):
+            return None
+        got.append(_pp_token_normalize(r.stdout))
+    return got[0] if got[0] == got[1] else None
+
+
+def test_the_preprocessors_give_one_answer_on_generated_macro_programs():
+    """CSUB-1. 400 generated macro programs (seeded): the twin's `--emit-cpp` text equals the oracle's, or both refuse
+    for one reason; and on the fair ones (clang -E -P == gcc -E -P), the oracle's tokens are theirs. Before the twin
+    carried the oracle's engine, this split on a painted name (`f(1)(2)` of `#define f(x) (x) + f`), an argument's
+    prescan, a stringized argument's spacing and a `#` before no parameter; the oracle itself spelled `S(a + b)`
+    "a+b". Anti-vacuity: most programs must expand and a good share be fair."""
+    import random as _random
+
+    if not _CC or not (shutil.which("clang") and shutil.which("gcc")):
+        return
+    exe = _build_frontend(_session_build_dir())
+    rng = _random.Random(20261111)
+    expanded = refused = fair = 0
+    splits, wrong = [], []
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "p.c")
+        for _ in range(400):
+            src = _ppg_program(rng)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            try:
+                oracle = ("ok", _cpp.preprocess(src))
+            except _cpp.CPPError as e:
+                oracle = ("err", str(e))
+            run = subprocess.run(
+                [exe, "--emit-cpp", path], capture_output=True, text=True, timeout=60
+            )
+            first = (run.stdout.splitlines() or [""])[0]
+            if run.returncode == 0:
+                twin = ("ok", run.stdout)
+            else:
+                twin = ("err", first[len("CPP-ERR ") :] if first.startswith("CPP-ERR ") else first)
+            if oracle != twin:
+                splits.append((src, oracle, twin))
+                continue
+            if oracle[0] == "err":
+                refused += 1
+                continue
+            expanded += 1
+            ref = _ppg_reference(path)
+            if ref is None:
+                continue
+            fair += 1
+            if _pp_token_normalize(oracle[1]) != ref:
+                wrong.append((src, _pp_token_normalize(oracle[1]), ref))
+    assert not splits, "the rails split on a generated macro program:\n" + "\n".join(
+        f"  SRC {s!r}\n    oracle={o!r}\n    twin={t!r}" for s, o, t in splits[:4]
+    )
+    assert not wrong, "the oracle's expansion is not clang's and gcc's:\n" + "\n".join(
+        f"  SRC {s!r}\n    oracle={o}\n    reference={r}" for s, o, r in wrong[:4]
+    )
+    assert expanded >= 200 and refused >= 50 and fair >= 150, (expanded, refused, fair)
+
+
+def test_the_preprocessors_share_their_expansion_bounds():
+    """CSUB-1. Both rails hold one expansion to the same bounds, counted at the same events: an argument's prescan
+    nests at most 63 deep (`macro expansion nesting too deep`), and an expansion does at most 2^22 units of work
+    (`macro expansion is too large`) -- the edge found on the oracle, 504 copies of a macro of 64 * 64 empty ones,
+    expands on both, and 505 is refused on both, and so does the edge where hide sets and where output bytes carry
+    the charge. The oracle had recursed without a bound to a `RecursionError` at
+    some 400 levels, and charged its 4 000 000 steps per rescan; the twin had refused at 64 rewrites of a line
+    whatever they held, and any line expanding past 8 KiB -- which, 12 000 bytes of it, both now lower."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <stdint.h>\nuint32_t g(uint32_t x) {{ return {v}; }}\n"
+    nest = "#define f(x) x\n"
+    for n in (1, 63):
+        _lowers_alike(exe, nest + unit.format(v="f(" * n + "x" + ")" * n))
+    for n in (64, 1500):
+        _refused_alike(
+            exe, nest + unit.format(v="f(" * n + "x" + ")" * n), "macro expansion nesting too deep"
+        )
+    head = (
+        "#define Z\n#define A "
+        + " ".join(["Z"] * 64)
+        + "\n#define B "
+        + " ".join(["A"] * 64)
+        + "\n"
+    )
+    _lowers_alike(exe, head + " ".join(["B"] * 504) + "\n" + unit.format(v="x"))
+    _refused_alike(
+        exe,
+        head + " ".join(["B"] * 505) + "\n" + unit.format(v="x"),
+        "macro expansion is too large",
+    )
+    # the same edge where hide sets carry the charge: a chain of 1 000 macros first makes sets of 1 to 1 000 elements,
+    # 500 500 in all, so 443 copies expand and 444 do not (no standard header: the twin holds 1 024 macros)
+    plain = "unsigned g(unsigned x) { return x; }\n"
+    chain = "".join(f"#define C{k} C{k + 1}\n" for k in range(1, 1000)) + "#define C1000\n"
+    _lowers_alike(exe, chain + head + "C1 " + " ".join(["B"] * 443) + "\n" + plain)
+    _refused_alike(
+        exe,
+        chain + head + "C1 " + " ".join(["B"] * 444) + "\n" + plain,
+        "macro expansion is too large",
+    )
+    # ... and where the output's bytes do: 63-character names in a `#if`, which past the bound is too large and
+    # within it too long an expression
+    name = "L" + "x" * 62
+    wide_if = (
+        f"#define L {name}\n#define M "
+        + " ".join(["L"] * 15)
+        + "\n#define N "
+        + " ".join(["M"] * 100)
+        + "\n#if "
+    )
+    _refused_alike(
+        exe,
+        wide_if + " ".join(["N"] * 41) + "\n#endif\n" + plain,
+        "too many tokens in #if expression",
+    )
+    _refused_alike(
+        exe, wide_if + " ".join(["N"] * 42) + "\n#endif\n" + plain, "macro expansion is too large"
+    )
+    wide = "#define W " + " + ".join(["x"] * 100) + "\n"  # 60 of them: a line of 11 999 bytes
+    summary = _lowers_alike(exe, wide + unit.format(v=" + ".join(["W"] * 60)))
+    assert "funcs=1" in summary, summary
+
+
+def test_a_directive_keeps_its_operand_spacing_on_both_rails():
+    """CSUB-1. A directive's operand is expanded as a line is, with its spacing: `#error S(a + b)` stringizes `"a +
+    b"` on both rails (both had spelled it `"a+b"`), and a `#if` reads the text the oracle reads -- the expression as
+    written, `defined X` replaced by 1 or 0 in place -- so `defined(A) defined(B)` is two operands and refused alike
+    (the twin had spaced its operands only where two would lex as one, and read `11`), while `defined(A)&&1` lowers."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <stdint.h>\nuint32_t g(uint32_t x) { return x; }\n"
+    stringize = "#define S(x) #x\n#define XS(x) S(x)\n#define P a + b\n"
+    _refused_alike(
+        exe, stringize + "#error S(a + b) XS(P) S(a+b)\n" + unit, '#error "a + b""a + b""a+b"'
+    )
+    _refused_alike(
+        exe, "#define A 1\n#if defined(A) defined(B)\n#endif\n" + unit, "malformed #if expression"
+    )
+    _lowers_alike(exe, "#define A 1\n#if defined(A)&&1\n#endif\n" + unit)
 
 
 # --- CF-PASTE: the preprocessor keeps apart tokens that would lex as others ----------------------------
@@ -9491,6 +9740,477 @@ def test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails():
         exe,
         "#define E(a, ...) (0u a __VA_OPT__(+) __VA_ARGS__)\n" + unit.format(v="E() + E(+x, 1u)"),
     )
+
+
+def test_a_macro_invocation_runs_across_lines_alike_on_both_rails():
+    """CSUB-1. A new-line is white space inside a function-like macro's invocation (C11 6.10.3p10): an argument list
+    still open at the end of a line continues on the next, and a function-like macro's name that ends a line is invoked
+    by a `(` that opens the next line that is not blank. Both rails had refused the first (`unterminated macro ...`)
+    and left the second uninvoked. Both now join the lines an invocation takes and lower the unit digest-equal; each
+    line after keeps its own number; the joined line is held to the line bound; and both refuse alike an argument list
+    the unit ends inside, a directive where the arguments continue (6.10.3p11 leaves it undefined) and `__LINE__` on a
+    continued line, which Clang and GCC give its own line and neither rail tracks per token."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = "#include <stdint.h>\n#define M(a, b) ((a) + (b))\n#define F(x) (x)\n"
+    summary = _lowers_alike(
+        exe,
+        head
+        + "uint32_t f(uint32_t x) { return M(x,\n  1u) + F\n\n  (2u) + M(\n M(x,\n 3u), 4u); }\n",
+    )
+    assert "funcs=1" in summary, summary
+    # `__LINE__` on the invocation's first line, and after it: each line keeps its own number
+    src = (
+        head
+        + "uint32_t f(void) { return M(__LINE__,\n 1u); }\nuint32_t g(void) { return __LINE__; }\n"
+    )
+    _lowers_alike(exe, src)
+    out = _cpp.preprocess(src)
+    lines = out.splitlines()
+    first = next(k for k, ln in enumerate(lines) if ln.startswith("uint32_t f("))
+    assert lines[first] == "uint32_t f(void){return((4)+(1u));}" and lines[first + 1] == "", out
+    assert "return 6;" in lines[first + 2], out
+    if exe is not None:
+        r = subprocess.run(
+            [exe, "--emit-cpp", "/dev/stdin"], input=src, capture_output=True, text=True
+        )
+        assert r.returncode == 0 and "return 6;" in r.stdout and "((4)+(1u))" in r.stdout, (
+            r.stdout,
+            r.stderr,
+        )
+    # a name the next line does not open with `(` is itself
+    _lowers_alike(
+        exe,
+        "#include <stdint.h>\n#define F(x) (x)\nuint32_t F = 1u;\nuint32_t g(void) { return F\n; }\n",
+    )
+    body = "uint32_t f(uint32_t x) { return M(x,\n"
+    _refused_alike(exe, head + body, "unterminated macro argument list")
+    _refused_alike(
+        exe,
+        head + body + "#define Q 1u\n  1u); }\n",
+        "preprocessing directive inside macro arguments",
+    )
+    _refused_alike(
+        exe, head + body + "  __LINE__); }\n", "__LINE__ on a continued line of a macro invocation"
+    )
+    # the joined line is held to the bound each line is: 8 190 bytes
+    first = "uint32_t f(uint32_t x) { return M(x"
+    arg = "+1u" * ((8190 - len(first) - 8) // 3)
+    _lowers_alike(exe, head + first + ",\n" + arg + "); }\n")
+    _refused_alike(exe, head + first + arg + ",\n" + arg + "); }\n", "preprocessor line too long")
+
+
+def _clang_accepts(src: str) -> bool | None:
+    """Whether clang (C23, syntax only) accepts `src`; None where no clang is on PATH."""
+    clang = shutil.which("clang")
+    if clang is None:
+        return None
+    r = subprocess.run(
+        [clang, "-std=c23", "-fsyntax-only", "-x", "c", "-"],
+        input=src,
+        capture_output=True,
+        text=True,
+    )
+    return r.returncode == 0
+
+
+def test_a_static_assertion_is_checked_at_file_block_and_member_scope_on_both_rails():
+    """CSUB-1. `_Static_assert ( constant-expression , string-literal ) ;` (C11 6.7.10) and C23's `static_assert`, its
+    message optional, at file scope, in a block and among an aggregate's members. Both rails had read one as a call of
+    a function of that name (the twin: `R18: call to undefined function _Static_assert`) or refused it at file scope
+    (`expected a type`). The expression is an integer constant expression folded on the target -- `sizeof`/`_Alignof`
+    of the unit's types laid out so far, enumerators, literals -- and one that holds declares nothing: the unit lowers
+    digest-equal to the one without it. One that is zero is refused alike, `static assertion failed`; one that is no
+    integer constant expression, or whose message is no string literal, is refused alike too. Clang witnesses each
+    verdict. `sizeof` of an object is not folded in one yet (the folder reads types, not a block's objects): refused
+    alike, as no integer constant expression."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    decls = (
+        "#include <stdint.h>\n"
+        "#define SA(c, m) _Static_assert(c, m)\n"
+        "struct hdr {{ uint32_t magic; uint16_t ver; {m}uint16_t flags; uint64_t len; }};\n"
+        "enum {{ K = 3 }};\n"
+        "{f}"
+        "uint32_t f(uint32_t x) {{ {b}return x + K; }}\n"
+    )
+    member = '_Static_assert(sizeof(uint16_t) == 2, "u16"); '
+    file_scope = (
+        '_Static_assert(sizeof(struct hdr) == 16, "hdr");\n'
+        "static_assert(_Alignof(struct hdr) == 8);\n"
+        'static_assert(K * 2 == 6, "an enumerator" " and two literals");\n'
+        'SA(sizeof(struct hdr) ==\n   16, "across lines");\n'
+    )
+    block = '_Static_assert(sizeof(uint32_t) == 4, "x"); static_assert(1); '
+    asserted = decls.format(m=member, f=file_scope, b=block)
+    plain = decls.format(m="", f="", b="")
+    summary = _lowers_alike(exe, asserted)
+    assert "funcs=1" in summary, summary
+    assert summary == _lowers_alike(exe, plain), (
+        summary,
+        "an assertion that holds declared something",
+    )
+    assert _clang_accepts(asserted) in (True, None)
+    failing = (
+        decls.format(m="", f='_Static_assert(sizeof(struct hdr) == 8, "no");\n', b=""),
+        decls.format(m="", f="", b="static_assert(K == 4); "),
+        decls.format(m='_Static_assert(sizeof(uint16_t) == 4, "m"); ', f="", b=""),
+        decls.format(m="", f="static_assert(0 && K);\n", b=""),
+    )
+    for src in failing:
+        _refused_alike(exe, src, "static assertion failed", phase="PARSE")
+        assert _clang_accepts(src) in (False, None), src
+    for src, why in (
+        ('int n;\n_Static_assert(n, "n");\n', "not an integer constant expression"),
+        (
+            'struct s { int a; static_assert(sizeof(struct s) == 4, "s"); };\n',
+            "not an integer constant expression",
+        ),
+        ("_Static_assert(1, 2);\n", "expected a string literal"),
+    ):
+        _refused_alike(exe, src, why, phase="PARSE")
+        assert _clang_accepts(src) in (False, None), src
+    # the honest limit: `sizeof` of a block's object is no constant either rail folds yet (Clang folds it)
+    _refused_alike(
+        exe,
+        'int f(int x) { _Static_assert(sizeof x == 4, "x"); return x; }\n',
+        "not an integer constant expression",
+        phase="PARSE",
+    )
+
+
+#: A `#define` line of the frontend's standard headers (`stdheaders`): the macro's name, and its parameters when it
+#: is function-like.
+_STD_DEFINE = re.compile(r"^#define (\w+)(\([^)]*\))?", re.M)
+#: The macros whose type C gives one way and Clang's freestanding headers another (`stdheaders`' docstring): C's is
+#: the type of an object of the macro's type after the integer promotions, an `int` where Clang's spells `U`.
+_CLANG_FREESTANDING_TYPES = {
+    "UINT8_C",
+    "UINT16_C",
+    "UINT8_MAX",
+    "UINT16_MAX",
+    "UINT_LEAST8_MAX",
+    "UINT_LEAST16_MAX",
+}
+_CLANG_FREESTANDING_TYPES_WIDE16 = {"WCHAR_MIN", "WCHAR_MAX", "WINT_MIN", "WINT_MAX"}
+
+
+def _std_probes(abi) -> list:
+    """Each macro the frontend's standard headers define on `abi`'s target, read from the oracle's own texts, as
+    (header, name, probe): the name, or a function-like one applied (`INT64_C(1)`, `offsetof(struct ...)`)."""
+    from bcir.frontends.cfront import stdheaders
+
+    out = []
+    for h in stdheaders.NAMES:
+        for m in _STD_DEFINE.finditer(stdheaders.header_text(h, abi)):
+            name = m.group(1)
+            if name.startswith("__BCIR_"):  # the include guard
+                continue
+            if name == "offsetof":
+                probe = "offsetof(struct __probe, b[1])"
+            else:
+                probe = f"{name}(1)" if m.group(2) else name
+            out.append((h, name, probe))
+    return out
+
+
+def _std_probe_unit(probes, libc: bool = True) -> str:
+    """The probe unit: every header included -- but `<math.h>` only where a C library is (`libc`): a freestanding
+    implementation has none, and its constants are checked against the host's -- then one line per probe."""
+    from bcir.frontends.cfront import stdheaders
+
+    head = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if libc or h != "math.h")
+    return head + "".join(f"@ {k} @ {probe}\n" for k, (_h, _n, probe) in enumerate(probes))
+
+
+_PROBE_LINE = re.compile(r"^\s*@\s*(\d+)\s*@(.*)$")
+
+
+def _probe_expansions(text: str) -> dict:
+    """Probe index -> the token list its line expanded to, from a preprocessed probe unit."""
+    out = {}
+    for ln in text.splitlines():
+        m = _PROBE_LINE.match(ln)
+        if m:
+            out[int(m.group(1))] = _cpp._tokens(m.group(2))
+    return out
+
+
+def _clang_expansions(src: str, abi, hosted: bool) -> dict | None:
+    """Clang's expansion of each probe in `src` for the target `abi` (`TargetABI.clang_target`; None: the host)."""
+    clang = shutil.which("clang")
+    if clang is None:
+        return None
+    cmd = [clang, "-std=c23", "-E", "-P", "-x", "c", "-"]
+    if abi is not None:
+        cmd[1:1] = abi.clang_target
+    if not hosted:
+        cmd.insert(1, "-ffreestanding")
+    r = subprocess.run(cmd, input=src, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2000:]
+    return _probe_expansions(r.stdout)
+
+
+def _clang_syntax(src: str, abi, hosted: bool) -> str:
+    """Clang's verdict on `src` (C23, syntax only) for the target `abi` (None: the host): "" accepted, else its
+    diagnostics."""
+    cmd = [shutil.which("clang"), "-std=c23", "-fsyntax-only", "-x", "c", "-"]
+    if abi is not None:
+        cmd[1:1] = abi.clang_target
+    if not hosted:
+        cmd.insert(1, "-ffreestanding")
+    r = subprocess.run(cmd, input=src, capture_output=True, text=True)
+    return "" if r.returncode == 0 else r.stderr[-4000:]
+
+
+def _glibc_host_target() -> str | None:
+    """The target of the matrix this host is, where its C library is glibc (`_HOST_TARGETS`): the one whose
+    expansions the host's own headers are held to. None on any other host (Windows, macOS, musl)."""
+    import platform
+
+    if not sys.platform.startswith("linux") or platform.libc_ver()[0] != "glibc":
+        return None
+    return _HOST_TARGETS.get(platform.machine().lower())
+
+
+def _is_int_expansion(toks: list) -> bool:
+    """An integer constant expression of the headers' own shape: decimal constants, signs and parentheses."""
+    return bool(toks) and all(re.fullmatch(r"[0-9]+[uUlL]*|[()+\-*]", t) for t in toks)
+
+
+def test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_target():
+    """CSUB-1. A `#include <...>` no search path holds had been read as nothing on both rails -- the standard *types*
+    modeled, none of the *macros* (`UINT64_C(1)` a call of an undefined function, `INT_MAX` an undeclared name). Both
+    now read the text of `<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<limits.h>`, `<float.h>`, `<iso646.h>`,
+    `<stdalign.h>` and `<math.h>`'s constants for the target (`stdheaders`; the twin's `builtin_header`). On each of
+    the five targets, every macro those texts define expands to the same tokens on both rails; each integer one
+    equals Clang's in value and type, read through the target's own headers (`--target`, freestanding), but where C
+    types it otherwise than Clang's freestanding headers do (`UINT8_C`, `UINT16_C`, Windows' `wchar_t` and `wint_t`
+    limits: value only); every other one expands to Clang's tokens; and on a glibc host, the C library's headers
+    agree on what the freestanding ones leave to it -- `MB_LEN_MAX`, those types, and `<math.h>`'s constants -- for
+    the target the host is (`_glibc_host_target`): an AArch64 host's glibc spells an unsigned `wchar_t`'s limits,
+    an x86-64 host's a signed one's."""
+    from bcir.frontends.cfront import stdheaders
+    from bcir.frontends.cfront.abi import TARGETS
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    host, hosted_checked = _glibc_host_target(), False
+    for name, abi in TARGETS.items():
+        probes = _std_probes(abi)
+        unit = "struct __probe { int a; short b[4]; };\n" + _std_probe_unit(probes)
+        ours = _probe_expansions(_cpp.preprocess(unit, abi=abi))
+        assert len(ours) == len(probes), (name, len(ours), len(probes))
+        if exe is not None:
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "probe.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(unit)
+                r = subprocess.run(
+                    [exe, "--target", name, "--emit-cpp", path], capture_output=True, text=True
+                )
+            assert r.returncode == 0, r.stdout + r.stderr
+            twin = _probe_expansions(r.stdout)
+            diffs = [(probes[k][1], ours[k], twin.get(k)) for k in ours if twin.get(k) != ours[k]]
+            assert not diffs, (name, diffs[:6])
+        fs_unit = "struct __probe { int a; short b[4]; };\n" + _std_probe_unit(probes, libc=False)
+        clang = _clang_expansions(fs_unit, abi, hosted=False)
+        if clang is None:
+            continue
+        asserts, mismatched = [], []
+        for k, (h, macro, probe) in enumerate(probes):
+            e = " ".join(ours[k])
+            if _is_int_expansion(ours[k]):
+                if macro == "MB_LEN_MAX":
+                    continue  # the hosted C library's: checked against glibc below
+                if (
+                    macro == "BOOL_WIDTH"
+                ):  # C23 5.2.4.2.1 fixes it at 1; Clang 18 reported 8, Clang 23 reports 1
+                    assert ours[k] == ["1"], ours[k]
+                    continue
+                typed = macro not in _CLANG_FREESTANDING_TYPES and not (
+                    abi.wchar_size == 2 and macro in _CLANG_FREESTANDING_TYPES_WIDE16
+                )
+                cond = f"({probe}) == ({e})"
+                if typed:
+                    cond += (
+                        f" && __builtin_types_compatible_p(__typeof__({probe}), __typeof__({e}))"
+                    )
+                asserts.append(f'_Static_assert({cond}, "{macro}");')
+            elif h != "math.h" and clang.get(k) != ours[k]:
+                mismatched.append((macro, ours[k], clang.get(k)))
+        assert not mismatched, (name, mismatched)
+        includes = "".join(f"#include <{h}>\n" for h in stdheaders.NAMES if h != "math.h")
+        verdict = _clang_syntax(includes + "\n".join(asserts) + "\n", abi, hosted=False)
+        assert not verdict, (name, verdict)
+        if name == host:  # the host's C library: what the freestanding headers leave to it
+            hosted_checked = True
+            hosted = _clang_expansions(unit, abi, hosted=True)
+            math = [
+                (n, ours[k], hosted.get(k)) for k, (h, n, _p) in enumerate(probes) if h == "math.h"
+            ]
+            assert all(o == c for _n, o, c in math), math
+            checks = [
+                f"#if defined({n}) && {int(n != 'BOOL_WIDTH')}\n_Static_assert(({p}) == ({' '.join(ours[k])}) && __builtin_types_compatible_p("
+                f'__typeof__({p}), __typeof__({" ".join(ours[k])})), "{n}");\n#endif'
+                for k, (_h, n, p) in enumerate(probes)
+                if _is_int_expansion(ours[k])
+            ]
+            verdict = _clang_syntax(includes + "\n".join(checks) + "\n", abi, hosted=True)
+            assert not verdict, (name, verdict)
+    if host is not None and shutil.which("clang"):
+        assert hosted_checked, (
+            f"the glibc host is {host}, and no target of the matrix was checked against it"
+        )
+
+
+def test_the_standard_headers_lay_out_their_types_as_clang_on_every_target():
+    """CSUB-1. The typedefs the standard headers bring -- `ptrdiff_t`, `max_align_t`, `intmax_t`, `uintmax_t`, the
+    `int_leastN_t` family -- and `offsetof` lay out on each target as Clang lays them out there: Clang's sizes and
+    alignments, read from its own compile for the target, are asserted (`_Static_assert`) in a unit both rails compile
+    for it, R1-R18 clean. `max_align_t` is the case the rails could not have guessed: 32 bytes aligned to 16 on the
+    LP64 Linux targets, 24 aligned to 8 on i386 (Clang aligns its `long long` member as `__alignof__` reads it), a
+    `double` on Windows."""
+    from bcir.frontends.cfront.abi import TARGETS
+
+    clang = shutil.which("clang")
+    if clang is None:
+        return
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    exprs = {
+        "s_max": "sizeof(max_align_t)",
+        "a_max": "_Alignof(max_align_t)",
+        "s_ptrdiff": "sizeof(ptrdiff_t)",
+        "s_intmax": "sizeof(intmax_t)",
+        "s_uintmax": "sizeof(uintmax_t)",
+        "s_least8": "sizeof(int_least8_t)",
+        "s_least64": "sizeof(uint_least64_t)",
+        "o_tail": "offsetof(struct __probe, tail)",
+        "o_b2": "offsetof(struct __probe, b[2])",
+        "o_in": "offsetof(struct __probe, in[1].y)",
+        "s_probe": "sizeof(struct __probe)",
+    }
+    probe = (
+        "#include <stdint.h>\n#include <stddef.h>\n"
+        "struct __inner { char x; long long y; };\n"
+        "struct __probe { char a; short b[3]; max_align_t m; struct __inner in[2]; double tail; };\n"
+    )
+    for name, abi in TARGETS.items():
+        src = probe + "".join(f"int {k} = {e};\n" for k, e in exprs.items())
+        r = subprocess.run(
+            [
+                clang,
+                *abi.clang_target,
+                "-std=c23",
+                "-ffreestanding",
+                "-S",
+                "-emit-llvm",
+                "-o",
+                "-",
+                "-x",
+                "c",
+                "-",
+            ],
+            input=src,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, r.stderr[-2000:]
+        values = dict(re.findall(r"^@(\w+) = (?:dso_local )?global i32 (\d+)", r.stdout, re.M))
+        assert set(values) == set(exprs), (name, values)
+        unit = probe + "".join(
+            f'_Static_assert({e} == {values[k]}, "{k}");\n' for k, e in exprs.items()
+        )
+        unit += "uint32_t f(uint32_t x) { return x + (uint32_t)sizeof(max_align_t); }\n"
+        for mode in ("-fsyntax-only", "--fallback"):
+            oracle = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "bcir.frontends.cfront",
+                    "--target",
+                    name,
+                    mode,
+                    "/dev/stdin",
+                ],
+                input=unit,
+                capture_output=True,
+                text=True,
+            )
+            assert oracle.returncode == 0, (name, mode, oracle.stdout + oracle.stderr, values)
+        if exe is not None:
+            assert _twin_line(exe, unit, "--target", name)[0] == 0, (
+                name,
+                _twin_line(exe, unit, "--target", name),
+            )
+
+
+def test_offsetof_and_the_header_typedefs_lower_and_refuse_alike_on_both_rails():
+    """CSUB-1. `offsetof` is `__builtin_offsetof(type, member-designator)` on both rails (C11 7.19p3): a member, then
+    any run of `.member` and `[constant]`, laid out on the target -- a `size_t` constant, folded where an integer
+    constant expression is read. Both refuse alike a type no struct or union, an incomplete one, a bit-field, a
+    designator that names no member or steps into one no aggregate or array, and a negative subscript. A supplied
+    header answers `__has_include`, is read once however often it is included, and leaves a unit's `#ifndef`
+    fallback unused. Its typedefs are the frontend's: the linkable emit never writes `max_align_t` out again -- it
+    includes `<stddef.h>`, and the artifact compiles beside the real header."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = (
+        "#include <stdint.h>\n#include <stddef.h>\n"
+        "struct s { uint8_t a; uint16_t b[3]; struct { uint32_t x; uint64_t y; } in[2]; uint32_t bf : 3; };\n"
+        "struct t;\n"
+    )
+    fn = "size_t f(void) {{ return {}; }}\n"
+    summary = _lowers_alike(
+        exe,
+        head
+        + fn.format(
+            "offsetof(struct s, b[2]) + offsetof(struct s, in[1].y) + offsetof(struct s, in)"
+        ),
+    )
+    assert "funcs=1" in summary, summary
+    for body, why in (
+        ("offsetof(int, a)", "offsetof of a type that is not a struct or union"),
+        ("offsetof(struct s *, a)", "offsetof of a type that is not a struct or union"),
+        ("offsetof(struct t, a)", "offsetof of an incomplete struct or union"),
+        ("offsetof(struct s, bf)", "offsetof of a bit-field member"),
+        ("offsetof(struct s, nope)", "invalid offsetof member designator"),
+        ("offsetof(struct s, a.x)", "invalid offsetof member designator"),
+        ("offsetof(struct s, a[0])", "invalid offsetof member designator"),
+        ("offsetof(struct s, b[-1])", "invalid offsetof member designator"),
+        ("offsetof(struct s, in.x)", "invalid offsetof member designator"),
+    ):
+        _refused_alike(exe, head + fn.format(body), why, phase="PARSE")
+    # a supplied header answers `__has_include`, reads once, and a unit's fallback for it stays unused
+    once = (
+        "#include <stdint.h>\n#include <stdint.h>\n#ifndef UINT64_C\n#define UINT64_C(c) c\n#endif\n"
+        "#if __has_include(<stdint.h>) && __has_include(<math.h>) && !__has_include(<bcir_no_such.h>)\n"
+        "uint64_t f(void) { return UINT64_C(1) << 40; }\n#endif\n"
+    )
+    assert "funcs=1" in _lowers_alike(exe, once)
+    assert "1UL<<40" in _cpp.preprocess(once).replace(" ", ""), _cpp.preprocess(once)
+    # the linkable emit includes <stddef.h> for `max_align_t` and writes none of the frontend's typedefs
+    unit = (
+        "#include <stddef.h>\n#include <stdint.h>\n"
+        "struct blk { struct blk *next; max_align_t anchor; unsigned char data[]; };\n"
+        "size_t f(struct blk *b) { ptrdiff_t d = 1; intmax_t m = 2; "
+        "return b ? offsetof(struct blk, data) + sizeof(max_align_t) + (size_t)d + (size_t)m : 0u; }\n"
+    )
+    r = compile_unit(unit, check_clang=False)
+    assert r.is_clean, r.diagnostics
+    rails = [("oracle", emit_linkable(r.lowered, r.emitted))]
+    if _CC:
+        rails.append(("twin", _twin_linkable_of(unit)))
+    for rail, text in rails:
+        assert "#include <stddef.h>" in text and "__bcir_builtin" not in text, (rail, text)
+        assert "typedef" not in text.split("struct blk", 1)[0], (rail, text)
+        if _CC:
+            cp = subprocess.run(
+                [_CC, "-std=c11", "-fsyntax-only", "-x", "c", "-"],
+                input=text,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            assert cp.returncode == 0, (rail, cp.stderr, text)
 
 
 def test_a_line_directive_takes_a_decimal_digit_sequence_in_range_on_both_rails():
@@ -15836,8 +16556,9 @@ _PPARITH_FORMS = (
 # are of type int and therefore signed"); Clang reads it by `char`'s signedness, as a single one. Both rails read
 # Clang's, so GCC judges these only with a signed `char`.
 _PPARITH_GCC_APART = frozenset({"'\\xff\\xff\\xff\\xff' < 0"})
-# the cfront target each machine host GCC preprocesses for is (`platform.machine()`)
-_PPARITH_HOSTS = {
+# the cfront target each machine (`platform.machine()`) is: the target its host GCC preprocesses for, and on a glibc
+# Linux host the one its C library's headers describe (`_glibc_host_target`)
+_HOST_TARGETS = {
     "x86_64": "x86_64-linux",
     "amd64": "x86_64-linux",
     "aarch64": "aarch64-linux",
@@ -15926,7 +16647,7 @@ def test_if_expressions_take_the_branch_clang_takes_on_each_target():
 
     clang = shutil.which("clang")
     gcc = shutil.which("gcc")
-    host = _PPARITH_HOSTS.get(platform.machine().lower())  # the machine host GCC preprocesses for
+    host = _HOST_TARGETS.get(platform.machine().lower())  # the machine host GCC preprocesses for
     exe = _build_frontend(_session_build_dir())
     judged = 0
     with tempfile.TemporaryDirectory() as d:
@@ -15945,7 +16666,7 @@ def test_if_expressions_take_the_branch_clang_takes_on_each_target():
                 assert _pparith_branch(run.stdout) == oracle, f"#if {expr} on {t}: the rails part"
                 if clang:
                     ref = subprocess.run(
-                        [clang, "-target", abi.triple, "-std=c2x", "-E", "-P", path],
+                        [clang, *abi.clang_target, "-std=c2x", "-E", "-P", path],
                         capture_output=True,
                         text=True,
                     )
@@ -16017,7 +16738,9 @@ _PPARITH_TOKENS = (
     "#define P L\n#define L 7\n#define Q u8\n"
     "int x = P'a';\nint y = L'a';\nint z = L;\nint w = 1'000;\nint v = Q'a';\n"
 )
-_PPARITH_TOKENS_TEXT = "int x=7'a';\nint y=L'a';\nint z=7;\nint w=1'000;\nint v=u8 'a';\n"
+# `P'a'` is the two tokens `7` and `'a'`, kept apart by a space: written `7'a'`, C23's digit separator reads the pp-number
+# `7'a` and a stray `'` (CSUB-1; Clang's own -E spells it so, and does not re-lex to its tokens)
+_PPARITH_TOKENS_TEXT = "int x=7 'a';\nint y=L'a';\nint z=7;\nint w=1'000;\nint v=u8 'a';\n"
 
 
 def test_a_prefixed_character_constant_is_one_token_on_both_rails():

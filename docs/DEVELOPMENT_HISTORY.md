@@ -289,6 +289,115 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-11 — CSUB-1: the C subset's conformance rung, a ratchet over the runtime, one macro engine.**
+  - **The rung, on both rails.** A function-like invocation may run across lines (C11 6.10.3p10).
+    `static_assert` and `_Static_assert` work at file, block and member scope. The freestanding
+    headers are built in per target: `<stdint.h>`, `<stddef.h>` with `offsetof` and
+    `max_align_t`, `<stdbool.h>`, `<limits.h>`, `<float.h>`, `<iso646.h>`, `<stdalign.h>`, and
+    `<math.h>`'s constants and classification macros. Clang's own headers are the reference on
+    five targets. Each construct has a Clang-equivalence fixture (`cfront_stdheaders.c`). The
+    i386 target now names its CPU, the x87 `i686` baseline (`TargetABI.march`), where
+    `FLT_EVAL_METHOD` is 2. Clang 23 had moved that triple's default to `pentium4`, whose SSE2
+    arithmetic reports 0, so the reference had changed while BCIR's own i386 code had not.
+  - **The ratchet.** `tools/c/csub_ratchet.py` (section `csub_ratchet`) runs `bcir-cc` over every
+    production unit `MEMORY_CLASSIFICATION.txt` lists. It holds each to `runtime/c/csub_ratchet.json`:
+    clean, or blocked with its first refusal, its construct and the rung that lifts it. 21 of the
+    58 units compile with R1–R18 clean, where 4 did. `bcir_per.c` dropped its one-level recursion
+    (R18), and a malformed-length witness holds the range check that recursion had made.
+  - **One macro engine.** The twin's preprocessor rewrote a line until it stopped changing, with
+    no hide sets and no argument prescan. It miscompiled `f(1)(2)` of `#define f(x) (x) + f` as
+    `(1) + (2) + f`, `f(f)(y)` and `f LP 1)`, refused `#define EPERM EPERM` and any line expanding
+    past 8 KiB, and spelled a two-level `XSTR(__LINE__)` as `"__LINE__"`. It now runs the oracle's
+    Prosser engine, ported step for step. The suite's three pinned twin divergences are gone.
+  - **Fixed on both rails:**
+    - `#` keeps an argument's spacing (`S(a + b)` had been `"a+b"`);
+    - a number before a character constant stays two tokens;
+    - the twin's `#if` reads the oracle's text (it had read `defined(A) defined(B)` as `11`);
+    - one prescan depth (63) and one work bound for an expansion, counted at the same events (the
+      oracle had crashed on arguments nested some 400 deep);
+    - the twin reads integer libm results as signed.
+  - **Evidence.** A generated differential holds the rails to one answer on 400 programs. Every
+    `cfront_pp_*.c` fixture matches Clang and GCC on both rails. The work bound's edge is the same
+    on both, where empty expansions, hide sets and output bytes each carry the charge. A new libFuzzer
+    target, `fuzz_cpp`, runs each input on a shared context twice and on a fresh one, and holds the
+    three to one verdict, so a state leak shows the first time it matters. 28 injected faults across
+    the rung, the ratchet, the PER fix and the two engines were each caught, and a planted leak was
+    caught by `fuzz_cpp`.
+  - **Left open, refusals only:** the twin's 1 024-macro table; a computed `#include MACRO` on the
+    twin; `sizeof` of an object in an integer constant expression. Also open: both PER rails
+    accept an indefinite-length integer in more octets than it needs.
+
+- **2026-11-10 — PORT-2b: SentencePiece in C, and PORT-2 is complete.**
+  - `bcir_spm.c` (library `bcir_tokenizer`, hosted) loads a `tokenizer.model`, the Llama family's
+    and TinyLlama's, and encodes and decodes id for id with `frontends.models.spm`.
+    `bcir-tokenize --format spm` is its command line; `--no-dummy-prefix` is
+    `add_dummy_prefix=False`.
+  - The wire reader takes what the oracle's takes: varints of at most ten octets and at most
+    2^64 - 1 (a non-minimal spelling is read), every other field skipped by its wire type, groups
+    and field zero refused. Inside a piece, field 1, 2 or 3 may not repeat with its own wire type,
+    the text must be UTF-8, the score finite and the type 1 to 6.
+  - Encode merges through a heap keyed by (score descending, position ascending), the choice the
+    oracle's rescan makes at every step. Decode streams through Python's `errors='replace'`: each
+    maximal ill-formed subpart becomes one U+FFFD.
+  - The tables are keyed by the same SipHash under the file's digest. `bcir_tok_hash.h` is now the
+    one copy for both tokenizers.
+  - Three oracle defects are fixed on both rails:
+    - a byte piece's digits were read with `int(x, 16)`, which takes white space, signs, lowercase
+      and Arabic-Indic digits. A byte piece is now exactly `<0xHH>`, as SentencePiece writes it;
+    - decode chose bytes by a piece's spelling, so a normal piece spelled `<0xZZ>` crashed it. It
+      renders by type now;
+    - an id that named no piece was dropped silently. It is refused, as the BPE twin and
+      SentencePiece refuse it.
+
+  `test_c_spm_tokenizer.py` joins the `tokenizer` section's comparison. It covers five models: one
+  trained with scores tied in threes, one with no byte alphabet, one of every piece type, and the
+  mini one twice, the second time in odd but valid wire form. It also covers 56 rule documents,
+  byte mutations, and every one- and two-octet run of the octets UTF-8 is decided by, through the
+  byte pieces. `test_spm.c` pins each replacement subpart and fails every allocation in turn;
+  `fuzz_spm.c` holds every decode to UTF-8. Thirteen injected faults were each caught. Three first
+  escaped the comparison, and the corpus now reaches all three:
+  - a control piece that two symbols could make;
+  - a control piece that one symbol is;
+  - an oversized varint in a field that is otherwise skipped.
+
+  The file-writing tool had turned `\uXXXX` escapes into literal characters in both tokenizer
+  tests, U+2028 and U+00A0 among them. They are escapes again. The inventory goes to 70 twinned
+  modules (C 51).
+
+- **2026-11-10 — PORT-2a: the byte-level BPE tokenizer in C, over one JSON reader.**
+  - `bcir_bpe.c` (library `bcir_tokenizer`, hosted) loads a `tokenizer.json` of the GPT-2/Qwen
+    family, encodes UTF-8 text to ids and decodes ids back. `bcir-tokenize` is its command line
+    (`info`, `encode`, `decode`, `limits`). Every allocation goes through a lent allocator.
+  - Both rails read the file through the bounded JSON reader under one named profile:
+    `TOKENIZER_LIMITS` (Python) and `bcir_bpe_limits` (C). The scan bounds depth, nodes, members,
+    elements, string and number lengths and total work. Then come UTF-8 (an escaped lone surrogate
+    included) and the grammar, with repeated member names refused. The Python loader used to call
+    `json.loads` alone, which admits NaN, Infinity and lone surrogates and has no limits; it now
+    runs `jer_bounded.scan` first and refuses NaN.
+  - The laws run over records the reader's events collect, in the oracle's order, so member
+    order never changes a verdict. Ids are integers in [0, 2^31-1]; `-0` counts as 0, and a
+    fraction or an exponent is refused. Merges are applied through a heap of candidates: O(n log n)
+    per word where the oracle rescans in O(n^2), with the same choice at every step (the lowest
+    rank, then the leftmost). Specials are matched through a trie, longest first. Decode checks
+    UTF-8 for each run of byte tokens between specials, as the oracle's decoder does.
+  - Every table is a hash keyed by SipHash-2-4 under the file's own SHA-256.
+
+  `test_c_bpe_tokenizer.py` and the `tokenizer` section share one comparison. It covers seven
+  tokenizers:
+  - one trained in the test, with 330 merges, rank ties and two merges that make one token;
+  - the pair form, with member order permuted and decorated;
+  - specials that overlap, share a vocab token's text and id, lie outside the byte alphabet, or
+    are the space itself.
+
+  The comparison also covers 110 law documents, the profile's per-container ceilings and byte
+  mutations. `test_bpe.c` fails every allocation of a load and an encode in turn, and pins the
+  order "scan before sink". `fuzz_bpe.c` holds encode and decode to their count, measure and
+  round-trip contracts. Eleven injected faults were each caught. Two of them first escaped the
+  comparison: the pre-tokenizer's space rule (no merge crossed two spaces) and per-run UTF-8 in
+  decode. The corpus now reaches both. Removing the scan changes no verdict, because the
+  parser holds the same limits, so the harness pins the scan's order instead. The inventory goes
+  to 69 twinned modules (C 50).
+
 - **2026-11-10 — PORT-1 (BCAB half): `bcir-bundle` in C, and MC1's C twin is complete.**
   - `bcir_ab_listing.c` (library `bcir_listing`, freestanding) prints `list` and `hexdump` over
     the BCAB reader's own validation, so a bundle the oracle refuses prints nothing.

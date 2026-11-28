@@ -116,6 +116,21 @@ static bcir_per_status read_unsigned_octets(bcir_per_reader *r, unsigned octets,
   return BCIR_PER_OK;
 }
 
+/* The length of an indefinite-length constrained whole number (X.691 13.2.6 a): itself a constrained whole number,
+ * lb = 1 and ub = max_octets, at most BCIR_PER_MAX_INT_OCTETS. Its range is at most 8, and both variants read a range
+ * that small the same way: in bits_for_range(range) bits (11.5.6, 11.5.7.1), which is none for a range of 1 (11.5.4,
+ * a reach this caller never makes: its ranges exceed 65535, so a length's range is at least 3). That is
+ * the read bcir_per_constrained would make of it, made here so that function never calls itself: the subset's R18
+ * refuses recursion, and a decoder keeps no call stack its input can deepen (the C subset audit, CSUB-1). */
+static bcir_per_status read_length_octets(bcir_per_reader *r, unsigned max_octets, uint64_t *octets) {
+  uint64_t span = (uint64_t)max_octets - 1u, offset = 0u;
+  bcir_per_status st = bcir_per_get_bits(r, bcir_per_bits_for_range(span + 1u), &offset);   /* 0 bits: offset 0 */
+  if (st != BCIR_PER_OK) return st;
+  if (offset > span) return BCIR_PER_RANGE;
+  *octets = 1u + offset;
+  return BCIR_PER_OK;
+}
+
 bcir_per_status bcir_per_constrained(bcir_per_reader *r, int64_t lb, int64_t ub,
                                      int64_t *out) {
   uint64_t span, offset = 0u;
@@ -156,12 +171,8 @@ bcir_per_status bcir_per_constrained(bcir_per_reader *r, int64_t lb, int64_t ub,
       if (max_octets > BCIR_PER_MAX_INT_OCTETS) return BCIR_PER_RANGE;
       /* 13.2.6 a): the length is itself constrained, lb = 1, ub = the octet count that
        * holds the range. */
-      {
-        int64_t len_value = 0;
-        st = bcir_per_constrained(r, 1, (int64_t)max_octets, &len_value);
-        if (st != BCIR_PER_OK) return st;
-        octets = (uint64_t)len_value;
-      }
+      st = read_length_octets(r, max_octets, &octets);
+      if (st != BCIR_PER_OK) return st;
     }
     st = bcir_per_align(r);
     if (st != BCIR_PER_OK) return st;
