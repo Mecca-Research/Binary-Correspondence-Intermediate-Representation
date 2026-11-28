@@ -6,6 +6,7 @@
 #include "bcir_runtime.h"
 #include "bcir_crc32.h"
 #include "bcir_execution_plan.h"
+#include "bcir_bytes.h"
 
 /* --- zlib-compatible CRC-32 (freestanding) --- */
 /* CRC-32 (IEEE 802.3, reflected, polynomial 0xEDB88320; zlib's crc32) eight bytes a step: bcir_crc32.h's tables
@@ -22,18 +23,6 @@ uint32_t bcir_crc32(const uint8_t *BCIR_RESTRICT data, size_t len) {
  * Python decoder's _CHANNEL_DEFAULT, closing the decode-rail asymmetry. */
 static const char BCIR_DEFAULT_CHANNEL[] = "host";
 #define BCIR_DEFAULT_CHANNEL_LEN 4u
-
-/* --- little-endian readers (byte-wise; host-endian-independent) --- */
-static uint16_t rd16(const uint8_t *BCIR_RESTRICT p) {
-  return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
-static uint32_t rd32(const uint8_t *BCIR_RESTRICT p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-         ((uint32_t)p[3] << 24);
-}
-static uint64_t rd64(const uint8_t *BCIR_RESTRICT p) {
-  return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32);
-}
 
 /* --- bounded body cursor --- */
 typedef struct {
@@ -94,15 +83,15 @@ static uint8_t c_u8(cur *c) {
 }
 static uint16_t c_u16(cur *c) {
   if (!c_has(c, 2)) { c_fail(c); return 0; }
-  uint16_t v = rd16(c->d + c->pos); c->pos += 2; return v;
+  uint16_t v = bcir_ld16le(c->d + c->pos); c->pos += 2; return v;
 }
 static uint32_t c_u32(cur *c) {
   if (!c_has(c, 4)) { c_fail(c); return 0; }
-  uint32_t v = rd32(c->d + c->pos); c->pos += 4; return v;
+  uint32_t v = bcir_ld32le(c->d + c->pos); c->pos += 4; return v;
 }
 static uint64_t c_u64(cur *c) {
   if (!c_has(c, 8)) { c_fail(c); return 0; }
-  uint64_t v = rd64(c->d + c->pos); c->pos += 8; return v;
+  uint64_t v = bcir_ld64le(c->d + c->pos); c->pos += 8; return v;
 }
 static const char *c_str(cur *c, uint16_t *out_len) {
   uint16_t n = c_u16(c);
@@ -129,11 +118,11 @@ static void c_skip_strarr(cur *c) {
 
 uint32_t bcir_seg_read_rid(const bcir_segment_view *seg, uint16_t i) {
   return (seg && seg->reads && i < seg->n_reads)
-             ? rd32(seg->reads + (size_t)i * 4u) : 0u;
+             ? bcir_ld32le(seg->reads + (size_t)i * 4u) : 0u;
 }
 uint32_t bcir_seg_write_rid(const bcir_segment_view *seg, uint16_t i) {
   return (seg && seg->writes && i < seg->n_writes)
-             ? rd32(seg->writes + (size_t)i * 4u) : 0u;
+             ? bcir_ld32le(seg->writes + (size_t)i * 4u) : 0u;
 }
 
 /* The range gate over a decoded segment view (the rail-symmetry fix): lane in [0,5],
@@ -163,10 +152,10 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
   if (len < (size_t)BCIR_STREAMPACK_HEADER_SIZE + 4u) return BCIR_ERR_TRUNCATED;
   if (data[0] != 'B' || data[1] != 'S' || data[2] != 'P' || data[3] != 'K')
     return BCIR_ERR_MAGIC;
-  uint16_t version = rd16(data + 4);
+  uint16_t version = bcir_ld16le(data + 4);
   if (version < BCIR_STREAMPACK_VERSION || version > BCIR_STREAMPACK_VERSION_MAX)
     return BCIR_ERR_VERSION;
-  if (rd16(data + 6) != 0u) return BCIR_ERR_RESERVED;
+  if (bcir_ld16le(data + 6) != 0u) return BCIR_ERR_RESERVED;
   {
     /* v2 carved pipeline_depth at 36..37; v4 carved n_gens at 40..43. Everything else in
      * the pad is reserved and must be zero -- a reserved byte is never an extension point. */
@@ -176,23 +165,23 @@ bcir_status bcir_sp_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
       if (data[i] != 0u) return BCIR_ERR_RESERVED;
     }
   }
-  uint32_t stored = rd32(data + len - 4);
+  uint32_t stored = bcir_ld32le(data + len - 4);
   if (bcir_crc32(data, len - 4) != stored) return BCIR_ERR_CRC;
   if (hdr) {
     for (int i = 0; i < 4; i++) hdr->magic[i] = data[i];
     hdr->version = version;
-    hdr->flags = rd16(data + 6);
-    hdr->topo_gen = rd32(data + 8);
-    hdr->map_gen = rd32(data + 12);
-    hdr->data_gen = rd32(data + 16);
-    hdr->n_segments = rd32(data + 20);
-    hdr->n_prefetches = rd32(data + 24);
-    hdr->n_blocks = rd32(data + 28);
-    hdr->n_trace = rd32(data + 32);
+    hdr->flags = bcir_ld16le(data + 6);
+    hdr->topo_gen = bcir_ld32le(data + 8);
+    hdr->map_gen = bcir_ld32le(data + 12);
+    hdr->data_gen = bcir_ld32le(data + 16);
+    hdr->n_segments = bcir_ld32le(data + 20);
+    hdr->n_prefetches = bcir_ld32le(data + 24);
+    hdr->n_blocks = bcir_ld32le(data + 28);
+    hdr->n_trace = bcir_ld32le(data + 32);
     /* v2 appended into the v1 pad; v1 packs are single-phase-in-flight. */
-    hdr->pipeline_depth = (version >= 2) ? rd16(data + 36) : 1;
+    hdr->pipeline_depth = (version >= 2) ? bcir_ld16le(data + 36) : 1;
     /* v4 appended the generation-vector count; a v1-v3 pack carries no vector. */
-    hdr->n_gens = (version >= 4) ? rd32(data + 40) : 0;
+    hdr->n_gens = (version >= 4) ? bcir_ld32le(data + 40) : 0;
   }
   return BCIR_OK;
 }
@@ -315,7 +304,7 @@ static const uint8_t *c_u64arr(cur *c, uint16_t *out_cnt) {
 
 uint64_t bcir_block_stride(const bcir_block_view *block, uint16_t i) {
   return (block && block->strides && i < block->n_strides)
-             ? rd64(block->strides + (size_t)i * 8u) : 0u;
+             ? bcir_ld64le(block->strides + (size_t)i * 8u) : 0u;
 }
 
 static bcir_status sp_blocks(const uint8_t *BCIR_RESTRICT data, size_t len,
@@ -385,9 +374,9 @@ static int shortlex_after(const char *a, uint16_t la, const char *b, uint16_t lb
 static int trace_find_claim(const uint8_t *data, size_t trace_start, uint32_t n_trace,
                             uint64_t cid, uint32_t *next) {
   for (uint32_t k = *next; k < n_trace; k++)
-    if (rd64(data + trace_start + (size_t)k * 24u) == cid) { *next = k + 1u; return 1; }
+    if (bcir_ld64le(data + trace_start + (size_t)k * 24u) == cid) { *next = k + 1u; return 1; }
   for (uint32_t k = 0; k < *next && k < n_trace; k++)
-    if (rd64(data + trace_start + (size_t)k * 24u) == cid) { *next = k + 1u; return 1; }
+    if (bcir_ld64le(data + trace_start + (size_t)k * 24u) == cid) { *next = k + 1u; return 1; }
   return 0;
 }
 
@@ -459,9 +448,9 @@ static int targets_cover_read(const uint8_t *targets, uint16_t n_targets,
                               const uint8_t *reads, uint16_t n_reads) {
   if (n_reads == 0) return 1;
   for (uint16_t r = 0; r < n_reads; r++) {
-    uint32_t rid = rd32(reads + (size_t)r * 4u);
+    uint32_t rid = bcir_ld32le(reads + (size_t)r * 4u);
     for (uint16_t t = 0; t < n_targets; t++)
-      if (rd32(targets + (size_t)t * 4u) == rid) return 1;
+      if (bcir_ld32le(targets + (size_t)t * 4u) == rid) return 1;
   }
   return 0;
 }
@@ -527,7 +516,7 @@ static bcir_status sp_semantic(const uint8_t *BCIR_RESTRICT data, size_t len,
       trace_max = cid;              /* repeats no earlier id */
     } else {
       for (uint32_t j = 0; j < i; j++)
-        if (rd64(data + trace_start + (size_t)j * 24u) == cid)
+        if (bcir_ld64le(data + trace_start + (size_t)j * 24u) == cid)
           return BCIR_ERR_PROVENANCE; /* conflicting trace hashes cannot share an id */
     }
     c_skip(&c, 16);                 /* src_hash + trace_hash */
@@ -674,7 +663,7 @@ static bcir_status locate_generations(const uint8_t *BCIR_RESTRICT data, size_t 
 }
 
 static void read_generation(const uint8_t *p, bcir_generation_view *g) {
-  g->rid = rd32(p); g->map_gen = rd32(p + 4); g->data_gen = rd32(p + 8);
+  g->rid = bcir_ld32le(p); g->map_gen = bcir_ld32le(p + 4); g->data_gen = bcir_ld32le(p + 8);
 }
 
 bcir_status bcir_sp_for_each_generation(const uint8_t *BCIR_RESTRICT data, size_t len,
@@ -724,7 +713,7 @@ bcir_status bcir_sp_check_generation_vector(const uint8_t *BCIR_RESTRICT data, s
     for (size_t j = 0; j < n_live; j++) {
       uint32_t i;
       for (i = 0; i < n_gens; i++)
-        if (rd32(data + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE) == live[j].rid) break;
+        if (bcir_ld32le(data + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE) == live[j].rid) break;
       if (i == n_gens) return BCIR_ERR_STALE;
     }
   }
@@ -739,12 +728,12 @@ bcir_status bcir_sp_check_generation_vector(const uint8_t *BCIR_RESTRICT data, s
  * order; R10 stays bcir_sp_verify_semantic's. */
 
 uint32_t bcir_prefetch_target(const bcir_prefetch_view *pf, uint16_t i) {
-  return (pf && pf->targets && i < pf->n_targets) ? rd32(pf->targets + (size_t)i * 4u) : 0u;
+  return (pf && pf->targets && i < pf->n_targets) ? bcir_ld32le(pf->targets + (size_t)i * 4u) : 0u;
 }
 
 int bcir_sp_strings_next(bcir_sp_strings *it, const char **s, uint16_t *len) {
   if (!it || !s || !len || it->count == 0u || !it->next) return 0;
-  uint16_t n = rd16(it->next);
+  uint16_t n = bcir_ld16le(it->next);
   *s = (const char *)(it->next + 2);
   *len = n;
   it->next += 2u + (size_t)n;
@@ -892,7 +881,7 @@ static bcir_status sp_records(const uint8_t *BCIR_RESTRICT data, size_t len,
 
   rec_open(&r, hdr, BCIR_SP_RECORD_CRC32, 0, body_len);
   r.length = 4u;
-  r.crc32 = rd32(data + body_len);
+  r.crc32 = bcir_ld32le(data + body_len);
   if (live) (void)fn(&r, ctx);
   return BCIR_OK;
 }
@@ -940,37 +929,37 @@ bcir_status bcir_ep_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
   if (data[0] != 'B' || data[1] != 'P' || data[2] != 'L' || data[3] != 'N')
     return BCIR_ERR_MAGIC;
   {
-    uint16_t version = rd16(data + 4);
+    uint16_t version = bcir_ld16le(data + 4);
     if (version < BCIR_EP_VERSION || version > BCIR_EP_VERSION_MAX) return BCIR_ERR_VERSION;
   }
-  if ((rd16(data + 6) & ~BCIR_EP_FLAGS) != 0u) return BCIR_ERR_RESERVED;
+  if ((bcir_ld16le(data + 6) & ~BCIR_EP_FLAGS) != 0u) return BCIR_ERR_RESERVED;
   /* v2 carved the liveness byte out of offset 9; on a v1 plan it is reserved (0). */
-  if ((rd16(data + 4) < 2u && data[9]) || data[10] || data[11] ||
+  if ((bcir_ld16le(data + 4) < 2u && data[9]) || data[10] || data[11] ||
       data[36] || data[37] || data[38] || data[39])
     return BCIR_ERR_RESERVED;
   if (data[8] > (uint8_t)BCIR_EP_MODE_MAX) return BCIR_ERR_PLAN;
   /* G19: an explicit placement is a phase-barriered (eft) placement. */
-  if ((rd16(data + 6) & BCIR_EP_FLAG_EXPLICIT_PLACEMENT) != 0u &&
+  if ((bcir_ld16le(data + 6) & BCIR_EP_FLAG_EXPLICIT_PLACEMENT) != 0u &&
       data[8] != (uint8_t)BCIR_EP_MODE_EFT)
     return BCIR_ERR_PLAN;
-  if (rd16(data + 4) >= 2u && data[9] > (uint8_t)BCIR_EP_LIVENESS_MAX) return BCIR_ERR_PLAN;
-  if (bcir_crc32(data, len - 4) != rd32(data + len - 4)) return BCIR_ERR_CRC;
+  if (bcir_ld16le(data + 4) >= 2u && data[9] > (uint8_t)BCIR_EP_LIVENESS_MAX) return BCIR_ERR_PLAN;
+  if (bcir_crc32(data, len - 4) != bcir_ld32le(data + len - 4)) return BCIR_ERR_CRC;
   if (hdr) {
     int i;
     for (i = 0; i < 4; i++) hdr->magic[i] = data[i];
-    hdr->version = rd16(data + 4);
-    hdr->flags = rd16(data + 6);
+    hdr->version = bcir_ld16le(data + 4);
+    hdr->flags = bcir_ld16le(data + 6);
     hdr->mode = data[8];
     hdr->liveness = hdr->version >= 2u ? data[9] : (uint8_t)BCIR_EP_LIVENESS_PHASE;
-    hdr->streams = rd32(data + 12);
-    hdr->knee = rd32(data + 16);
-    hdr->n_steps = rd32(data + 20);
-    hdr->n_lifetimes = rd32(data + 24);
-    hdr->n_moves = rd32(data + 28);
-    hdr->n_gens = rd32(data + 32);
-    hdr->makespan = rd64(data + 40);
-    hdr->module_hash = rd64(data + 48);
-    hdr->target_hash = rd64(data + 56);
+    hdr->streams = bcir_ld32le(data + 12);
+    hdr->knee = bcir_ld32le(data + 16);
+    hdr->n_steps = bcir_ld32le(data + 20);
+    hdr->n_lifetimes = bcir_ld32le(data + 24);
+    hdr->n_moves = bcir_ld32le(data + 28);
+    hdr->n_gens = bcir_ld32le(data + 32);
+    hdr->makespan = bcir_ld64le(data + 40);
+    hdr->module_hash = bcir_ld64le(data + 48);
+    hdr->target_hash = bcir_ld64le(data + 56);
   }
   return BCIR_OK;
 }
@@ -1109,16 +1098,16 @@ typedef struct {
   uint32_t n;            /* the records the sweep reads: those before the first breaking its own law */
 } ep_sweep;
 
-static uint32_t sw_at(const uint8_t *arr, size_t i) { return rd32(arr + 4u * i); }
+static uint32_t sw_at(const uint8_t *arr, size_t i) { return bcir_ld32le(arr + 4u * i); }
 static void sw_set(uint8_t *arr, size_t i, uint32_t v) { sw_put32(arr + 4u * i, v); }
 static const uint8_t *sw_rec(const ep_sweep *s, uint32_t i) { return s->f + (size_t)i * EP_SW_FIELDS; }
-static uint64_t sw_off(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i)); }
-static uint64_t sw_end(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 8); }
-static uint64_t sw_first(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 16); }
-static uint64_t sw_last(const ep_sweep *s, uint32_t i) { return rd64(sw_rec(s, i) + 24); }
+static uint64_t sw_off(const ep_sweep *s, uint32_t i) { return bcir_ld64le(sw_rec(s, i)); }
+static uint64_t sw_end(const ep_sweep *s, uint32_t i) { return bcir_ld64le(sw_rec(s, i) + 8); }
+static uint64_t sw_first(const ep_sweep *s, uint32_t i) { return bcir_ld64le(sw_rec(s, i) + 16); }
+static uint64_t sw_last(const ep_sweep *s, uint32_t i) { return bcir_ld64le(sw_rec(s, i) + 24); }
 static const char *sw_bank(const ep_sweep *s, uint32_t i, uint16_t *len) {
-  *len = rd16(sw_rec(s, i) + 40);
-  return (const char *)(s->data + (size_t)rd64(sw_rec(s, i) + 32));
+  *len = bcir_ld16le(sw_rec(s, i) + 40);
+  return (const char *)(s->data + (size_t)bcir_ld64le(sw_rec(s, i) + 32));
 }
 
 /* Carve the lent scratch for `n_lifetimes` records; 0 when none is lent or it is short. */
@@ -1597,8 +1586,8 @@ bcir_status bcir_ep_binding(const uint8_t *BCIR_RESTRICT data, size_t len,
   if (st != BCIR_OK) return st;
   if (hdr.version >= 3u) {              /* verified: the trailer ends exactly at the CRC */
     const uint8_t *tail = data + len - 4u - (size_t)EP_BINDING_SIZE;
-    if (source_hash) *source_hash = rd64(tail);
-    if (spec_hash) *spec_hash = rd64(tail + 8);
+    if (source_hash) *source_hash = bcir_ld64le(tail);
+    if (spec_hash) *spec_hash = bcir_ld64le(tail + 8);
   }
   return BCIR_OK;
 }
@@ -1627,7 +1616,7 @@ bcir_status bcir_ep_check_generation_vector(const uint8_t *BCIR_RESTRICT plan, s
     }
     for (j = 0; j < n_live; j++) {
       for (i = 0; i < hdr.n_gens; i++)
-        if (rd32(plan + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE) == live[j].rid) break;
+        if (bcir_ld32le(plan + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE) == live[j].rid) break;
       if (i == hdr.n_gens) return BCIR_ERR_STALE;                /* declared after the plan */
     }
   }

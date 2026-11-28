@@ -42,6 +42,8 @@ _DYNAMIC = ("__FILE__", "__LINE__")
 _HAS_OPS = ("__has_include", "__has_embed", "__has_attribute", "__has_builtin", "__has_c_attribute")
 _SUPPORTED_ATTRS = frozenset({"packed", "aligned"})  # attributes the L8 ABI honours (GCC __x__ ok)
 #: The feature-test operators whose parenthesized operand the twin's `#if` walk reads as tokens.
+#: `__has_c_attribute`'s operand naming PORT-3's attribute: `bcir::timing`, each name also as `__x__` (C23 6.7.13.2)
+_TIMING_ATTRIBUTE = re.compile(r"\s*(?:bcir|__bcir__)\s*::\s*(?:timing|__timing__)\s*", re.ASCII)
 _HAS_PAREN = ("__has_attribute", "__has_builtin", "__has_c_attribute")
 #: The reason both rails refuse a `defined` with no name, or with `(` and a name but no `)`, for (CF-PPLIMITS).
 _BAD_DEFINED = "malformed defined operator"
@@ -110,11 +112,17 @@ _PUNCT = [
 #: ASCII (CF-PPLIMITS): `\w` and `\d` had taken every Unicode letter and digit, so `café` was one name here and `caf`
 #: and two bytes on the twin; and a character no alternative matched was dropped -- `x + caf€` lowered as `x + caf` --
 #: where the twin hands each such byte on as a token of its own.
+#: A quote with no closing one takes the rest of the text, as the twin's `ntok_quoted` and Clang and GCC read it (C11
+#: 6.4p3 leaves a lone `'` or `"` undefined): the oracle had cut a lone quote off as a token of its own, so `S(')`
+#: stringized to `"'"` where the twin and both compilers ran out of the argument list (CF-DIGITSEP). And a C23 digit
+#: separator is a pp-number's only as `pp-number ' digit` or `pp-number ' nondigit` (6.4.8), the `'` and the character
+#: after it one step, so a sign after `'e` is no exponent's: `[\w.']` had taken any `'`, so `F(1',')` passed two
+#: arguments and `1'c'` was one number, where Clang and GCC read `1` and `','`, and `1'c` and an unterminated `'`.
 _TOKEN_RE = re.compile(
-    r'"(?:\\.|[^"\\])*"'  # string
-    r"|'(?:\\.|[^'\\])*'"  # char
-    r"|(?:u8|[LuU])'(?:\\.|[^'\\])*'"  # a prefixed char: one token (C11 6.4.4.4), its `L` no macro (CF-PPARITH)
-    r"|\.?\d(?:[eEpP][-+]|[\w.'])*"  # pp-number (C23 ' seps; ints, hex/bin, floats w/ exp+suffix)
+    r'"(?:\\.|[^"\\])*(?:"|\\)?'  # string, or an unterminated one to the end (and a backslash ending it)
+    r"|'(?:\\.|[^'\\])*(?:'|\\)?"  # char, likewise
+    r"|(?:u8|[LuU])'(?:\\.|[^'\\])*(?:'|\\)?"  # a prefixed char: one token (C11 6.4.4.4), its `L` no macro (CF-PPARITH)
+    r"|\.?\d(?:[eEpP][-+]|'[A-Za-z0-9_]|[\w.])*"  # pp-number (6.4.8: ints, hex/bin, floats w/ exp+suffix, C23 seps)
     r"|[A-Za-z_]\w*"  # identifier
     rf"|{'|'.join(re.escape(p) for p in _PUNCT)}"  # the punctuators, longest first
     r"|\\"  # a stray backslash is its own token (a path in a stringize arg `#x` -> `"C:\\tmp"`)
@@ -138,6 +146,19 @@ class CPPError(Exception):
 UNTERMINATED_ARGS = "unterminated macro argument list"
 DIRECTIVE_IN_ARGS = "preprocessing directive inside macro arguments"
 LINE_IN_CONTINUED_ARGS = "__LINE__ on a continued line of a macro invocation"
+#: ... and the one each refuses `__LINE__` for on a line a backslash-newline continues, where the continuation holds it
+#: (`_splice`): Clang and GCC give a `__LINE__` after the splice the line it stands on, which neither rail tracks per
+#: token (CF-SPLICELINE; the twin's `PP_LINE_ON_SPLICED`). One before the splice, or reached through a macro named
+#: there, is the line the logical line starts on, as both compilers read it where they agree.
+LINE_ON_SPLICED = "__LINE__ on a line a backslash continues"
+#: The one reason both rails refuse an `#embed` for whose header name C23's parameters follow (`limit`, `prefix`,
+#: `suffix`, `if_empty`): neither reads them, and both had read the whole file past a `limit(1)` (CF-INCLUDEX).
+EMBED_PARAMETERS = "#embed parameters are not supported"
+#: The most macros a unit holds at once, the predefined ones and each `-D` included, and the one reason both rails
+#: refuse one more for: the twin's hide sets name a macro by a 16-bit index (`BCIR_CPP_MAX_MACROS`). The twin had
+#: stopped at 1024, the oracle at none (CF-MACROCAP).
+_MAX_MACROS = 65534
+TOO_MANY_MACROS = "too many macros"
 
 
 class _Incomplete(Exception):
@@ -323,6 +344,7 @@ class Preprocessor:
         self._depth = 0
         self._cur_file = "<source>"  # __FILE__: the file currently being processed
         self._cur_line = 0  # __LINE__: its presumed line number
+        self._cur_spliced = False  # its continuation holds `__LINE__` (`_splice`)
         self._presumed = 0  # presumed line of the *next* line (#line sets it)
         self._incstack: list = []  # active #include sites: (including_file, line), outer-first
         self.linemap: list = []  # per output line: (file, line, include-stack snapshot)
@@ -336,7 +358,7 @@ class Preprocessor:
             raise CPPError("the source holds a NUL byte")
         out: list[str] = []
         self._incstack, self.linemap = [], []
-        self._run(self._logical_lines(text), out, name)
+        self._run(*self._logical_lines(text), out, name)
         return "\n".join(out) + "\n"
 
     def _out(self, out: list, text: str) -> None:
@@ -379,7 +401,7 @@ class Preprocessor:
         # a NEL or a U+2028, where `str.splitlines` ends one and the twin's reader does not: `return x\x1c + 1u;`
         # lowered here with the character gone and was refused there, and a NEL in code vanished before the reader
         # that refuses a character past ASCII saw it (CF-PPSPLITS).
-        spliced = text.replace("\r\n", "\n").replace("\\\n", "")
+        spliced, flagged = _splice(text.replace("\r\n", "\n"))
         lines = _strip_comments(spliced).split("\n")
         if (
             lines and lines[-1] == ""
@@ -390,9 +412,9 @@ class Preprocessor:
         for line in lines:
             if len(line.encode("utf-8")) > _MAX_LINE:
                 raise CPPError("preprocessor line too long")
-        return lines
+        return lines, flagged
 
-    def _run(self, lines: list[str], out: list[str], name: str) -> None:
+    def _run(self, lines: list[str], flagged: frozenset, out: list[str], name: str) -> None:
         # conditional stack: each entry is [currently_active, any_branch_taken, parent_active]
         cond: list[list[bool]] = []
 
@@ -408,6 +430,7 @@ class Preprocessor:
             i = 0
             while i < len(lines):
                 raw = lines[i]
+                self._cur_spliced = i in flagged
                 i += 1
                 self._cur_line = self._presumed
                 self._presumed += 1
@@ -532,6 +555,8 @@ class Preprocessor:
     # --- #define ---
     def _define(self, rest: str) -> None:
         nm, nameend = _macro_name(rest, "macro name must be an identifier")
+        if nm not in self.macros and len(self.macros) >= _MAX_MACROS:
+            raise CPPError(TOO_MANY_MACROS)
         if nameend < len(rest) and rest[nameend] == "(":  # function-like
             params, i = _params(rest, nameend + 1)
             variadic = bool(params) and params[-1] == "__VA_ARGS__"
@@ -580,9 +605,9 @@ class Preprocessor:
 
     # --- #include / #embed ---
     def _include(self, rest: str, out, name) -> None:
-        rest_x = self._expand_text(rest).strip(_ASCII_SPACE)
-        system = rest_x.startswith("<")
-        target = self._header_name(rest)
+        target, system, _after = self._header_operand(
+            rest, "#include"
+        )  # (tokens after it ignored, as Clang's)
         text = self._resolve(target)
         if text is None and system:
             # a standard header no search path holds: the frontend's own, for the target (`stdheaders`, CSUB-1) --
@@ -590,11 +615,10 @@ class Preprocessor:
             text = header_text(target, self.abi)
             if text is None:
                 return
-        if text is None:
-            raise CPPError(
-                f"#include {target!r} not found (in {name}); searched the mount + "
-                f"{len(self.search_paths)} -I path(s)"
-            )
+        if (
+            text is None
+        ):  # in the twin's words, which had named the search path no more than these (CF-INCLUDEX)
+            raise CPPError(f"#include {target} not found")
         # a NUL in a header, in the twin's words (`bcir_cpp.c`); the tokenizer had dropped it (CF-PPLIMITS)
         if "\0" in text:
             raise CPPError(f"#include {target} contains NUL")
@@ -603,7 +627,7 @@ class Preprocessor:
         self._depth += 1
         self._incstack.append((name, self._cur_line))  # the #include site, for the diagnostic frame
         try:
-            self._run(self._logical_lines(text), out, target)
+            self._run(*self._logical_lines(text), out, target)
         finally:
             self._incstack.pop()
             self._depth -= 1
@@ -611,25 +635,51 @@ class Preprocessor:
     def _has_header(self, operand: str) -> bool:
         """`__has_include`'s answer for `operand`: the header resolves, or is a `<...>` one this frontend supplies
         itself (`stdheaders`), as `#include` reads it (CSUB-1)."""
-        target = self._header_name(operand)
+        target, system, _after = self._header_operand(operand, "__has_include")
         if self._resolve(target) is not None:
             return True
-        return self._expand_text(operand).strip(_ASCII_SPACE).startswith("<") and (
-            header_text(target, self.abi) is not None
-        )
+        return system and header_text(target, self.abi) is not None
+
+    def _has_embed(self, operand: str) -> str:
+        """`__has_embed`'s answer for `operand` (C23 6.10.1): 1 where the resource holds bytes, 2 where it is empty, 0
+        where it is not found (`__STDC_EMBED_FOUND__`, `_EMPTY__`, `_NOT_FOUND__`), its name read as `#embed` reads
+        one. It had answered 1 for an empty one, and the twin had not read the operator at all (CF-INCLUDEX)."""
+        target, _system, after = self._header_operand(operand, "__has_embed")
+        if after.strip(_ASCII_SPACE):
+            raise CPPError(EMBED_PARAMETERS)
+        data = self.embeds.get(target)
+        return "0" if data is None else "1" if data else "2"
 
     def _embed(self, rest: str) -> str:
-        target = self._header_name(rest.split()[0] if rest else rest)
+        target, _system, after = self._header_operand(rest, "#embed")
+        # `limit(1)` and C23's other parameters: read by neither rail (CF-INCLUDEX)
+        if after.strip(_ASCII_SPACE):
+            raise CPPError(EMBED_PARAMETERS)
         data = self.embeds.get(target)
         if data is None:
-            raise CPPError(f"#embed {target!r} not found")
+            raise CPPError(f"#embed {target} not found")
         return ", ".join(str(b) for b in data)
 
-    def _header_name(self, rest: str) -> str:
-        rest = self._expand_text(rest).strip(_ASCII_SPACE)
-        if rest.startswith(("<", '"')):
-            return rest[1:].split(">" if rest[0] == "<" else '"', 1)[0]
-        return rest
+    def _header_operand(self, rest: str, kind: str) -> tuple[str, bool, str]:
+        """(the header's name, whether it is a `<...>` one, the text after it) of a `#include`, `#embed` or
+        `__has_include` operand `rest` (`kind` names which, for the refusal), read as the twin's `header_operand`
+        reads it (CF-INCLUDEX). A header name written as one, `"..."` or `<...>`, is read as it stands: no macro is
+        replaced inside it (C11 6.10.2p2-3), where `<stdint.h>` had been expanded, so a macro named `stdint` changed
+        the header. Any other operand is macro-expanded and must then be one (6.10.2p4): the twin had refused every
+        computed operand (`malformed #include`), and the oracle had taken a bare name for a quoted one. A name whose
+        `>` or `"` never comes, and one past 1023 bytes, are refused on both rails."""
+        text = rest.strip(_ASCII_SPACE)
+        if not text.startswith(("<", '"')):
+            text = self._expand_text(text).strip(_ASCII_SPACE)
+            if not text.startswith(("<", '"')):
+                raise CPPError(f"malformed {kind}")
+        end = text.find(">" if text[0] == "<" else '"', 1)
+        if end < 0:
+            raise CPPError(f"unterminated {kind} name")
+        target = text[1:end]
+        if len(target.encode("utf-8", "surrogatepass")) > 1023:
+            raise CPPError(f"{kind} name too long")
+        return target, text[0] == "<", text[end + 1 :]
 
     # --- macro expansion ---
     def _defined(self, name: str) -> bool:
@@ -641,6 +691,8 @@ class Preprocessor:
     def _dynamic_value(self, t: str) -> str:
         """The expansion of a dynamic predefined macro at the current source position."""
         if t == "__LINE__":
+            if self._cur_spliced:
+                raise CPPError(LINE_ON_SPLICED)
             return str(self._cur_line)
         esc = self._cur_file.replace("\\", "\\\\").replace('"', '\\"')  # __FILE__: a string literal
         return f'"{esc}"'
@@ -933,7 +985,7 @@ class Preprocessor:
         )
         expr = re.sub(
             r"\b__has_embed\s*\(([^)]*)\)",
-            lambda m: "1" if self._header_name(m.group(1)) in self.embeds else "0",
+            lambda m: self._has_embed(m.group(1)),
             expr,
         )
         # feature-test macros for supported language features: only the L8 ABI attributes are
@@ -945,7 +997,13 @@ class Preprocessor:
             flags=re.ASCII,
         )
         expr = re.sub(r"\b__has_builtin\s*\([^)]*\)", "0", expr)
-        expr = re.sub(r"\b__has_c_attribute\s*\([^)]*\)", "0", expr)
+        # ... and of the C23 attributes, PORT-3's `bcir::timing` (1, as Clang answers for a vendor attribute it
+        # implements) -- the standard ones each rail drops are reported absent, as before
+        expr = re.sub(
+            r"\b__has_c_attribute\s*\(([^)]*)\)",
+            lambda m: "1" if _TIMING_ATTRIBUTE.fullmatch(m.group(1)) else "0",
+            expr,
+        )
         items = _tokens_ws(expr)
         _bound_names([t for t, _ in items])
         toks = self._expand(items)
@@ -992,6 +1050,32 @@ _IDSTART = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
 _IDCHARS = _IDSTART | _DIGITS
 
 
+def _splice(text: str) -> tuple[str, frozenset]:
+    """Translation phase 2, the line count kept: each backslash-newline deleted -- each physical line but the last
+    that ends with a backslash loses it and joins the next, as `str.replace("\\\n", "")` deletes them, one pass left
+    to right -- and the new-lines it deleted put back where the logical line ends, so each line after it keeps its
+    physical number. `__LINE__` after a spliced line had been one less for every splice above it, on both rails
+    (CF-SPLICELINE; the twin's `splice_lines`). Also the (0-based) lines whose continuation holds the text
+    `__LINE__`, which a `__LINE__` expanded there is refused on (`LINE_ON_SPLICED`)."""
+    phys = text.split("\n")
+    out: list[str] = []
+    flagged: set[int] = set()
+    k = 0
+    while k < len(phys):
+        start, parts, holds = len(out), [], False
+        while k < len(phys) - 1 and phys[k].endswith("\\"):
+            parts.append(phys[k][:-1])
+            k += 1
+            holds = holds or "__LINE__" in phys[k]
+        parts.append(phys[k])
+        k += 1
+        out.append("".join(parts))
+        out.extend([""] * (len(parts) - 1))
+        if holds:
+            flagged.add(start)
+    return "\n".join(out), frozenset(flagged)
+
+
 def _strip_comments(text: str) -> str:
     """Translation phase 3: replace every `//` and `/* */` comment with a single space, leaving
     string/char literals untouched. A block comment keeps the newlines it spanned, so `__LINE__`
@@ -999,7 +1083,10 @@ def _strip_comments(text: str) -> str:
     6.4.8) are copied whole, so a C23 digit separator (`1'000`, `0xca'fe`) -- a `'` inside a pp-number -- is not
     mistaken for a char-literal quote, and the quote after an identifier is one: a `'` flanked by hex digits had been
     taken for a separator in `u8'a'` (and `case'a'`), the constant's closing quote then opening a literal that ran
-    past the next comment, which survived as tokens (CF-CONSTEXPR2; the twin's `strip_comments`)."""
+    past the next comment, which survived as tokens (CF-CONSTEXPR2; the twin's `strip_comments`). A literal whose
+    quote does not close ends at its line, as Clang and GCC end one (C 6.4p3 leaves it undefined): it had run on to the
+    next quote anywhere after it, so the `'` of `don't` in a `#if 0` group kept a later `// it's` comment from being
+    stripped, and the unit was refused (CF-STRIPQUOTE). The text is spliced first (phase 2), as the twin's is."""
     out: list[str] = []
     i, n = 0, len(text)
     while i < n:
@@ -1029,6 +1116,9 @@ def _strip_comments(text: str) -> str:
                     out.append(text[i + 1])
                     i += 2
                     continue
+                # an open one ends at its line, as Clang's and GCC's does (CF-STRIPQUOTE)
+                if ch == "\n":
+                    break
                 out.append(ch)
                 i += 1
                 if ch == c:  # the closing quote

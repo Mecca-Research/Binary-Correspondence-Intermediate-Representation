@@ -37,9 +37,11 @@ static const char *jstr(const char *p, const char *e, char *out, size_t outn) {
   return p + 1;
 }
 /* Strictly skip one otherwise-unused JSON value.  The depth bound makes malicious
- * nested profile metadata a deterministic refusal instead of an unbounded stack walk. */
+ * nested profile metadata a deterministic refusal instead of an unbounded walk: a value at more than
+ * BCIR_CHANNEL_JSON_DEPTH open containers is refused. The containers open around the value being read
+ * are an explicit stack, not frames, so the verified compiler's R18 takes the unit (as bcir_per.c's
+ * walk): one loop reads a value, then closes the containers it ends, then reads the next member. */
 #define BCIR_CHANNEL_JSON_DEPTH 64
-static const char *jskip_depth(const char *p, const char *e, unsigned depth);
 
 static const char *jskip_number(const char *p, const char *e) {
   if (p < e && *p == '-') p++;
@@ -63,56 +65,54 @@ static const char *jskip_number(const char *p, const char *e) {
   return p;
 }
 
-static const char *jskip_array(const char *p, const char *e, unsigned depth) {
-  p = jws(p + 1, e);
-  if (p < e && *p == ']') return p + 1;
-  for (;;) {
-    p = jskip_depth(p, e, depth + 1u);
-    if (!p) return NULL;
-    p = jws(p, e);
-    if (p < e && *p == ']') return p + 1;
-    if (p >= e || *p != ',') return NULL;
-    p = jws(p + 1, e);
-    if (p >= e || *p == ']') return NULL;
-  }
-}
-
-static const char *jskip_object(const char *p, const char *e, unsigned depth) {
-  p = jws(p + 1, e);
-  if (p < e && *p == '}') return p + 1;
-  for (;;) {
-    p = jstr(p, e, NULL, 0);
-    if (!p) return NULL;
-    p = jws(p, e);
-    if (p >= e || *p != ':') return NULL;
-    p = jskip_depth(p + 1, e, depth + 1u);
-    if (!p) return NULL;
-    p = jws(p, e);
-    if (p < e && *p == '}') return p + 1;
-    if (p >= e || *p != ',') return NULL;
-    p = jws(p + 1, e);
-    if (p >= e || *p == '}') return NULL;
-  }
-}
-
-static const char *jskip_depth(const char *p, const char *e, unsigned depth) {
-  static const char jt[] = "true", jf[] = "false", jn[] = "null";
+/* After `{` or a member's `,`, at the key: the key, its `:`, and the cursor at the member's value; NULL if malformed. */
+static const char *jskip_key(const char *p, const char *e) {
+  p = jstr(p, e, NULL, 0);
+  if (!p) return NULL;
   p = jws(p, e);
-  if (p >= e || depth > BCIR_CHANNEL_JSON_DEPTH) return NULL;
-  if (*p == '"') return jstr(p, e, NULL, 0);
-  if (*p == '{') return jskip_object(p, e, depth);
-  if (*p == '[') return jskip_array(p, e, depth);
-  if ((size_t)(e - p) >= sizeof jt - 1u && !memcmp(p, jt, sizeof jt - 1u))
-    return p + sizeof jt - 1u;
-  if ((size_t)(e - p) >= sizeof jf - 1u && !memcmp(p, jf, sizeof jf - 1u))
-    return p + sizeof jf - 1u;
-  if ((size_t)(e - p) >= sizeof jn - 1u && !memcmp(p, jn, sizeof jn - 1u))
-    return p + sizeof jn - 1u;
-  return jskip_number(p, e);
+  if (p >= e || *p != ':') return NULL;
+  return p + 1;
 }
 
 static const char *jskip(const char *p, const char *e) {
-  return jskip_depth(p, e, 0u);
+  static const char jt[] = "true", jf[] = "false", jn[] = "null";
+  char stack[BCIR_CHANNEL_JSON_DEPTH + 1];   /* the containers open around the value being read: `{` or `[` */
+  unsigned n = 0u;                          /* how many: the depth of that value */
+  for (;;) {
+    p = jws(p, e);                          /* one value, at depth n */
+    if (p >= e || n > BCIR_CHANNEL_JSON_DEPTH) return NULL;
+    if (*p == '{' || *p == '[') {
+      char kind = *p;
+      p = jws(p + 1, e);
+      if (p < e && *p == (kind == '{' ? '}' : ']')) p++;   /* an empty container: the value, whole */
+      else {
+        stack[n++] = kind;                   /* n <= BCIR_CHANNEL_JSON_DEPTH + 1: the check above bounds it */
+        if (kind == '{' && !(p = jskip_key(p, e))) return NULL;
+        continue;                           /* its first member's value, one deeper */
+      }
+    } else if (*p == '"') {
+      if (!(p = jstr(p, e, NULL, 0))) return NULL;
+    } else if ((size_t)(e - p) >= sizeof jt - 1u && !memcmp(p, jt, sizeof jt - 1u)) {
+      p += sizeof jt - 1u;
+    } else if ((size_t)(e - p) >= sizeof jf - 1u && !memcmp(p, jf, sizeof jf - 1u)) {
+      p += sizeof jf - 1u;
+    } else if ((size_t)(e - p) >= sizeof jn - 1u && !memcmp(p, jn, sizeof jn - 1u)) {
+      p += sizeof jn - 1u;
+    } else if (!(p = jskip_number(p, e))) {
+      return NULL;
+    }
+    for (;;) {                              /* a value ended: close each container it ends */
+      if (n == 0u) return p;
+      char close = stack[n - 1u] == '{' ? '}' : ']';
+      p = jws(p, e);
+      if (p < e && *p == close) { p++; n--; continue; }   /* that container ended too */
+      if (p >= e || *p != ',') return NULL;
+      p = jws(p + 1, e);
+      if (p >= e || *p == close) return NULL;             /* no trailing comma */
+      if (stack[n - 1u] == '{' && !(p = jskip_key(p, e))) return NULL;
+      break;                                /* the next member's value */
+    }
+  }
 }
 static uint32_t cap_bit(const char *s) {
   struct { const char *n; uint32_t b; } C[] = {

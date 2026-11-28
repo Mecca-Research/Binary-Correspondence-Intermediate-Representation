@@ -36,7 +36,7 @@
       "expects": "ring.malformed.accepted",
       "label": "C ring: the geometry line's CRC is not checked",
       "new": "",
-      "old": "  if (rd32(region + 60) != bcir_crc32(region, 60)) return BCIR_ERR_CRC;\n",
+      "old": "  if (bcir_ld32le(region + 60) != bcir_crc32(region, 60)) return BCIR_ERR_CRC;\n",
       "path": "runtime/c/bcir_ring.c"
     },
     {
@@ -99,7 +99,7 @@
       "expects": "ring.malformed.accepted",
       "label": "C envelope: the CRC is not checked",
       "new": "",
-      "old": "  if (rd32(data + size - BCIR_TEV_CRC) != bcir_crc32(data, size - BCIR_TEV_CRC)) return BCIR_ERR_CRC;\n",
+      "old": "  if (bcir_ld32le(data + size - BCIR_TEV_CRC) != bcir_crc32(data, size - BCIR_TEV_CRC)) return BCIR_ERR_CRC;\n",
       "path": "runtime/c/bcir_telemetry_envelope.c"
     },
     {

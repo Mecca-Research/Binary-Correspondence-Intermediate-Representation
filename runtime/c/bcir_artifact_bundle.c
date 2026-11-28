@@ -3,26 +3,10 @@
 
 #include "bcir_runtime.h"
 #include "bcir_sha256.h"
+#include "bcir_bytes.h"
 
 #define AB_ENTRY_FLAGS 0x0fu
 
-static uint16_t rd16(const uint8_t *p) {
-  return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
-static uint32_t rd32(const uint8_t *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-         ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-static uint64_t rd64(const uint8_t *p) {
-  return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32);
-}
-static uint32_t rd32be(const uint8_t *p) {
-  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
-         ((uint32_t)p[2] << 8) | (uint32_t)p[3];
-}
-static uint16_t rd16be(const uint8_t *p) {
-  return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
-}
 static void zero_bytes(void *pointer, size_t length) {
   uint8_t *p = (uint8_t *)pointer;
   for (size_t i = 0; i < length; ++i) p[i] = 0;
@@ -188,12 +172,12 @@ static bcir_ab_status decode_entry(const bcir_ab_view *view, uint32_t index,
   if (offset64 > view->length || BCIR_AB_ENTRY_SIZE > view->length-(size_t)offset64)
     return BCIR_AB_ERR_LAYOUT;
   const uint8_t *p = view->data + (size_t)offset64;
-  out->kind=rd16(p); out->format=rd16(p+2); out->endianness=p[4]; out->pointer_bits=p[5];
-  out->flags=rd16(p+6); out->machine=rd32(p+8); out->priority=(int32_t)rd32(p+12);
-  out->payload_offset=rd64(p+16); out->payload_size=rd64(p+24);
-  out->provenance_digest=rd64(p+32); out->cal_gen=rd64(p+40);
-  out->payload_crc32=rd32(p+48);
-  if (rd32(p+52) || (out->flags & ~AB_ENTRY_FLAGS) || !kind_format(out->kind,out->format) ||
+  out->kind=bcir_ld16le(p); out->format=bcir_ld16le(p+2); out->endianness=p[4]; out->pointer_bits=p[5];
+  out->flags=bcir_ld16le(p+6); out->machine=bcir_ld32le(p+8); out->priority=(int32_t)bcir_ld32le(p+12);
+  out->payload_offset=bcir_ld64le(p+16); out->payload_size=bcir_ld64le(p+24);
+  out->provenance_digest=bcir_ld64le(p+32); out->cal_gen=bcir_ld64le(p+40);
+  out->payload_crc32=bcir_ld32le(p+48);
+  if (bcir_ld32le(p+52) || (out->flags & ~AB_ENTRY_FLAGS) || !kind_format(out->kind,out->format) ||
       out->endianness > BCIR_AB_ENDIAN_BIG ||
       (out->pointer_bits != 0 && out->pointer_bits != 32 && out->pointer_bits != 64))
     return BCIR_AB_ERR_METADATA;
@@ -229,8 +213,8 @@ static bcir_ab_status validate_payload(const bcir_ab_entry *entry) {
     if (n<20 || !equal_bytes(p,"\x7f" "ELF",4) || (p[4]!=1 && p[4]!=2) || (p[5]!=1 && p[5]!=2))
       return BCIR_AB_ERR_PAYLOAD;
     uint8_t endian=p[5]==1?BCIR_AB_ENDIAN_LITTLE:BCIR_AB_ENDIAN_BIG;
-    uint8_t bits=p[4]==1?32:64; uint32_t machine=p[5]==1?rd16(p+18):rd16be(p+18);
-    uint16_t elf_type=p[5]==1?rd16(p+16):rd16be(p+16);
+    uint8_t bits=p[4]==1?32:64; uint32_t machine=p[5]==1?bcir_ld16le(p+18):bcir_ld16be(p+18);
+    uint16_t elf_type=p[5]==1?bcir_ld16le(p+16):bcir_ld16be(p+16);
     if (entry->endianness!=endian || entry->pointer_bits!=bits ||
         entry->machine!=machine) return BCIR_AB_ERR_PAYLOAD;
     if ((entry->kind==BCIR_AB_ELF_OBJECT && elf_type!=1) ||
@@ -239,16 +223,16 @@ static bcir_ab_status validate_payload(const bcir_ab_entry *entry) {
       return BCIR_AB_ERR_PAYLOAD;
   } else if (entry->format==BCIR_AB_FMT_COFF) {
     if (n<20 || entry->endianness!=BCIR_AB_ENDIAN_LITTLE ||
-        entry->machine!=rd16(p)) return BCIR_AB_ERR_PAYLOAD;
+        entry->machine!=bcir_ld16le(p)) return BCIR_AB_ERR_PAYLOAD;
   } else if (entry->format==BCIR_AB_FMT_MACHO) {
     if (n<28) return BCIR_AB_ERR_PAYLOAD;
-    uint32_t magic=rd32(p); uint8_t endian,bits; uint32_t machine,file_type;
+    uint32_t magic=bcir_ld32le(p); uint8_t endian,bits; uint32_t machine,file_type;
     if (magic==0xfeedfaceu || magic==0xfeedfacfu) {
       endian=BCIR_AB_ENDIAN_LITTLE; bits=magic==0xfeedfacfu?64:32;
-      machine=rd32(p+4); file_type=rd32(p+12);
-    } else if (rd32be(p)==0xfeedfaceu || rd32be(p)==0xfeedfacfu) {
-      uint32_t be=rd32be(p); endian=BCIR_AB_ENDIAN_BIG; bits=be==0xfeedfacfu?64:32;
-      machine=rd32be(p+4); file_type=rd32be(p+12);
+      machine=bcir_ld32le(p+4); file_type=bcir_ld32le(p+12);
+    } else if (bcir_ld32be(p)==0xfeedfaceu || bcir_ld32be(p)==0xfeedfacfu) {
+      uint32_t be=bcir_ld32be(p); endian=BCIR_AB_ENDIAN_BIG; bits=be==0xfeedfacfu?64:32;
+      machine=bcir_ld32be(p+4); file_type=bcir_ld32be(p+12);
     } else return BCIR_AB_ERR_PAYLOAD;
     if (entry->endianness!=endian || entry->pointer_bits!=bits ||
         entry->machine!=machine) return BCIR_AB_ERR_PAYLOAD;
@@ -257,12 +241,12 @@ static bcir_ab_status validate_payload(const bcir_ab_entry *entry) {
         (entry->kind==BCIR_AB_MACHO_SHARED && file_type!=6)) return BCIR_AB_ERR_PAYLOAD;
   } else if (entry->format==BCIR_AB_FMT_PE) {
     if (n<0x40 || p[0]!='M' || p[1]!='Z') return BCIR_AB_ERR_PAYLOAD;
-    uint32_t pe_offset=rd32(p+0x3c);
+    uint32_t pe_offset=bcir_ld32le(p+0x3c);
     if (pe_offset>n-24 || !equal_bytes(p+pe_offset,"PE\0\0",4)) return BCIR_AB_ERR_PAYLOAD;
-    uint32_t machine=rd16(p+pe_offset+4), optional_size=rd16(p+pe_offset+20);
-    uint16_t characteristics=rd16(p+pe_offset+22);
+    uint32_t machine=bcir_ld16le(p+pe_offset+4), optional_size=bcir_ld16le(p+pe_offset+20);
+    uint16_t characteristics=bcir_ld16le(p+pe_offset+22);
     if (optional_size<2 || optional_size>n-(pe_offset+24)) return BCIR_AB_ERR_PAYLOAD;
-    uint16_t optional_magic=rd16(p+pe_offset+24);
+    uint16_t optional_magic=bcir_ld16le(p+pe_offset+24);
     uint8_t bits=optional_magic==0x10b?32:(optional_magic==0x20b?64:0);
     int is_dll=(characteristics&0x2000u)!=0;
     if (!bits || entry->endianness!=BCIR_AB_ENDIAN_LITTLE || entry->pointer_bits!=bits ||
@@ -281,10 +265,10 @@ static bcir_ab_status validate_payload(const bcir_ab_entry *entry) {
     if (entry->kind==BCIR_AB_PTX &&
         (!contains_bytes(p,n,".version") || !contains_bytes(p,n,".target"))) return BCIR_AB_ERR_PAYLOAD;
   } else if (entry->format==BCIR_AB_FMT_SPIRV) {
-    if (n<20 || (n&3u) || (rd32(p)!=0x07230203u && rd32be(p)!=0x07230203u))
+    if (n<20 || (n&3u) || (bcir_ld32le(p)!=0x07230203u && bcir_ld32be(p)!=0x07230203u))
       return BCIR_AB_ERR_PAYLOAD;
   } else if (entry->format==BCIR_AB_FMT_JVM_CLASS) {
-    if (n<10 || rd32be(p)!=0xcafebabeu) return BCIR_AB_ERR_PAYLOAD;
+    if (n<10 || bcir_ld32be(p)!=0xcafebabeu) return BCIR_AB_ERR_PAYLOAD;
   } else if (entry->format!=BCIR_AB_FMT_RAW) return BCIR_AB_ERR_PAYLOAD;
   return BCIR_AB_OK;
 }
@@ -294,12 +278,12 @@ bcir_ab_status bcir_ab_open(const uint8_t *data, size_t length, bcir_ab_view *ou
   if (!data || !out) return BCIR_AB_ERR_INVALID;
   if (length<BCIR_AB_HEADER_SIZE || (uint64_t)length>BCIR_AB_MAX_BYTES) return BCIR_AB_ERR_SIZE;
   if (!equal_bytes(data,BCIR_AB_MAGIC,4)) return BCIR_AB_ERR_MAGIC;
-  if (rd16(data+4)!=BCIR_AB_VERSION) return BCIR_AB_ERR_VERSION;
-  uint32_t count=rd32(data+12), root=rd32(data+20), def=rd32(data+24);
-  uint64_t directory_offset=rd64(data+28), directory_size=rd64(data+36);
-  uint64_t payload_offset=rd64(data+44), file_size=rd64(data+52);
-  if (rd16(data+6)!=BCIR_AB_HEADER_SIZE || rd32(data+8)!=0 ||
-      rd32(data+16)!=BCIR_AB_ENTRY_SIZE || !count || count>BCIR_AB_MAX_ENTRIES ||
+  if (bcir_ld16le(data+4)!=BCIR_AB_VERSION) return BCIR_AB_ERR_VERSION;
+  uint32_t count=bcir_ld32le(data+12), root=bcir_ld32le(data+20), def=bcir_ld32le(data+24);
+  uint64_t directory_offset=bcir_ld64le(data+28), directory_size=bcir_ld64le(data+36);
+  uint64_t payload_offset=bcir_ld64le(data+44), file_size=bcir_ld64le(data+52);
+  if (bcir_ld16le(data+6)!=BCIR_AB_HEADER_SIZE || bcir_ld32le(data+8)!=0 ||
+      bcir_ld32le(data+16)!=BCIR_AB_ENTRY_SIZE || !count || count>BCIR_AB_MAX_ENTRIES ||
       file_size!=(uint64_t)length || directory_offset!=BCIR_AB_HEADER_SIZE ||
       directory_size!=(uint64_t)count*BCIR_AB_ENTRY_SIZE ||
       payload_offset!=align8(directory_offset+directory_size) || payload_offset>length ||
@@ -307,8 +291,8 @@ bcir_ab_status bcir_ab_open(const uint8_t *data, size_t length, bcir_ab_view *ou
       !all_zero(data+116,12)) return BCIR_AB_ERR_LAYOUT;
   uint8_t header[BCIR_AB_HEADER_SIZE]; copy_bytes(header,data,sizeof(header));
   zero_bytes(header+80,4);
-  if (bcir_crc32(header,sizeof(header))!=rd32(data+80)) return BCIR_AB_ERR_CRC;
-  if (bcir_crc32(data+BCIR_AB_HEADER_SIZE,length-BCIR_AB_HEADER_SIZE)!=rd32(data+76))
+  if (bcir_crc32(header,sizeof(header))!=bcir_ld32le(data+80)) return BCIR_AB_ERR_CRC;
+  if (bcir_crc32(data+BCIR_AB_HEADER_SIZE,length-BCIR_AB_HEADER_SIZE)!=bcir_ld32le(data+76))
     return BCIR_AB_ERR_CRC;
   uint8_t actual_sha[32], zeros[36]; bcir_sha256 state;
   zero_bytes(zeros,sizeof(zeros)); bcir_sha256_init(&state); bcir_sha256_update(&state,data,80);
@@ -320,8 +304,8 @@ bcir_ab_status bcir_ab_open(const uint8_t *data, size_t length, bcir_ab_view *ou
   bcir_ab_view candidate;
   zero_bytes(&candidate,sizeof(candidate)); candidate.data=data; candidate.length=length;
   candidate.count=count; candidate.root_index=root; candidate.default_index=def;
-  candidate.provenance_digest=rd64(data+60); candidate.generation=rd64(data+68);
-  candidate.body_crc32=rd32(data+76); candidate.header_crc32=rd32(data+80);
+  candidate.provenance_digest=bcir_ld64le(data+60); candidate.generation=bcir_ld64le(data+68);
+  candidate.body_crc32=bcir_ld32le(data+76); candidate.header_crc32=bcir_ld32le(data+80);
   copy_bytes(candidate.embedded_sha256,data+84,32);
   uint64_t previous_end=payload_offset; char previous_id[48]; previous_id[0]='\0';
   for (uint32_t i=0; i<count; ++i) {

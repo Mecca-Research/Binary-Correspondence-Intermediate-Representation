@@ -9,17 +9,8 @@
 
 #include "bcir_control_plane.h" /* bcir_ctl_pack_registry_digest: the one registry binding */
 #include "bcir_sha256.h"
+#include "bcir_bytes.h"
 
-static uint16_t rd16(const uint8_t *p) { return (uint16_t)((uint16_t)p[0] | (uint16_t)(p[1] << 8)); }
-static uint32_t rd32(const uint8_t *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-static uint64_t rd64(const uint8_t *p) { return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32); }
-static void wr16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
-static void wr32(uint8_t *p, uint32_t v) {
-  p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
-}
-static void wr64(uint8_t *p, uint64_t v) { wr32(p, (uint32_t)v); wr32(p + 4, (uint32_t)(v >> 32)); }
 static void copy_bytes(uint8_t *d, const uint8_t *s, size_t n) {
   for (size_t i = 0; i < n; i++) d[i] = s[i];
 }
@@ -52,7 +43,7 @@ static const uint8_t *c_take(cur *c, size_t n) {
 }
 static uint16_t c_u16(cur *c) {
   const uint8_t *p = c_take(c, 2u);
-  return p ? rd16(p) : 0u;
+  return p ? bcir_ld16le(p) : 0u;
 }
 static const uint8_t *c_str(cur *c, uint16_t *n) {
   *n = c_u16(c);
@@ -69,7 +60,7 @@ static void c_skip_strarr(cur *c) {
 static void c_segment(cur *c, uint64_t *claim, const uint8_t **pf, uint16_t *pf_len) {
   c_skip_str(c);                     /* name */
   const uint8_t *id = c_take(c, 8u); /* claim_id */
-  *claim = id ? rd64(id) : 0u;
+  *claim = id ? bcir_ld64le(id) : 0u;
   c_skip(c, 4u + 1u + 4u + 4u);      /* phase_id, lane, width, stride_k */
   c_skip_str(c);                     /* opcode */
   c_skip_arr(c, 4u);                 /* reads */
@@ -111,14 +102,14 @@ static bcir_status pk_open(const uint8_t *d, size_t len, pk *w) {
   const uint8_t *pf;
   uint16_t pf_len;
   if (bcir_sp_verify_semantic(d, len, 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_OK) return BCIR_ERR_SHARD;
-  if (rd16(d + 4) != BCIR_SHM_PACK_VERSION) return BCIR_ERR_SHARD;
+  if (bcir_ld16le(d + 4) != BCIR_SHM_PACK_VERSION) return BCIR_ERR_SHARD;
   w->d = d;
   w->len = len;
-  w->n_seg = rd32(d + 20);
-  w->n_pf = rd32(d + 24);
-  w->n_blk = rd32(d + 28);
-  w->n_tr = rd32(d + 32);
-  w->n_gens = rd32(d + 40);
+  w->n_seg = bcir_ld32le(d + 20);
+  w->n_pf = bcir_ld32le(d + 24);
+  w->n_blk = bcir_ld32le(d + 28);
+  w->n_tr = bcir_ld32le(d + 32);
+  w->n_gens = bcir_ld32le(d + 40);
   if (w->n_gens == 0u) return BCIR_ERR_SHARD;
   c.d = d; c.len = len - 4u; c.pos = BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   c_skip_str(&c);
@@ -165,7 +156,7 @@ static int pk_hydrated(const pk *w) {
   p.d = w->d; p.len = w->pf_end; p.pos = w->seg_end; p.err = 0;
   for (uint32_t i = 0; i < w->n_seg; i++) {
     c_segment(&s, &claim, &name, &n);
-    if (s.err || rd64(w->d + w->tr_start + (size_t)i * 24u) != claim) return 0;
+    if (s.err || bcir_ld64le(w->d + w->tr_start + (size_t)i * 24u) != claim) return 0;
     if (n != 0u && !pf_find(&p, name, n, &a, &b)) return 0;
   }
   return 1;
@@ -205,13 +196,13 @@ static void put_crc(sink *s) {
   uint8_t b[4];
   if (s->err) return;
   if (s->cmp) {
-    if (s->cmp_len != s->n + 4u || rd32(s->cmp + s->n) != bcir_crc32(s->cmp, s->n)) s->err = 2;
+    if (s->cmp_len != s->n + 4u || bcir_ld32le(s->cmp + s->n) != bcir_crc32(s->cmp, s->n)) s->err = 2;
     else s->n += 4u;
     return;
   }
   if (s->out) {
     if (s->n + 4u > s->cap) { s->err = 1; return; }
-    wr32(b, bcir_crc32(s->out, s->n));
+    bcir_st32le(b, bcir_crc32(s->out, s->n));
     copy_bytes(s->out + s->n, b, 4u);
   }
   s->n += 4u;
@@ -221,10 +212,10 @@ static void put_header(sink *s, const pk *w, uint32_t n_seg, uint32_t n_pf, uint
                        uint32_t n_tr) {
   uint8_t h[BCIR_STREAMPACK_HEADER_SIZE];
   copy_bytes(h, w->d, sizeof h);
-  wr32(h + 20, n_seg);
-  wr32(h + 24, n_pf);
-  wr32(h + 28, n_blk);
-  wr32(h + 32, n_tr);
+  bcir_st32le(h + 20, n_seg);
+  bcir_st32le(h + 24, n_pf);
+  bcir_st32le(h + 28, n_blk);
+  bcir_st32le(h + 32, n_tr);
   put(s, h, sizeof h);
 }
 
@@ -373,20 +364,20 @@ bcir_status bcir_shm_decode(const uint8_t *BCIR_RESTRICT data, size_t len,
   view_zero(out);
   if (!data || len < BCIR_SHM_FIXED) return BCIR_ERR_TRUNCATED;
   if (data[0] != 'B' || data[1] != 'S' || data[2] != 'H' || data[3] != 'M') return BCIR_ERR_MAGIC;
-  if (rd16(data + 4) != BCIR_SHM_VERSION) return BCIR_ERR_VERSION;
-  if (rd32(data + len - 4u) != bcir_crc32(data, len - 4u)) return BCIR_ERR_CRC;
-  if (rd16(data + 6) != 0u || rd16(data + 46) != 0u) return BCIR_ERR_RESERVED;
+  if (bcir_ld16le(data + 4) != BCIR_SHM_VERSION) return BCIR_ERR_VERSION;
+  if (bcir_ld32le(data + len - 4u) != bcir_crc32(data, len - 4u)) return BCIR_ERR_CRC;
+  if (bcir_ld16le(data + 6) != 0u || bcir_ld16le(data + 46) != 0u) return BCIR_ERR_RESERVED;
   for (size_t i = 52; i < 64; i++)
     if (data[i] != 0u) return BCIR_ERR_RESERVED;
-  n = rd32(data + 8);
+  n = bcir_ld32le(data + 8);
   if (n == 0u || n > BCIR_SHM_SHARDS_MAX) return BCIR_ERR_SHARD;
   if (len < BCIR_SHM_FIXED + (size_t)BCIR_SHM_ENTRY_SIZE * n) return BCIR_ERR_TRUNCATED;
   if (len > BCIR_SHM_FIXED + (size_t)BCIR_SHM_ENTRY_SIZE * n) return BCIR_ERR_TRAILING;
-  n_gens = rd32(data + 48);
-  if (rd16(data + 44) != BCIR_SHM_PACK_VERSION || n_gens == 0u) return BCIR_ERR_SHARD;
-  n_seg = rd32(data + 12);
-  whole = rd64(data + 16);
-  frame = rd64(data + 24);
+  n_gens = bcir_ld32le(data + 48);
+  if (bcir_ld16le(data + 44) != BCIR_SHM_PACK_VERSION || n_gens == 0u) return BCIR_ERR_SHARD;
+  n_seg = bcir_ld32le(data + 12);
+  whole = bcir_ld64le(data + 16);
+  frame = bcir_ld64le(data + 24);
   minimum = (uint64_t)BCIR_STREAMPACK_HEADER_SIZE + 2u + 12u * (uint64_t)n_gens + 4u;
   if (whole > BCIR_SHM_BLOB_MAX || frame > BCIR_SHM_BLOB_MAX) return BCIR_ERR_SHARD;
   if (frame < minimum || whole < frame) return BCIR_ERR_SHARD;
@@ -394,8 +385,8 @@ bcir_status bcir_shm_decode(const uint8_t *BCIR_RESTRICT data, size_t len,
   for (uint32_t i = 0; i < n; i++) {
     const uint8_t *entry = data + BCIR_SHM_HEADER_SIZE + BCIR_SHM_DIGESTS_SIZE +
                            (size_t)BCIR_SHM_ENTRY_SIZE * i;
-    uint32_t b = rd32(entry), e = rd32(entry + 4);
-    uint64_t length = rd64(entry + 8);
+    uint32_t b = bcir_ld32le(entry), e = bcir_ld32le(entry + 4);
+    uint64_t length = bcir_ld64le(entry + 8);
     if (length < minimum || length > BCIR_SHM_BLOB_MAX) return BCIR_ERR_SHARD;
     if (b != expect) return BCIR_ERR_SHARD;
     if (e < b || (e == b && !(n_seg == 0u && n == 1u))) return BCIR_ERR_SHARD;
@@ -408,9 +399,9 @@ bcir_status bcir_shm_decode(const uint8_t *BCIR_RESTRICT data, size_t len,
   out->n_segments = n_seg;
   out->whole_length = whole;
   out->frame_length = frame;
-  out->map_gen = rd32(data + 32);
-  out->data_gen = rd32(data + 36);
-  out->topo_gen = rd32(data + 40);
+  out->map_gen = bcir_ld32le(data + 32);
+  out->data_gen = bcir_ld32le(data + 36);
+  out->topo_gen = bcir_ld32le(data + 40);
   out->n_gens = n_gens;
   out->whole_sha256 = data + 64;
   out->frame_sha256 = data + 96;
@@ -424,9 +415,9 @@ bcir_status bcir_shm_entry_at(const bcir_shm_view *BCIR_RESTRICT m, uint32_t ind
   if (!m || !out || !m->data || index >= m->n_shards) return BCIR_ERR_SHARD;
   entry = m->data + BCIR_SHM_HEADER_SIZE + BCIR_SHM_DIGESTS_SIZE +
           (size_t)BCIR_SHM_ENTRY_SIZE * index;
-  out->seg_begin = rd32(entry);
-  out->seg_end = rd32(entry + 4);
-  out->length = rd64(entry + 8);
+  out->seg_begin = bcir_ld32le(entry);
+  out->seg_end = bcir_ld32le(entry + 4);
+  out->length = bcir_ld64le(entry + 8);
   copy_bytes(out->sha256, entry + 16, 32u);
   return BCIR_OK;
 }
@@ -463,28 +454,28 @@ bcir_status bcir_shm_encode(const uint8_t *BCIR_RESTRICT whole, size_t whole_len
   if (cap < size) return BCIR_ERR_NOSPACE;
   zero_bytes(out, size);
   out[0] = 'B'; out[1] = 'S'; out[2] = 'H'; out[3] = 'M';
-  wr16(out + 4, (uint16_t)BCIR_SHM_VERSION);
-  wr32(out + 8, n_shards);
-  wr32(out + 12, w.n_seg);
-  wr64(out + 16, (uint64_t)whole_len);
-  wr64(out + 24, (uint64_t)frame_len);
-  wr32(out + 32, rd32(whole + 12)); /* map_gen */
-  wr32(out + 36, rd32(whole + 16)); /* data_gen */
-  wr32(out + 40, rd32(whole + 8));  /* topo_gen */
-  wr16(out + 44, (uint16_t)BCIR_SHM_PACK_VERSION);
-  wr32(out + 48, w.n_gens);
+  bcir_st16le(out + 4, (uint16_t)BCIR_SHM_VERSION);
+  bcir_st32le(out + 8, n_shards);
+  bcir_st32le(out + 12, w.n_seg);
+  bcir_st64le(out + 16, (uint64_t)whole_len);
+  bcir_st64le(out + 24, (uint64_t)frame_len);
+  bcir_st32le(out + 32, bcir_ld32le(whole + 12)); /* map_gen */
+  bcir_st32le(out + 36, bcir_ld32le(whole + 16)); /* data_gen */
+  bcir_st32le(out + 40, bcir_ld32le(whole + 8));  /* topo_gen */
+  bcir_st16le(out + 44, (uint16_t)BCIR_SHM_PACK_VERSION);
+  bcir_st32le(out + 48, w.n_gens);
   bcir_sha256_digest(whole, whole_len, out + 64);
   bcir_sha256_digest(frame, frame_len, out + 96);
   st = bcir_ctl_pack_registry_digest(whole, whole_len, out + 128);
   if (st != BCIR_OK) { zero_bytes(out, size); return BCIR_ERR_SHARD; }
   for (uint32_t i = 0; i < n_shards; i++) {
     entry = out + BCIR_SHM_HEADER_SIZE + BCIR_SHM_DIGESTS_SIZE + (size_t)BCIR_SHM_ENTRY_SIZE * i;
-    wr32(entry, begins[i]);
-    wr32(entry + 4, ends[i]);
-    wr64(entry + 8, (uint64_t)shard_lens[i]);
+    bcir_st32le(entry, begins[i]);
+    bcir_st32le(entry + 4, ends[i]);
+    bcir_st64le(entry + 8, (uint64_t)shard_lens[i]);
     bcir_sha256_digest(shards[i], shard_lens[i], entry + 16);
   }
-  wr32(out + size - 4u, bcir_crc32(out, size - 4u));
+  bcir_st32le(out + size - 4u, bcir_crc32(out, size - 4u));
   st = bcir_shm_decode(out, size, &check); /* the encoder refuses what the decoder refuses */
   if (st != BCIR_OK) { zero_bytes(out, size); return st; }
   *out_len = size;
@@ -509,7 +500,7 @@ static int shard_span(const uint8_t *d, size_t len, uint32_t count, size_t *star
   const uint8_t *pf;
   uint16_t pf_len;
   if (bcir_sp_verify_semantic(d, len, 0xFFFFFFFFu, 0xFFFFFFFFu) != BCIR_OK) return 0;
-  if (rd16(d + 4) != BCIR_SHM_PACK_VERSION || rd32(d + 20) != count) return 0;
+  if (bcir_ld16le(d + 4) != BCIR_SHM_PACK_VERSION || bcir_ld32le(d + 20) != count) return 0;
   c.d = d; c.len = len - 4u; c.pos = BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
   c_skip_str(&c);
   *start = c.pos;
@@ -558,7 +549,7 @@ bcir_status bcir_shm_reassemble(const uint8_t *BCIR_RESTRICT manifest, size_t ma
     sink s = {out, cap, 0, 0, 0, 0};
     uint8_t h[BCIR_STREAMPACK_HEADER_SIZE];
     copy_bytes(h, frame, sizeof h);
-    wr32(h + 20, m.n_segments);
+    bcir_st32le(h + 20, m.n_segments);
     put(&s, h, sizeof h);
     put(&s, frame + BCIR_STREAMPACK_HEADER_SIZE, f_plan - BCIR_STREAMPACK_HEADER_SIZE);
     for (uint32_t i = 0; i < m.n_shards; i++) {
@@ -579,8 +570,8 @@ bcir_status bcir_shm_reassemble(const uint8_t *BCIR_RESTRICT manifest, size_t ma
   bcir_sha256_digest(out, total, digest);
   st = BCIR_ERR_SHARD;
   if (bcir_sha256_equal(digest, m.whole_sha256, 32u) && pk_whole(out, total, &w) == BCIR_OK &&
-      w.n_seg == m.n_segments && rd32(out + 12) == m.map_gen && rd32(out + 16) == m.data_gen &&
-      rd32(out + 8) == m.topo_gen && w.n_gens == m.n_gens &&
+      w.n_seg == m.n_segments && bcir_ld32le(out + 12) == m.map_gen && bcir_ld32le(out + 16) == m.data_gen &&
+      bcir_ld32le(out + 8) == m.topo_gen && w.n_gens == m.n_gens &&
       bcir_ctl_pack_registry_digest(out, total, digest) == BCIR_OK &&
       bcir_sha256_equal(digest, m.registry_digest, 32u) &&
       emitted_equals(&w, EMIT_FRAME, 0u, 0u, frame, (size_t)m.frame_length)) {

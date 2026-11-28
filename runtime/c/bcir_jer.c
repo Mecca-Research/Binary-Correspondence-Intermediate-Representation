@@ -9,6 +9,7 @@
  * and a consumer that disagree about where a token ends.
  *===----------------------------------------------------------------------===*/
 #include "bcir_jer.h"
+#include "bcir_bytes.h"
 
 /* --- diagnostics ------------------------------------------------------------------------- */
 
@@ -877,18 +878,6 @@ bcir_jer_status bcir_jer_parse(const uint8_t *data, size_t len,
 
 /* --- 3.3 framing ------------------------------------------------------------------------------ */
 
-static uint32_t read_u32(const uint8_t *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-         ((uint32_t)p[3] << 24);
-}
-
-static uint64_t read_u64(const uint8_t *p) {
-  uint64_t value = 0;
-  int at;
-  for (at = 7; at >= 0; at--) value = (value << 8) | (uint64_t)p[at];
-  return value;
-}
-
 bcir_jer_status bcir_jer_unframe(const uint8_t *data, size_t len,
                                  bcir_jer_frame *out, bcir_jer_diag *diag) {
   uint32_t version;
@@ -915,8 +904,8 @@ bcir_jer_status bcir_jer_unframe(const uint8_t *data, size_t len,
    *   0..3   magic "BJER"       16..23  generation : u64
    *   4      version : u8       24..27  payload length : u32
    *   5..7   padding            28..31  payload CRC-32 : u32 */
-  declared = read_u32(data + 24);
-  crc = read_u32(data + 28);
+  declared = bcir_ld32le(data + 24);
+  crc = bcir_ld32le(data + 28);
   {
     /* The declared length is attacker-controlled, so the comparison is done in a form that
      * cannot overflow: compare the REMAINDER against the claim rather than adding to it. */
@@ -929,8 +918,8 @@ bcir_jer_status bcir_jer_unframe(const uint8_t *data, size_t len,
     return fail(diag, BCIR_JER_FRAME_INTEGRITY, BCIR_JER_FRAME_HEADER_SIZE, 0);
 
   out->version = version;
-  out->sequence = read_u64(data + 8);
-  out->generation = read_u64(data + 16);
+  out->sequence = bcir_ld64le(data + 8);
+  out->generation = bcir_ld64le(data + 16);
   out->payload = data + BCIR_JER_FRAME_HEADER_SIZE;
   out->payload_len = len - BCIR_JER_FRAME_HEADER_SIZE;
   return BCIR_JER_OK;

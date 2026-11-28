@@ -9,15 +9,17 @@
 #define BCIR_INTLIT_H
 
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 
-/* An integer constant s[0..n) (C11 6.4.4.1), read as the oracle's `clex.int_literal_parts` reads it: the C23 `'`
- * separators dropped, the trailing run of `u`/`U`/`l`/`L` its suffix, then `0x` hex, `0b` binary, a leading `0`
- * octal, else decimal, each digit checked against its base. Its value exactly -- an unsigned constant past
- * LLONG_MAX keeps its 64 bits (it had saturated at LLONG_MAX, and an octal constant was read as decimal) -- whether
- * it is decimal, and its suffix's `u` and count of `l`. NULL, or the reason it is refused: a digit its base does not
- * have, or a value no type in its list can hold -- past ULLONG_MAX, or a decimal one without `u` past LLONG_MAX,
- * whose type C leaves to the implementation (GCC's `__int128`, Clang's `unsigned long long`). */
+/* An integer constant s[0..n) (C11 6.4.4.1), read as the oracle's `clex.int_literal_parts` reads it: its C23 `'`
+ * separators each between two digits (`digit_seps_ok`) and dropped, the trailing run of `u`/`U`/`l`/`L` its suffix,
+ * then `0x` hex, `0b` binary, a leading `0` octal, else decimal, each digit checked against its base. Its value
+ * exactly -- an unsigned constant past LLONG_MAX keeps its 64 bits (it had saturated at LLONG_MAX, and an octal
+ * constant was read as decimal) -- whether it is decimal, and its suffix's `u` and count of `l`. NULL, or the reason
+ * it is refused: a misplaced separator or a digit its base does not have, or a value no type in its list can hold --
+ * past ULLONG_MAX, or a decimal one without `u` past LLONG_MAX, whose type C leaves to the implementation (GCC's
+ * `__int128`, Clang's `unsigned long long`). */
 typedef struct { unsigned long long v; int decimal, u, lr, nsuf; char suf[49]; } intlit;
 static const char int_bad[]="invalid integer literal", int_bad_suffix[]="invalid suffix",
                   int_too_large[]="an integer constant too large for every type its base and suffix allow";
@@ -34,9 +36,39 @@ static inline int int_suffix_ok(const char *suf, int n){
   return n==0 || (n==1 && (suf[0]=='l'||suf[0]=='L'))
          || (n==2 && ((suf[0]=='l'&&suf[1]=='l')||(suf[0]=='L'&&suf[1]=='L')));
 }
+/* Whether c is a digit of the base 10 or 16. */
+static inline int lit_digit(char c, int base){
+  if(c>='0'&&c<='9') return 1;
+  return base==16 && (c|0x20)>='a' && (c|0x20)<='f';
+}
+/* Whether each C23 digit separator of the constant s[0..n) stands between two digits of its part (6.4.4.1p1, 6.4.4.2p1:
+ * `digit-sequence '? digit`, and its hexadecimal and binary kin): a significand's digits are hexadecimal behind `0x`,
+ * else decimal -- an octal constant's `0` its first digit (`0'7`), and a binary or octal one's digit its base lacks
+ * refused as `int_literal` reads the digits, in the same words -- and an exponent's, past `e`/`E` (past `p`/`P` behind
+ * `0x`), decimal. A `'` behind the base prefix, beside a `.`, a sign, an exponent's letter, a suffix or another `'`,
+ * or at either end, is none: every `'` had been dropped before the digits were read, so `1'u`, `0x'1`, `1''0` and
+ * `1.'5` lowered where Clang and GCC refuse them (CF-DIGITSEP). The oracle's `clex.separators_ok`. */
+static inline int digit_seps_ok(const char *s, int n){
+  int hex = n>=2 && s[0]=='0' && (s[1]=='x'||s[1]=='X'), base = hex ? 16 : 10;
+  for(int k=0;k<n;k++){                       /* (a base prefix's letter is no digit of its base: `0x'1` has none) */
+    char ch=s[k];
+    if(hex ? (ch=='p'||ch=='P') : (ch=='e'||ch=='E')) base=10;
+    else if(ch=='\'' && !(k>0 && k+1<n && lit_digit(s[k-1],base) && lit_digit(s[k+1],base))) return 0;
+  }
+  return 1;
+}
+/* `why` and the first 48 characters of the spelling s[0..n) into m, quoted as the oracle's `{text[:48]!r}` quotes a
+ * number's ASCII spelling: with `'`, or with `"` where those characters hold a `'` -- a C23 separator, which the twin
+ * had quoted with `'` too, so `1e'5` read two ways (CF-DIGITSEP). */
+static inline void lit_why(char *m, size_t cap, const char *why, const char *s, int n){
+  int k = n<48 ? n : 48;
+  char q = memchr(s,'\'',(size_t)k) ? '"' : '\'';
+  snprintf(m,cap,"%s %c%.*s%c",why,q,k,s,q);
+}
 static inline const char *int_literal(const char *s, int n, intlit *o){
   int e=n, nb=0, base=10, skip=0, nd=0, over=0, k=0, ns=0; char c0=0, c1=0;
   memset(o,0,sizeof *o);
+  if(!digit_seps_ok(s,n)) return int_bad;
   while(e>0 && (s[e-1]=='u'||s[e-1]=='U'||s[e-1]=='l'||s[e-1]=='L'||s[e-1]=='\'')){   /* the suffix */
     if(s[e-1]=='u'||s[e-1]=='U') o->u=1; else if(s[e-1]!='\'') o->lr++;
     e--; }

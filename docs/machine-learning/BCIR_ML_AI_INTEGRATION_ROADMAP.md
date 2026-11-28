@@ -625,8 +625,8 @@ not a claim of unrestricted language coverage or automatic hardware-optimal code
   an AVX2 packed-nibble `vpmaddwd` path, power-of-two SmoothQuant calibration, and explicit FP32
   outlier residuals. **Remaining:** whole-decoder Q4 and model-level drift/NLL gates; ARM and other
   target-specific packed compute; additional microscaling/FP8/NF4/GGUF-style adapters under explicit
-  R17 contracts; `<stdbit.h>` and
-  `<stdckdint.h>`; verifier-fed `assume`; and native decimal-float semantics rather than recognition/fallback.
+  R17 contracts; verifier-fed `assume`; and native decimal-float semantics rather than recognition/fallback.
+  (`<stdbit.h>` and `<stdckdint.h>` landed on both C front-end rails with CSUB-3.)
 - **A2 — Native matrix/tensor abstractions + safe-pointer polymorphism.** Build a first-class matrix/vector
   type for the C subset (over the existing multi-dim array + aggregate lowering) and use the **extent-provenance
   pointer model** (the `masked`/`assumed_safe` decision in LangRef §4) to give *polymorphism without errors*: a typed,

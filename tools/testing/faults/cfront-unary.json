@@ -314,8 +314,8 @@
     {
       "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
       "label": "UT11 the twin refuses `++(x)`",
-      "new": "      else if(0 && !star && is_name && w>start && (tok_is(&c->t[w-1],\"++\")||tok_is(&c->t[w-1],\"--\"))",
-      "old": "      else if(!star && is_name && w>start && (tok_is(&c->t[w-1],\"++\")||tok_is(&c->t[w-1],\"--\"))",
+      "new": "      else if(0 && !star && !amp && is_name && w>start && (tok_is(&c->t[w-1],\"++\")||tok_is(&c->t[w-1],\"--\"))",
+      "old": "      else if(!star && !amp && is_name && w>start && (tok_is(&c->t[w-1],\"++\")||tok_is(&c->t[w-1],\"--\"))",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

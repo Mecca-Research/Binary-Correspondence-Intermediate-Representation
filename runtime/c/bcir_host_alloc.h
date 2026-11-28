@@ -170,6 +170,10 @@ static inline int bcir_host_realloc_array(const bcir_host_allocator *allocator,
   return 1;
 }
 
+/* The arena is C's: its block ends in a flexible array member, which ISO C++ does not have. A C++ unit that
+ * includes this header for the allocator (the hosted solver library, runtime/cpp/bcir_exact.cpp) allocates through
+ * a std::pmr resource over it instead, and is not offered the arena. */
+#ifndef __cplusplus
 typedef struct bcir_host_arena_block {
   struct bcir_host_arena_block *next;
   size_t used;
@@ -252,6 +256,7 @@ static inline void *bcir_host_arena_allocate(bcir_host_arena *arena, size_t size
   block->used = offset + size;
   return block->data + offset;
 }
+#endif /* !__cplusplus */
 
 #ifdef __cplusplus
 }

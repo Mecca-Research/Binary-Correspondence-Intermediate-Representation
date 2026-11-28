@@ -1,0 +1,67 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails",
+   "label": "AM1 the twin's (&P)->m keeps its address",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(amp && !as && is_name && tok_is(op,\"->\")){",
+   "new": "      if(0 && amp && !as && is_name && tok_is(op,\"->\")){"
+  },
+  {
+   "expects": "test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails",
+   "label": "AM2 the twin's (&*Q)->m keeps its address",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(as && is_name && tok_is(op,\"->\")){",
+   "new": "      if(0 && as && is_name && tok_is(op,\"->\")){"
+  },
+  {
+   "expects": "test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails",
+   "label": "AM3 the twin keeps the parentheses of &(P) and *(P)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(!amp && !star && is_name && w>start && (tok_is(&c->t[w-1],\"&\") || tok_is(&c->t[w-1],\"*\"))",
+   "new": "      if(0 && !amp && !star && is_name && w>start && (tok_is(&c->t[w-1],\"&\") || tok_is(&c->t[w-1],\"*\"))"
+  },
+  {
+   "expects": "test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails",
+   "label": "AM4 the twin keeps the parentheses of *(P)",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "(tok_is(&c->t[w-1],\"&\") || tok_is(&c->t[w-1],\"*\"))",
+   "new": "(tok_is(&c->t[w-1],\"&\"))"
+  },
+  {
+   "expects": "test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails",
+   "label": "AM5 an inner run counts its enclosing run's closers",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(pe>0) while(k<ps-r && tok_is(tat(c,pe+k),\")\")) k++;",
+   "new": "      if(pe>0) while(tok_is(tat(c,pe+k),\")\")) k++;"
+  },
+  {
+   "expects": "test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails",
+   "label": "AM6 a global array of structs keeps no element type",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    else if(kind==BCIR_RK_AGGREGATE || (g->is_arr && g->ty.kind==1))",
+   "new": "    else if(kind==BCIR_RK_AGGREGATE)"
+  },
+  {
+   "expects": "test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails",
+   "label": "AM7 the oracle's (&P)->m keeps its address",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "                if isinstance(node, cast.Unary) and node.op == \"&\" and _name_rooted(node.operand):",
+   "new": "                if False:"
+  },
+  {
+   "expects": "test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails",
+   "label": "AM8 the oracle's (&*Q)->m keeps its address",
+   "path": "bcir/frontends/cfront/cparse.py",
+   "old": "                    and _name_rooted(node.operand.operand)\n",
+   "new": "                    and False\n"
+  }
+ ]
+}

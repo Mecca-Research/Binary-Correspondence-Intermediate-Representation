@@ -87,8 +87,8 @@
     {
       "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
       "label": "ET6 the twin's fence order reads a hidden enumerator",
-      "new": "    int ec=find_enum(c,core->s,core->n);\n    if(ec>=0) return order_kind(c->ec[ec].val);\n",
-      "old": "    int ec=visible_enum(c,core->s,core->n);\n    if(ec>=0) return order_kind(c->ec[ec].val);\n",
+      "new": "    int ec=find_enum(c,core->s,core->n);\n    if(ec>=0){ *v=c->ec[ec].val; return 1; }\n",
+      "old": "    int ec=visible_enum(c,core->s,core->n);\n    if(ec>=0){ *v=c->ec[ec].val; return 1; }\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

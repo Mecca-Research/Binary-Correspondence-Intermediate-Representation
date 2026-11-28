@@ -2,6 +2,7 @@
 #include "bcir_q8_model.h"
 #include "bcir_ai_kernels.h"
 #include "bcir_crc32.h"
+#include "bcir_bytes.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -30,25 +31,12 @@ static FILE *bcir_q8_open_file(const char *path, const char *mode) {
 #endif
 }
 
-static uint16_t rd16(const unsigned char *p) {
-  return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
+static int16_t rdi16(const unsigned char *p) { return (int16_t)bcir_ld16le(p); }
 
-static int16_t rdi16(const unsigned char *p) { return (int16_t)rd16(p); }
-
-static uint32_t rd32(const unsigned char *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-         ((uint32_t)p[3] << 24);
-}
-
-static int32_t rdi32(const unsigned char *p) { return (int32_t)rd32(p); }
-
-static uint64_t rd64(const unsigned char *p) {
-  return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32);
-}
+static int32_t rdi32(const unsigned char *p) { return (int32_t)bcir_ld32le(p); }
 
 static double rdf64(const unsigned char *p) {
-  uint64_t bits = rd64(p);
+  uint64_t bits = bcir_ld64le(p);
   double out;
   memcpy(&out, &bits, sizeof out);
   return out;
@@ -386,8 +374,8 @@ int bcir_q8_model_load_with_allocator_limited(
     set_error(error, error_capacity, "bad BCIRQ8 magic");
     goto fail;
   }
-  version = rd16(p + 8); header_size = rd16(p + 10); endian = rd32(p + 12);
-  flags = rd32(p + 16); group_size = rd16(p + 20);
+  version = bcir_ld16le(p + 8); header_size = bcir_ld16le(p + 10); endian = bcir_ld32le(p + 12);
+  flags = bcir_ld32le(p + 16); group_size = bcir_ld16le(p + 20);
   if (version != BCIR_Q8_VERSION || header_size != BCIR_Q8_HEADER_SIZE ||
       endian != 0x01020304u || p[22] != 8 || p[23] != 0 || !group_size ||
       (flags & ~BCIR_Q8_FLAG_TIED_EMBEDDINGS)) {
@@ -398,21 +386,21 @@ int bcir_q8_model_load_with_allocator_limited(
     set_error(error, error_capacity, "nonzero BCIRQ8 reserved header bytes");
     goto fail;
   }
-  recorded_header_crc = rd32(p + 116);
+  recorded_header_crc = bcir_ld32le(p + 116);
   if (header_crc(p) != recorded_header_crc) {
     set_error(error, error_capacity, "BCIRQ8 header CRC mismatch");
     goto fail;
   }
   m.flags = flags; m.group_size = group_size; m.bits = 8;
-  m.vocab_size = rd32(p + 24); m.d_model = rd32(p + 28);
-  m.n_heads = rd32(p + 32); m.n_kv_heads = rd32(p + 36);
-  m.n_layers = rd32(p + 40); m.d_ff = rd32(p + 44);
-  m.context_length = rd32(p + 48); m.bos_token_id = rdi32(p + 52);
+  m.vocab_size = bcir_ld32le(p + 24); m.d_model = bcir_ld32le(p + 28);
+  m.n_heads = bcir_ld32le(p + 32); m.n_kv_heads = bcir_ld32le(p + 36);
+  m.n_layers = bcir_ld32le(p + 40); m.d_ff = bcir_ld32le(p + 44);
+  m.context_length = bcir_ld32le(p + 48); m.bos_token_id = rdi32(p + 52);
   m.eos_token_id = rdi32(p + 56); m.pad_token_id = rdi32(p + 60);
   m.rope_base = rdf64(p + 64); m.rms_norm_eps = rdf64(p + 72);
-  tensor_count = rd32(p + 80); entry_size = rd32(p + 84);
-  directory_offset = rd64(p + 88); payload_offset = rd64(p + 96);
-  recorded_size = rd64(p + 104); body_crc = rd32(p + 112);
+  tensor_count = bcir_ld32le(p + 80); entry_size = bcir_ld32le(p + 84);
+  directory_offset = bcir_ld64le(p + 88); payload_offset = bcir_ld64le(p + 96);
+  recorded_size = bcir_ld64le(p + 104); body_crc = bcir_ld32le(p + 112);
   if (!m.vocab_size || !m.d_model || !m.n_heads || !m.n_kv_heads || !m.n_layers ||
       !m.d_ff || m.n_layers > (uint32_t)INT16_MAX || m.d_model % m.n_heads ||
       m.n_heads % m.n_kv_heads ||
@@ -483,18 +471,18 @@ int bcir_q8_model_load_with_allocator_limited(
     const unsigned char *e = p + directory_offset + (uint64_t)i * entry_size;
     bcir_q8_tensor *t = &m.tensors[i];
     uint8_t eflags = e[5];
-    uint16_t reserved = rd16(e + 6);
-    uint32_t reserved2 = rd32(e + 28);
+    uint16_t reserved = bcir_ld16le(e + 6);
+    uint32_t reserved2 = bcir_ld32le(e + 28);
     uint64_t exponent_end, code_end;
     uint64_t expected_count, expected_groups;
     uint32_t actual_crc;
     uint16_t expected_id;
     int16_t expected_layer;
-    t->tensor_id = rd16(e); t->layer = rdi16(e + 2); t->rank = e[4];
-    t->dim0 = rd32(e + 8); t->dim1 = rd32(e + 12);
-    t->element_count = rd32(e + 16); t->group_count = rd32(e + 20);
-    t->tensor_crc32 = rd32(e + 24);
-    t->exponent_offset = rd64(e + 32); t->code_offset = rd64(e + 40);
+    t->tensor_id = bcir_ld16le(e); t->layer = rdi16(e + 2); t->rank = e[4];
+    t->dim0 = bcir_ld32le(e + 8); t->dim1 = bcir_ld32le(e + 12);
+    t->element_count = bcir_ld32le(e + 16); t->group_count = bcir_ld32le(e + 20);
+    t->tensor_crc32 = bcir_ld32le(e + 24);
+    t->exponent_offset = bcir_ld64le(e + 32); t->code_offset = bcir_ld64le(e + 40);
     if (canonical_tensor_at(&m, i, &expected_id, &expected_layer) ||
         t->tensor_id != expected_id || t->layer != expected_layer) {
       set_error(error, error_capacity, "non-canonical BCIRQ8 tensor order at entry %u", i);

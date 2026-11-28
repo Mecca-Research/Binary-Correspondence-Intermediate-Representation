@@ -1,0 +1,179 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE1 the oracle's pointer element refused",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                        len(idx_nodes) > len(dims) and t.kind == \"pointer\"\n",
+   "new": "                        len(idx_nodes) > len(dims) and t.kind == \"pointer\" and False\n"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE2 the oracle's member array taking every subscript",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "                if mem_shape is not None:\n                    take = len(mem_shape)",
+   "new": "                if mem_shape is not None:\n                    take = len(idx_rids)"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE3 the twin's pointer element form never read",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!farr(f) || !f->elem_ptr || !is(c,\"[\")) return 0;\n  return sub_group_count(c,c->i)>(f->nadims>0?f->nadims:1);",
+   "new": "  if(!farr(f) || !f->elem_ptr || !is(c,\"[\")) return 0;\n  return 0 && sub_group_count(c,c->i)>(f->nadims>0?f->nadims:1);"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE4 the pointer element's subscript folded into the element",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(c->ptr_elem) return lin;\n",
+   "new": "      if(c->ptr_elem && 0) return lin;\n"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE5 a T** element read without the step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(pfld.ptee_depth>1 && pfld.row_n<=0 && !pfld.fp_sig){   /* `...->pp[i]` of a `T **pp`: a pointer, loaded,",
+   "new": "      if(pfld.ptee_depth>1 && pfld.row_n<=0 && !pfld.fp_sig && 0){   /* `...->pp[i]` of a `T **pp`: a pointer, loaded,"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE6 a T** element store without the step",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      uint32_t np=ptr_elem_load(c,ptr,&pfld); if(c->failed) return;\n      store_through_ptr(c,np,pfld.ptee_sidx,pfld); return; }",
+   "new": "      uint32_t np=ptr; (void)ptr_elem_load;\n      store_through_ptr(c,np,pfld.ptee_sidx,pfld); return; }"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE7 a T** element's lvalue never walked",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        if(sub_group_count(c,c->i)<2) return 0;       /* the pointer element itself: not a scalar object */",
+   "new": "        return 0;       /* the pointer element itself: not a scalar object */"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE8 the loaded pointer element kept its depth",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  uint32_t p=emit_index(c,&e,ix);\n  pf->ptee_depth--;",
+   "new": "  uint32_t p=emit_index(c,&e,ix);\n  pf->ptee_depth-=0;"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE9 a loaded T** member typed one level short",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    t->ptr_depth=(uint8_t)(fld->ptee_depth>1?fld->ptee_depth:1);   /* `T **m`: a `T **`, as loaded (CSUB-2) */",
+   "new": "    t->ptr_depth=1;   /* `T **m`: a `T **`, as loaded (CSUB-2) */"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE10 a member through a pointer element taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(is(c,\"->\")||is(c,\".\")) fail(c,CC_INDEX_BASE);   /* `s.pp[i]->m`",
+   "new": "  if(0) fail(c,CC_INDEX_BASE);   /* `s.pp[i]->m`"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE11 a subscript of a scalar element read through",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(is(c,\"[\") && b.type.kind==0){ fail(c,\"a subscript of an element that is not a pointer\"); return 0; }",
+   "new": "      if(0){ fail(c,\"a subscript of an element that is not a pointer\"); return 0; }"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE12 a subscript of a scalar element stored through",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(is(c,\"[\") && pfld.ptee_sidx<0 && !pfld.fp_sig){ fail(c,\"a subscript of an element that is not a pointer\"); return; }",
+   "new": "    if(0){ fail(c,\"a subscript of an element that is not a pointer\"); return; }"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE13 the read path's pointer element unread",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if((mf.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&mf)){   /* deref-through a loaded pointer",
+   "new": "    if((mf.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\")))){   /* deref-through a loaded pointer"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE14 the statement store's pointer element unread",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f)){   /* store deref-through a loaded",
+   "new": "      if((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\")))){   /* store deref-through a loaded"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE15 the dereferenced T** base never formed",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return v && v->type.kind==2 && (v->type.ptr_depth?v->type.ptr_depth:1)>1 && !v->type.ptr_to_fp;",
+   "new": "  return 0 && v && v->type.kind==2 && (v->type.ptr_depth?v->type.ptr_depth:1)>1 && !v->type.ptr_to_fp;"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE16 the dereferenced T** base without its struct",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  pf->ptee_depth=r->ptr_depth?r->ptr_depth:1; pf->ptee_sidx=agg_sidx(c,r->agg);",
+   "new": "  pf->ptee_depth=r->ptr_depth?r->ptr_depth:1; pf->ptee_sidx=-1;"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE17 a store through (*q) as an expression",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(paren_base_len(c,c->i) && member_is_store(c,c->i+paren_base_len(c,c->i))){",
+   "new": "  if(0 && paren_base_len(c,c->i) && member_is_store(c,c->i+paren_base_len(c,c->i))){"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE18 a step through (*q) not stepped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(paren_base_len(c,at)){                               /* ... and a cast base's (CSUB-5c) */",
+   "new": "    if(0 && paren_base_len(c,at)){                               /* ... and a cast base's (CSUB-5c) */"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE19 an assignment as a value through (*q) not stored",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(paren_base_len(c,c->i)){                         /* `x = ((*q)->m = v)`",
+   "new": "  if(0 && paren_base_len(c,c->i)){                         /* `x = ((*q)->m = v)`"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE20 an address through (*q) not taken",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    { uint32_t dp; field df; if(paren_deref_base(c,&dp,&df)) return addr_through_ptr(c,dp,&df);",
+   "new": "    { uint32_t dp; field df; if(0 && paren_deref_base(c,&dp,&df)) return addr_through_ptr(c,dp,&df);"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE21 an unfolded address taken as a base",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(tok_is(tat(c,j),\"->\")||tok_is(tat(c,j),\".\")){ fail(c,\"unsupported base expression Unary\"); return 0; } }",
+   "new": "      if(0){ fail(c,\"unsupported base expression Unary\"); return 0; } }"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE22 a qualified return's qualifier dropped",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "                   : fn->ret.is_const ? \"const \" : fn->ret.is_volatile ? \"volatile \" : \"\";",
+   "new": "                   : fn->ret.is_const ? \"\" : fn->ret.is_volatile ? \"volatile \" : \"\";"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE23 a local row pointer refused in other words",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          fail(c,\"a local pointer to an array is not supported\"); return; }",
+   "new": "          fail(c,\"expected declarator name\"); return; }"
+  },
+  {
+   "expects": "test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails",
+   "label": "PE24 the oracle's uninitialized row pointer refused in other words",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if getattr(st.type, \"row_ptr\", False):\n",
+   "new": "            if getattr(st.type, \"row_ptr\", False) and st.init is not None:\n"
+  }
+ ]
+}

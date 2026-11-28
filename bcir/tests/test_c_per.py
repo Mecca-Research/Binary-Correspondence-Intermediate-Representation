@@ -28,6 +28,12 @@ from bcir.asn1.per import (
     BitWriter,
     PerVariant,
     _decode_constrained,
+    _decode_normally_small,
+    _decode_normally_small_length,
+    _decode_semi_constrained,
+    _decode_unconstrained,
+    _decode_unconstrained_count,
+    _decode_unconstrained_length,
     _encode_constrained,
     _encode_normally_small,
     _encode_normally_small_length,
@@ -41,6 +47,7 @@ _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
 _SOURCES = ["bcir_per.c", "test_per.c"]
 _SEED = 20260726
+_MALFORMED = 3  # BCIR_PER_MALFORMED in bcir_per.h: the twin's second-spelling status
 
 
 def _build(tmp: str) -> str | None:
@@ -237,6 +244,171 @@ def test_an_indefinite_length_naming_more_octets_than_the_range_holds_is_refused
             raise AssertionError(
                 f"Python read {data.hex()} as {got}: the length field is out of its range"
             )
+
+
+def _spelled(variant: PerVariant, write) -> str:
+    """One field spelt by hand: `write(writer)` puts the bits, the writer pads and aligns."""
+    writer = BitWriter(variant)
+    write(writer)
+    return writer.to_bytes().hex()
+
+
+def _longer_spellings(variant: PerVariant, flag: int) -> list[tuple[str, object, str]]:
+    """(driver line, the oracle's decoder, the field) for every longer spelling of one value."""
+
+    def unconstrained_length(n: int):
+        # The one- or two-octet form chosen by hand, after the align both forms begin with.
+        return lambda w: (w.align(), w.put_bits(0x8000 | n, 16))
+
+    def octets(count: int, data: bytes):
+        return lambda w: (w.align(), w.put_bits(count, 8), w.align(), w.put_octets(data))
+
+    out: list[tuple[str, object, str]] = []
+    for lb, data in ((0, b"\x00\x05"), (0, b"\x00\x00"), (-1000, b"\x00\x00\x00\x01")):
+        hexed = _spelled(variant, octets(len(data), data))
+        out.append(
+            (f"semi {lb} {flag} {hexed}", lambda r, lb=lb: _decode_semi_constrained(r, lb), hexed)
+        )
+    for data in (b"\x00\x05", b"\xff\xff", b"\x00\x7f", b"\xff\x80", b"\x00\x00\x00"):
+        hexed = _spelled(variant, octets(len(data), data))
+        out.append((f"unconstrained {flag} {hexed}", _decode_unconstrained, hexed))
+    for n in (0, 5, 127):
+        hexed = _spelled(variant, unconstrained_length(n))
+        out.append((f"length 0 0 0 {flag} {hexed}", _decode_unconstrained_length, hexed))
+    for value in (0, 5, 63):  # 11.6.2's semi-constrained form for a number 11.6.1 owns
+        hexed = _spelled(
+            variant, lambda w, v=value: (w.put_bit(1), _encode_semi_constrained(w, v, 0))
+        )
+        out.append((f"small {flag} {hexed}", _decode_normally_small, hexed))
+    for n in (1, 5, 64):  # the unconstrained form for a length 11.9.3.4's six bits own
+        hexed = _spelled(variant, lambda w, n=n: (w.put_bit(1), _encode_unconstrained_length(w, n)))
+        out.append((f"smalllen {flag} {hexed}", _decode_normally_small_length, hexed))
+    # A fragment header where a normally small length stands: not the length, on either rail.
+    hexed = _spelled(variant, lambda w: (w.put_bit(1), w.align(), w.put_bits(0xC1, 8)))
+    out.append((f"smalllen {flag} {hexed}", _decode_normally_small_length, hexed))
+    if variant is PerVariant.ALIGNED:  # 11.5.7.4 is ALIGNED's; UNALIGNED's 11.5.6 width is fixed
+        lb, ub = 0, 1 << 40
+        for data in ((5).to_bytes(6, "big"), (5).to_bytes(2, "big"), (1 << 32).to_bytes(6, "big")):
+            hexed = _spelled(
+                variant,
+                lambda w, d=data: (
+                    _encode_constrained(w, len(d), 1, 6),
+                    w.align(),
+                    w.put_octets(d),
+                ),
+            )
+            out.append(
+                (
+                    f"constrained {lb} {ub} {flag} {hexed}",
+                    lambda r: _decode_constrained(r, lb, ub),
+                    hexed,
+                )
+            )
+    return out
+
+
+def _shortest_spellings(variant: PerVariant, flag: int) -> list[tuple[str, object, str, int]]:
+    """(driver line, the oracle's decoder, the field, its value): the encoder's own output at
+    the edges the refusals sit beside -- the half of a canonicality fix that keeps the honest
+    spelling readable."""
+    out: list[tuple[str, object, str, int]] = []
+    for lb, value in ((0, 5), (0, 0), (0, 255), (0, 256), (-1000, -999)):
+        hexed, _ = _encoded(_encode_semi_constrained, variant, value, lb)
+        out.append(
+            (
+                f"semi {lb} {flag} {hexed}",
+                lambda r, lb=lb: _decode_semi_constrained(r, lb),
+                hexed,
+                value,
+            )
+        )
+    for value in (5, -1, 127, -128, 128, -129, 0, 255, -256):
+        hexed, _ = _encoded(_encode_unconstrained, variant, value)
+        out.append((f"unconstrained {flag} {hexed}", _decode_unconstrained, hexed, value))
+    for n in (0, 5, 127, 128, 16383):
+        hexed, _ = _encoded(_encode_unconstrained_length, variant, n)
+        out.append((f"length 0 0 0 {flag} {hexed}", _decode_unconstrained_length, hexed, n))
+    for value in (63, 64, 300):
+        hexed, _ = _encoded(_encode_normally_small, variant, value)
+        out.append((f"small {flag} {hexed}", _decode_normally_small, hexed, value))
+    for n in (64, 65, 200):
+        hexed, _ = _encoded(_encode_normally_small_length, variant, n)
+        out.append((f"smalllen {flag} {hexed}", _decode_normally_small_length, hexed, n))
+    if variant is PerVariant.ALIGNED:
+        lb, ub = 0, 1 << 40
+        for value in (0, 5, 255, 256, 1 << 32, ub):
+            hexed, _ = _encoded(_encode_constrained, variant, value, lb, ub)
+            out.append(
+                (
+                    f"constrained {lb} {ub} {flag} {hexed}",
+                    lambda r: _decode_constrained(r, lb, ub),
+                    hexed,
+                    value,
+                )
+            )
+    return out
+
+
+def test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails():
+    """X.691 spells a whole number and a length in its shortest form, and says so with a "shall"
+    in each clause: the minimum octets of 11.5.7.4 (ALIGNED's indefinite-length constrained number),
+    11.7.4 (semi-constrained) and 11.8.2 (unconstrained, 2's complement), the one-octet length of
+    11.9.3.6 below 128, and the short forms of 11.6.1 (a normally small number up to 63) and
+    11.9.3.4 (a normally small length up to 64). None of them is one of BASIC-PER's
+    implementation choices, so a longer spelling is a second spelling of one value under both
+    variants (class A): `a0 00 00 00 00 00 05` for INTEGER (0..2^40) is five in six octets, where
+    the encoder writes `00 05`. Both rails refuse every one -- the twin with BCIR_PER_MALFORMED,
+    its second-spelling status -- and both still read the encoder's own output beside each."""
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        if binary is None:
+            return
+        for variant, flag in ((PerVariant.UNALIGNED, 0), (PerVariant.ALIGNED, 1)):
+            bad = _longer_spellings(variant, flag)
+            good = _shortest_spellings(variant, flag)
+            replies = _run(binary, [line for line, _, _ in bad] + [line for line, _, _, _ in good])
+            assert len(replies) == len(bad) + len(good), replies
+            for (line, decode, hexed), reply in zip(bad, replies):
+                assert reply == f"ERR {_MALFORMED}", (
+                    f"C did not refuse a longer spelling ({reply}): {line}"
+                )
+                try:
+                    got = decode(BitReader(bytes.fromhex(hexed), variant))
+                except Asn1Error:
+                    continue
+                raise AssertionError(f"Python read the longer spelling {line!r} as {got}")
+            for (line, decode, hexed, value), reply in zip(good, replies[len(bad) :]):
+                parts = reply.split()
+                assert parts[0] == "OK", f"C refused the encoder's own spelling ({reply}): {line}"
+                got = int(parts[1])
+                got = got - (1 << 64) if got >= (1 << 63) else got
+                assert got == value, f"C read {line!r} as {got}, not {value}"
+                assert decode(BitReader(bytes.fromhex(hexed), variant)) == value, line
+
+
+def test_a_payload_length_in_the_two_octet_form_below_128_is_refused():
+    """11.9.3.6 again, where the length counts a payload: the oracle reads a string's or a
+    list's count through `_decode_unconstrained_count`, which loops over fragments, and the twin
+    through the same `bcir_per_length` its `length` driver op calls, once per fragment. `80 05`
+    is refused as the count of five octets and as the remainder after a 16K fragment, and the
+    one-octet `05` still reads in both places."""
+    payload = bytes(range(5))
+    fragment = b"\xc1" + bytes(16 * 1024)
+    for prefix, total in ((b"", 5), (fragment, 16 * 1024 + 5)):
+        assert _count_of(prefix + b"\x05" + payload) == (total, total), len(prefix)
+        try:
+            got = _count_of(prefix + b"\x80\x05" + payload)
+        except Asn1Error:
+            continue
+        raise AssertionError(f"the two-octet length 80 05 after {len(prefix)} octets read as {got}")
+
+
+def _count_of(data: bytes) -> tuple[int, int]:
+    """The oracle's payload count of `data`, and the units it consumed reading it."""
+    reader = BitReader(data, PerVariant.ALIGNED)
+    read: list[int] = []
+    total = _decode_unconstrained_count(reader, lambda n: read.append(len(reader.get_octets(n))))
+    return total, sum(read)
 
 
 def test_fragmented_length_reports_more_and_terminates():

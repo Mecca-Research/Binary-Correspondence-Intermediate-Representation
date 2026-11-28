@@ -293,9 +293,9 @@ def test_an_indirect_call_is_narrowed_to_the_functions_its_pointer_can_hold():
 
 
 def test_a_call_with_more_operands_than_a_c_twin_claim_holds_refuses_the_unit():
-    """A C-twin claim holds `BCIR_CLAIM_MAX_RD` operands: a call's sixteen arguments and its callee value or object
+    """A C-twin claim holds `BCIR_CLAIM_MAX_RD` operands: a call's arguments (`MAX_CALL_ARGS`) and its callee value or object
     base (CF-CALLARGS; it held six and dropped the rest, so neither rail could reason about a unit with a call of
-    seven). Sixteen arguments is the boundary now -- that unit is analyzed, its buffer lent -- and a seventeenth is
+    seven). The limit is the boundary now -- that unit is analyzed, its buffer lent -- and a seventeenth is
     refused at lowering on both rails, so no lowered unit reaches the analysis with more operands than a claim
     holds. A claim widened past the capacity by hand is still refused as the twin's truncation was -- every
     footprint `*`, no local proved private, no site narrowed -- so the guard keeps the rails honest should the

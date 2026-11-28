@@ -1,0 +1,188 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+  "bcir.tests.test_c_cfront:test_stdbit_lowers_alike_and_runs_as_the_c_librarys",
+  "bcir.tests.test_c_cfront:test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+   "label": "SB1 the oracle's narrow count not narrowed",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "clz = f\"(unsigned int)__builtin_clz{b}(x)\" + (f\" - {pad}u\" if pad else \"\")",
+   "new": "clz = f\"(unsigned int)__builtin_clz{b}(x)\" + (\"\" if pad else \"\")"
+  },
+  {
+   "expects": "test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+   "label": "SB2 the twin's narrow count not narrowed",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    if (pad) snprintf(clz, sizeof clz, \"(unsigned int)__builtin_clz%s(x) - %du\", bs, pad);",
+   "new": "    if (0) snprintf(clz, sizeof clz, \"(unsigned int)__builtin_clz%s(x) - %du\", bs, pad);"
+  },
+  {
+   "expects": "test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+   "label": "SB3 the oracle's unrepresentable ceiling 1",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": ">= {w}u ? ({ty})0\"",
+   "new": ">= {w}u ? ({ty})1\""
+  },
+  {
+   "expects": "test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+   "label": "SB4 the twin's zero argument's count one short",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "snprintf(body, sizeof body, \"return x ? %s : %du;\", clz, w);",
+   "new": "snprintf(body, sizeof body, \"return x ? %s : %du - 1u;\", clz, w);"
+  },
+  {
+   "expects": "test_stdbit_lowers_alike_and_runs_as_the_c_librarys",
+   "label": "SB5 the twin without the header",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "\"stdckdint.h\", \"stdatomic.h\", \"stdbit.h\", \"math.h\",",
+   "new": "\"stdckdint.h\", \"stdatomic.h\", \"math.h\","
+  },
+  {
+   "expects": "test_stdbit_lowers_alike_and_runs_as_the_c_librarys",
+   "label": "SB6 the oracle's header unregistered",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "    \"stdbit.h\": _stdbit,\n",
+   "new": ""
+  },
+  {
+   "expects": "test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+   "label": "SB7 the oracle's byte order big on a little-endian target",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "{1234 if abi.endian == 'little' else 4321}",
+   "new": "{4321 if abi.endian == 'little' else 1234}"
+  },
+  {
+   "expects": "test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+   "label": "SB8 the oracle's generic unsigned long the long long function",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": " unsigned long: stdc_{op}_ul, unsigned long long",
+   "new": " unsigned long: stdc_{op}_ull, unsigned long long"
+  },
+  {
+   "expects": "test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+   "label": "SB9 the twin's bit_floor a bit too high",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "\"return x ? (%s)((%s)1 << (stdc_bit_width_%s(x) - 1u)) : (%s)0;\"",
+   "new": "\"return x ? (%s)((%s)1 << (stdc_bit_width_%s(x) - 0u)) : (%s)0;\""
+  },
+  {
+   "expects": "test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s",
+   "label": "SB10 the model's ceiling 1 where it does not fit: the comparison runs",
+   "path": "bcir/tests/test_c_cfront.py",
+   "old": "\"bit_ceil\": 1 if x <= 1 else 0 if (x - 1).bit_length() >= w",
+   "new": "\"bit_ceil\": 1 if x <= 1 else 1 if (x - 1).bit_length() >= w"
+  },
+  {
+   "expects": "test_stdbit_lowers_alike_and_runs_as_the_c_librarys",
+   "label": "SB11 the twin's no-match in its old words",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "#define CC_GENERIC_NONE \"no _Generic association matches the controlling expression's type\"",
+   "new": "#define CC_GENERIC_NONE \"no _Generic association matches the controlling type\""
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC1 the oracle passing too few",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if n < len(params):\n            raise CLowerError(ARGC_FEW)",
+   "new": "        if n < 0:\n            raise CLowerError(ARGC_FEW)"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC2 the oracle passing too many",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if n > len(params) and not variadic:",
+   "new": "        if n > len(params) and False:"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC3 the oracle refusing a variadic callee's extra arguments",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if n > len(params) and not variadic:",
+   "new": "        if n > len(params):"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC4 the oracle's direct call unchecked",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            if params is not None:\n                self._check_arity(len(actuals), params, node.callee in self.func_variadic)",
+   "new": "            if params is not None and False:\n                self._check_arity(len(actuals), params, node.callee in self.func_variadic)"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC5 the oracle's direct callee read as variadic",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "self._check_arity(len(actuals), params, node.callee in self.func_variadic)",
+   "new": "self._check_arity(len(actuals), params, True)"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC6 the oracle's call through a pointer unchecked",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if ft is not None:\n            self._check_arity(",
+   "new": "        if ft is not None and False:\n            self._check_arity("
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC7 the oracle's member call unchecked",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            self._check_arity(len(actuals), fct.params, bool(getattr(fct, \"variadic\", False)))",
+   "new": "            self._check_arity(len(actuals), (), True)"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC8 the twin passing too few",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(na<np){ fail(c,CC_ARGC_FEW); return 0; }",
+   "new": "  if(na<0){ fail(c,CC_ARGC_FEW); return 0; }"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC9 the twin passing too many",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(na>np && !variadic){ fail(c,CC_ARGC_MANY); return 0; }",
+   "new": "  if(na>np && 0){ fail(c,CC_ARGC_MANY); return 0; }"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC10 the twin refusing a variadic callee's extra arguments",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(na>np && !variadic){ fail(c,CC_ARGC_MANY); return 0; }",
+   "new": "  if(na>np){ fail(c,CC_ARGC_MANY); return 0; }"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC11 the twin's direct calls unchecked",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(known && !argc_agrees(c,cl->n_rd,np,va)){ c->fn=cur; return; }",
+   "new": "      if(0 && known && !argc_agrees(c,cl->n_rd,np,va)){ c->fn=cur; return; }"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC12 the twin's defined callee read as variadic",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(def){ np=def->n_params; va=def->variadic; known=1; }",
+   "new": "      if(def){ np=def->n_params; va=1; known=1; }"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC13 the twin's calls through a pointer unchecked",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(sig<=0 || sig>c->nsig || !argc_sig(c,sig,na)) return;",
+   "new": "  if(sig<=0 || sig>c->nsig) return;"
+  },
+  {
+   "expects": "test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails",
+   "label": "AC14 the twin's prototype read as variadic",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "          va=c->protos[j].variadic; known=1; break; }",
+   "new": "          va=1; known=1; break; }"
+  }
+ ]
+}

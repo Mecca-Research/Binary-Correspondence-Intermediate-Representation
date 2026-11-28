@@ -304,6 +304,24 @@ add_target encode "encoder" "" \
 add_target binrec "binrec" "-max_len=64" \
   "${C}/fuzz_binrec.c" "${C}/bcir_binrec.c"
 
+# bcir_etl.c is the C twin of bcir/etl's transducer, event descriptors and mini-ROP grammar (PORT-4) -- driver
+# packets and device text: every input parsed with the output capacities its first octet chooses, and run as the
+# finite-state machine its octets spell, each verdict held to its contract.
+add_target etl "event transducer" "-max_len=4096" \
+  "${C}/fuzz_etl.c" "${C}/bcir_etl.c"
+
+# bcir_tokload.c reads token shards from disk (the native data loader): a hostile shard, and the same shard with its
+# digest made whole so the token checks and the loader are reached, every batch's tokens held below the vocabulary.
+add_target tokload "token shards" "-max_len=4096" \
+  "${C}/fuzz_tokload.c" "${C}/bcir_tokload.c" "${C}/bcir_digest_hw.c" "${C}/bcir_rng.c" "${C}/bcir_sha256.c"
+
+# bcir_devman.c reads a device's manifest envelope from disk when an instance starts (N11): a hostile envelope, and
+# the same envelope re-sealed with the digest its contents re-derive so the laws and the binding are reached, what
+# loads held to what the laws admit and bound into a table that admits a view at each bank's start.
+add_target devman "device manifests" "-max_len=4096" \
+  "${C}/fuzz_devman.c" "${C}/bcir_devman.c" "${C}/bcir_jer.c" "${C}/bcir_sha256.c" "${C}/bcir_dma.c" \
+  "${C}/bcir_runtime.c"
+
 # bcir_asn1_streampack.c does not merely READ hostile octets, it WRITES a native artifact
 # derived from them. The harness therefore feeds every blessed output straight back into
 # the native decoder and the semantic verifier: a fast path that emitted a subtly

@@ -1,0 +1,174 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_etl:_CC",
+    "bcir.tests.test_c_etl:test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+    "bcir.tests.test_c_etl:test_the_c_event_transducer_holds_its_own_contracts",
+    "bcir.tests.test_etl:test_parse_rop_refuses_with_a_parse_error_every_time"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E1 the C fsm takes a repeated state",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    if(state_index(states,k,states[k].name)<k){ st=BCIR_ETL_ERR_STATE_DUP; w=k; }",
+      "new": "    if(0 && state_index(states,k,states[k].name)<k){ st=BCIR_ETL_ERR_STATE_DUP; w=k; }"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E2 the C fsm names a transition's src for its unknown dst",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    if(d==n_states){ st=BCIR_ETL_ERR_TX_ENDPOINT; w=k; f=1; break; }",
+      "new": "    if(d==n_states){ st=BCIR_ETL_ERR_TX_ENDPOINT; w=k; f=0; break; }"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E3 the C fsm takes a second transition on one key",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    for(size_t j=0;j<k;j++) if(src[j]==src[k] && str_eq(tx[j].on,tx[k].on)){",
+      "new": "    for(size_t j=0;j<k;j++) if(src[j]==src[k] && 0){"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E4 the C fsm runs on from an error state",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    if(t==m->n_tx || m->states[cur].error){ *n_steps=steps;",
+      "new": "    if(t==m->n_tx){ *n_steps=steps;"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E5 the C fsm has no catch-all",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    if(t==m->n_tx) t=edge_on(m,cur,any);             /* the catch-all, `*` */",
+      "new": "    if(0) t=edge_on(m,cur,any);             /* the catch-all, `*` */"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E7 the C event stream refuses the token kind",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "  if(!one_of(kind,kinds,6)) return BCIR_ETL_ERR_STREAM_KIND;",
+      "new": "  if(!one_of(kind,kinds,5)) return BCIR_ETL_ERR_STREAM_KIND;"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E8 the C event takes a negative span",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "  if(begin<0 || end<begin) return BCIR_ETL_ERR_EVENT_SPAN;",
+      "new": "  if(end<begin) return BCIR_ETL_ERR_EVENT_SPAN;"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E9 the C lexer refuses a carriage return",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "L->t[L->i]=='\\t'||L->t[L->i]=='\\r'||L->t[L->i]=='\\n'",
+      "new": "L->t[L->i]=='\\t'||L->t[L->i]=='\\n'"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E10 the C parser lexes as it parses",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "  if(!rop_lex_all(text,n,out)) return BCIR_ETL_ERR_LEX;",
+      "new": "  (void)rop_lex_all;"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E11 the C parser takes a count past the wire domain",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "          if(v>(UINT64_C(0x7fffffffffffffff)-d)/10u){ big=1; break; } v=v*10u+d; }",
+      "new": "          if(v>(UINT64_C(0xffffffffffffffff)-d)/10u){ big=1; break; } v=v*10u+d; }"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E12 the C parser takes a repeated statement",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "      if(said&(1u<<s)) return rop_refuse(&L,BCIR_ETL_ERR_REPEATED,-1);",
+      "new": "      if(0) return rop_refuse(&L,BCIR_ETL_ERR_REPEATED,-1);"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E13 the C parser reads a lane in one case only",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "char c=L->t[L->at+k]; if(c>='a'&&c<='z') c=(char)(c-'a'+'A');",
+      "new": "char c=L->t[L->at+k]; if(0) c=(char)(c-'a'+'A');"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E14 the C parser takes statements unseparated",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "      else if(L.kind!=BCIR_ROP_RBRACE) return rop_refuse(&L,BCIR_ETL_ERR_SEPARATOR,-1);",
+      "new": "      else if(0) return rop_refuse(&L,BCIR_ETL_ERR_SEPARATOR,-1);"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E15 the C parser numbers resources from 11",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "out->res[out->n_res].rid=(uint32_t)(10u+out->n_res);",
+      "new": "out->res[out->n_res].rid=(uint32_t)(11u+out->n_res);"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E16 the C parser numbers claims from 1001",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    cl->id=(uint32_t)(1000u+out->n_claims); cl->name_at=L.at; cl->name_n=L.len;",
+      "new": "    cl->id=(uint32_t)(1001u+out->n_claims); cl->name_at=L.at; cl->name_n=L.len;"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E17 the C parser's default stride is SCALAR",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "cl->count=1; cl->lane=0; cl->stride=1;",
+      "new": "cl->count=1; cl->lane=0; cl->stride=0;"
+    },
+    {
+      "expects": "test_the_c_event_transducer_holds_its_own_contracts",
+      "label": "E18 the C parser writes no capacity for its rid list",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    if(out->n_rids>=out->cap_rids) return BCIR_ETL_ERR_CAPACITY;",
+      "new": "    if(out->n_rids>=out->cap_rids+8) return BCIR_ETL_ERR_CAPACITY;"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E19 the C fsm names a transition's dst for its empty src",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    if(tx[k].src.n==0){ st=BCIR_ETL_ERR_TX_FIELD; w=k; f=0; }",
+      "new": "    if(tx[k].src.n==0){ st=BCIR_ETL_ERR_TX_FIELD; w=k; f=1; }"
+    },
+    {
+      "expects": "test_the_c_event_transducer_gives_the_oracle_s_verdict_on_every_corpus",
+      "label": "E20 the C fsm takes a state accepting and an error both",
+      "path": "runtime/c/bcir_etl.c",
+      "old": "    else if(states[k].accepting && states[k].error){ st=BCIR_ETL_ERR_STATE_KIND; w=k; } }",
+      "new": "    else if(0){ st=BCIR_ETL_ERR_STATE_KIND; w=k; } }"
+    },
+    {
+      "expects": "test_parse_rop_refuses_with_a_parse_error_every_time",
+      "label": "E21 the oracle takes a count of 2^63",
+      "path": "bcir/etl/parse.py",
+      "old": "                if count > _COUNT_MAX:  # it had been taken whatever its size",
+      "new": "                if count > _COUNT_MAX + 1:  # it had been taken whatever its size"
+    },
+    {
+      "expects": "test_parse_rop_refuses_with_a_parse_error_every_time",
+      "label": "E22 the oracle's unknown lane is a KeyError again",
+      "path": "bcir/etl/parse.py",
+      "old": "                if tok.text.lower() not in _LANES:",
+      "new": "                if False:"
+    },
+    {
+      "expects": "test_parse_rop_refuses_with_a_parse_error_every_time",
+      "label": "E23 the oracle takes a repeated statement",
+      "path": "bcir/etl/parse.py",
+      "old": "            if kw in said:\n                raise ParseError(f\"repeated statement {kw!r} at offset {at.pos}\")",
+      "new": "            if False:\n                raise ParseError(f\"repeated statement {kw!r} at offset {at.pos}\")"
+    },
+    {
+      "expects": "test_parse_rop_refuses_with_a_parse_error_every_time",
+      "label": "E24 the oracle places an unknown statement after it",
+      "path": "bcir/etl/parse.py",
+      "old": "                raise ParseError(f\"unknown statement {kw!r} at offset {at.pos}\")",
+      "new": "                raise ParseError(f\"unknown statement {kw!r} at offset {self._peek().pos}\")"
+    }
+  ]
+}

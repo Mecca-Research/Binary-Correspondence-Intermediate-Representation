@@ -1,0 +1,223 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+    "bcir.tests.test_c_cfront:test_has_c_attribute_answers_the_timing_attribute_alone_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM1 the oracle reads no attribute before a statement",
+      "path": "bcir/frontends/cfront/cparse.py",
+      "old": "        if self._at_attribute_run():\n            return self._attributed_stmt()",
+      "new": "        if False:\n            return self._attributed_stmt()"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM2 the oracle's claims take no timing",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "                timing=self.timing,\n",
+      "new": "                timing=None,\n"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM3 the oracle lowers a timed statement untimed",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "            outer, self.timing = self.timing, st.timing",
+      "new": "            outer, self.timing = self.timing, None"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM4 the oracle's canon drops a claim's timing",
+      "path": "bcir/verify/__init__.py",
+      "old": "            + _canon_timing(c.timing)\n",
+      "new": "\n"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM5 the oracle's verdict leaves out R19/R20",
+      "path": "bcir/frontends/cfront/pipeline.py",
+      "old": "        diags = verify(lf.module) + verify_timing(lf.module)",
+      "new": "        diags = verify(lf.module) + 0 * verify_timing(lf.module)"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM6 the oracle takes a timing before a label",
+      "path": "bcir/frontends/cfront/cparse.py",
+      "old": "            or label\n",
+      "new": "            or False\n"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM7 the oracle takes a timing inside a timed statement",
+      "path": "bcir/frontends/cfront/cparse.py",
+      "old": "        if self.timed:\n            raise CParseError(TIMING_NESTED, pos=at)",
+      "new": "        if False:\n            raise CParseError(TIMING_NESTED, pos=at)"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM8 the oracle takes a count past 64 bits",
+      "path": "bcir/frontends/cfront/cparse.py",
+      "old": "        if not -(1 << 63) <= value < (1 << 63):",
+      "new": "        if not -(1 << 63) <= value < (1 << 64):"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM9 the oracle takes a 64-character name",
+      "path": "bcir/frontends/cfront/cparse.py",
+      "old": "_TIMING_LITERAL = re.compile(r'\"[A-Za-z0-9_.\\-]{0,63}\"', re.ASCII)",
+      "new": "_TIMING_LITERAL = re.compile(r'\"[A-Za-z0-9_.\\-]{0,64}\"', re.ASCII)"
+    },
+    {
+      "expects": "test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning",
+      "label": "TM10 the oracle drops any vendor's attribute",
+      "path": "bcir/frontends/cfront/cparse.py",
+      "old": "                if tk.text not in _BCIR_PREFIX:",
+      "new": "                if False:"
+    },
+    {
+      "expects": "test_has_c_attribute_answers_the_timing_attribute_alone_on_both_rails",
+      "label": "TM11 the oracle's preprocessor answers 0 for the timing attribute",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "            lambda m: \"1\" if _TIMING_ATTRIBUTE.fullmatch(m.group(1)) else \"0\",",
+      "new": "            lambda m: \"0\" if _TIMING_ATTRIBUTE.fullmatch(m.group(1)) else \"0\","
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM12 the twin's claims take no timing",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  cl->timing=c->timing;                          /* the timing of the statement it lowers, if any (PORT-3) */",
+      "new": "  cl->timing=0;                          /* the timing of the statement it lowers, if any (PORT-3) */"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM13 the twin's canon drops a claim's timing",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  out[0]=0;\n  if(!cl->timing) return 0;",
+      "new": "  out[0]=0;\n  if(cl->timing||!cl->timing) return 0;"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM14 the twin's R20 sees no crossing",
+      "path": "runtime/c/bcir_verify.c",
+      "old": "        if(wt && wt->clock_domain[0] && !seq(wt->clock_domain,t->clock_domain))",
+      "new": "        if(0 && wt && wt->clock_domain[0] && !seq(wt->clock_domain,t->clock_domain))"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM15 the twin's timing laws read its control-flow markers",
+      "path": "runtime/c/bcir_verify.c",
+      "old": "    if(!t || cl->opcode==BCIR_OP_NOP) continue;",
+      "new": "    if(!t) continue;"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM16 the twin's verdict leaves out R19/R20",
+      "path": "runtime/c/bcir_verify.c",
+      "old": "    if(timing_func(&u->funcs[i],timing_keep_first,&first,&n)) return 0; }",
+      "new": "    (void)timing_func(&u->funcs[i],timing_keep_first,&first,&n); }"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM17 the twin's R19 fits a margin in no latency",
+      "path": "runtime/c/bcir_verify.c",
+      "old": "    if(t->latency_cycles>0 && t->setup_hold_margin>t->latency_cycles)",
+      "new": "    if(t->latency_cycles>=0 && t->setup_hold_margin>t->latency_cycles)"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM18 the twin takes a 64-character name",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "n>BCIR_TIMING_TEXT-1){ fail(c,CC_TIMING_TEXT); return 0; }",
+      "new": "n>BCIR_TIMING_TEXT){ fail(c,CC_TIMING_TEXT); return 0; }"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM19 the twin takes a count past 64 bits",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "      else { if(!v.sgn && v.p>(unsigned long long)LLONG_MAX){ fail(c,CC_TIMING_COUNT); return 0; }",
+      "new": "      else { if(0 && !v.sgn && v.p>(unsigned long long)LLONG_MAX){ fail(c,CC_TIMING_COUNT); return 0; }"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM20 the twin takes a timing inside a timed statement",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(c->timing){ c->i=at; fail(c,CC_TIMING_NESTED); return; }",
+      "new": "  if(0){ c->i=at; fail(c,CC_TIMING_NESTED); return; }"
+    },
+    {
+      "expects": "test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning",
+      "label": "TM21 the twin drops any vendor's attribute",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "        if(!(bare_in(t->s,t->n,vendor_prefixes) && nm->k==T_ID && bare_in(nm->s,nm->n,vendor_hints))){",
+      "new": "        if(0 && !(bare_in(t->s,t->n,vendor_prefixes) && nm->k==T_ID && bare_in(nm->s,nm->n,vendor_hints))){"
+    },
+    {
+      "expects": "test_has_c_attribute_answers_the_timing_attribute_alone_on_both_rails",
+      "label": "TM22 the twin's preprocessor answers 0 for the timing attribute",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "timing=cattr && timing_attribute(expr+open,(size_t)(close-open));",
+      "new": "timing=0 && cattr && timing_attribute(expr+open,(size_t)(close-open));"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM23 the twin takes an attribute before a for-loop's first clause",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    else if(at_attr_run(c)){ fail(c,\"expected expression\"); return; }",
+      "new": "    else if(0){ fail(c,\"expected expression\"); return; }"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM24 the twin reads no attribute before a member",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    { int mr=0; (void)c23_attrs(c,&mr); if(c->failed) return -1; }",
+      "new": "    { int mr=0; (void)mr; if(c->failed) return -1; }"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM25 the twin takes a field twice",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    if(f<0 || (seen&(1u<<f))){ fail(c,CC_TIMING_FIELD); return 0; }",
+      "new": "    if(f<0){ fail(c,CC_TIMING_FIELD); return 0; }"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM26 the twin takes a flag of 2",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "      if(f==7){ if(v.p>1u){ fail(c,CC_TIMING_FLAG); return 0; }",
+      "new": "      if(f==7){ if(v.p>2u){ fail(c,CC_TIMING_FLAG); return 0; }"
+    },
+    {
+      "expects": "test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails",
+      "label": "TM27 the twin takes a timing before a label",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(decl_start_tok(c,pk(c)) || static_assert_at(c) || label || is(c,\";\") || is(c,\"case\") || is(c,\"default\")){",
+      "new": "  if(decl_start_tok(c,pk(c)) || static_assert_at(c) || is(c,\";\") || is(c,\"case\") || is(c,\"default\")){"
+    },
+    {
+      "expects": "test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning",
+      "label": "TM28 the oracle refuses a vendor's hint",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "        \"malloc\", \"noinline\", \"nonnull\", \"noreturn\", \"nothrow\", \"pure\", \"returns_nonnull\", \"unused\", \"used\",",
+      "new": "        \"malloc\", \"nonnull\", \"noreturn\", \"nothrow\", \"pure\", \"returns_nonnull\", \"unused\", \"used\","
+    },
+    {
+      "expects": "test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning",
+      "label": "TM29 the twin takes a hint's name as the prefix's",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "        const tok *nm=tat(c,c->i+3);",
+      "new": "        const tok *nm=tat(c,c->i+0);"
+    },
+    {
+      "expects": "test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning",
+      "label": "TM30 the twin reads a hint's __x__ spelling as another name",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(n>4 && name[0]=='_' && name[1]=='_' && name[n-1]=='_' && name[n-2]=='_'){ name+=2; n-=4; }",
+      "new": "  if(0 && n>4 && name[0]=='_' && name[1]=='_' && name[n-1]=='_' && name[n-2]=='_'){ name+=2; n-=4; }"
+    }
+  ]
+}

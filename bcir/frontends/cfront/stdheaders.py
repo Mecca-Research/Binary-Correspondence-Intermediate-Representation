@@ -43,7 +43,18 @@ NAMES = (
     "float.h",
     "iso646.h",
     "stdalign.h",
+    "stdckdint.h",
+    "stdatomic.h",
+    "stdbit.h",
     "math.h",
+    "stdio.h",
+    "stdlib.h",
+    "errno.h",
+    "time.h",
+    "inttypes.h",
+    "unistd.h",
+    "sys/stat.h",
+    "dirent.h",
 )
 
 _I8, _I16, _I32 = 127, 32767, 2147483647
@@ -199,6 +210,14 @@ def _limits(abi: TargetABI) -> list[str]:
     ):
         out.append(f"#define {kind}_WIDTH {bits}")
     out.append("#endif")
+    # POSIX's longest path, glibc's 4096, where a POSIX feature macro asks for it -- C's own <limits.h> reserves no
+    # such name; the UCRT spells its own `_MAX_PATH` (CSUB-5g)
+    if not _windows(abi):
+        out += [
+            "#if defined(_POSIX_C_SOURCE) || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_DEFAULT_SOURCE)",
+            "#define PATH_MAX 4096",
+            "#endif",
+        ]
     return out
 
 
@@ -306,6 +325,372 @@ def _stdalign(abi: TargetABI) -> list[str]:
     ]
 
 
+def _stdckdint(abi: TargetABI) -> list[str]:
+    # C23's checked arithmetic (7.20) as Clang and GCC spell it: each macro the overflow builtin, true when the
+    # mathematical result does not fit `*R`, which takes it wrapped (CSUB-3)
+    return [
+        "#define __STDC_VERSION_STDCKDINT_H__ 202311L",
+        "#define ckd_add(R, A, B) __builtin_add_overflow((A), (B), (R))",
+        "#define ckd_sub(R, A, B) __builtin_sub_overflow((A), (B), (R))",
+        "#define ckd_mul(R, A, B) __builtin_mul_overflow((A), (B), (R))",
+    ]
+
+
+def _stdatomic(abi: TargetABI) -> list[str]:
+    # C11's atomics (7.17), the macros: each standard type's lock-free property -- 2, always lock-free, of every
+    # type on every target of the matrix, as Clang's `__CLANG_ATOMIC_*_LOCK_FREE` read there -- the flag's
+    # initializer, and `kill_dependency`. The generics themselves, and `memory_order_*`, are both rails' own
+    # (`_C11_EXPLICIT`, the twin's `atomic_kind`); C23 removed `ATOMIC_VAR_INIT`, and Clang 18 has no
+    # `ATOMIC_CHAR8_T_LOCK_FREE` (CSUB-4)
+    return [
+        *(
+            f"#define ATOMIC_{t}_LOCK_FREE 2"
+            for t in (
+                "BOOL",
+                "CHAR",
+                "CHAR16_T",
+                "CHAR32_T",
+                "WCHAR_T",
+                "SHORT",
+                "INT",
+                "LONG",
+                "LLONG",
+                "POINTER",
+            )
+        ),
+        "#define ATOMIC_FLAG_INIT { 0 }",
+        "#define kill_dependency(y) (y)",
+        # the flag: one byte the operations set and clear (7.17.8), a structure a compiler's own header defines --
+        # Clang's tagged, GCC's not -- so the emit names it by its typedef, as any untagged structure's (CSUB-5d)
+        "__bcir_builtin typedef struct { _Bool __bcir_flag; } atomic_flag;",
+    ]
+
+
+#: <stdbit.h>'s operations (C23 7.18.3-7.18.16), in the standard's order, and each one's result: a count (`unsigned
+#: int`), a `bool`, or a value of the argument's type
+_STDBIT_OPS = (
+    "leading_zeros",
+    "leading_ones",
+    "trailing_zeros",
+    "trailing_ones",
+    "first_leading_zero",
+    "first_leading_one",
+    "first_trailing_zero",
+    "first_trailing_one",
+    "count_zeros",
+    "count_ones",
+    "has_single_bit",
+    "bit_width",
+    "bit_floor",
+    "bit_ceil",
+)
+
+
+def _stdbit(abi: TargetABI) -> list[str]:
+    # C23's bit utilities (7.18), each typed function a `static inline` one in the subset's own C over the integer
+    # builtins both rails lower verbatim, so a unit's calls are ordinary calls of functions it defines: a builtin's
+    # count is taken in its own type's width and narrowed to the argument's, a zero argument's count is the width,
+    # and `bit_ceil` of a value whose ceiling the type cannot hold is 0, as glibc's is for the narrow types and C23
+    # leaves unspecified. The type-generic forms select the typed function by `_Generic` (CSUB-3)
+    long_bits = 8 * abi.long_size
+    out = [
+        "#define __STDC_VERSION_STDBIT_H__ 202311L",
+        "#define __STDC_ENDIAN_LITTLE__ 1234",
+        "#define __STDC_ENDIAN_BIG__ 4321",
+        f"#define __STDC_ENDIAN_NATIVE__ {1234 if abi.endian == 'little' else 4321}",
+    ]
+    types = (
+        ("uc", "unsigned char", 8, ""),
+        ("us", "unsigned short", 16, ""),
+        ("ui", "unsigned int", 32, ""),
+        ("ul", "unsigned long", long_bits, "l"),
+        ("ull", "unsigned long long", 64, "ll"),
+    )
+    for suf, ty, w, b in types:
+        pad = (32 if b == "" else long_bits if b == "l" else 64) - w
+        clz = f"(unsigned int)__builtin_clz{b}(x)" + (f" - {pad}u" if pad else "")
+        ones = f"(({ty})~({ty})0)"
+        body = {
+            "leading_zeros": f"return x ? {clz} : {w}u;",
+            "leading_ones": f"return stdc_leading_zeros_{suf}(({ty})~x);",
+            "trailing_zeros": f"return x ? (unsigned int)__builtin_ctz{b}(x) : {w}u;",
+            "trailing_ones": f"return stdc_trailing_zeros_{suf}(({ty})~x);",
+            "first_leading_zero": f"return x == {ones} ? 0u : stdc_leading_ones_{suf}(x) + 1u;",
+            "first_leading_one": f"return x ? stdc_leading_zeros_{suf}(x) + 1u : 0u;",
+            "first_trailing_zero": f"return x == {ones} ? 0u : stdc_trailing_ones_{suf}(x) + 1u;",
+            "first_trailing_one": f"return x ? stdc_trailing_zeros_{suf}(x) + 1u : 0u;",
+            "count_zeros": f"return {w}u - stdc_count_ones_{suf}(x);",
+            "count_ones": f"return (unsigned int)__builtin_popcount{b}(x);",
+            "has_single_bit": f"return stdc_count_ones_{suf}(x) == 1u;",
+            "bit_width": f"return {w}u - stdc_leading_zeros_{suf}(x);",
+            "bit_floor": f"return x ? ({ty})(({ty})1 << (stdc_bit_width_{suf}(x) - 1u)) : ({ty})0;",
+            "bit_ceil": f"return x <= 1u ? ({ty})1 : stdc_bit_width_{suf}(({ty})(x - 1u)) >= {w}u ? ({ty})0"
+            f" : ({ty})(({ty})1 << stdc_bit_width_{suf}(({ty})(x - 1u)));",
+        }
+        # defined in dependency order: each body calls only the ones above it
+        for op in (
+            "leading_zeros",
+            "leading_ones",
+            "trailing_zeros",
+            "trailing_ones",
+            "first_leading_zero",
+            "first_leading_one",
+            "first_trailing_zero",
+            "first_trailing_one",
+            "count_ones",
+            "count_zeros",
+            "has_single_bit",
+            "bit_width",
+            "bit_floor",
+            "bit_ceil",
+        ):
+            ret = (
+                "_Bool"
+                if op == "has_single_bit"
+                else ty
+                if op in ("bit_floor", "bit_ceil")
+                else "unsigned int"
+            )
+            out.append(f"static inline {ret} stdc_{op}_{suf}({ty} x) {{ {body[op]} }}")
+    for op in _STDBIT_OPS:
+        out.append(
+            f"#define stdc_{op}(x) _Generic((x), unsigned char: stdc_{op}_uc, unsigned short: stdc_{op}_us,"
+            f" unsigned int: stdc_{op}_ui, unsigned long: stdc_{op}_ul, unsigned long long: stdc_{op}_ull)(x)"
+        )
+    return out
+
+
+# The hosted profile (CSUB-5): what the runtime's tools call of the C library, declared as the target's library
+# declares it -- glibc's tags and `__errno_location` on Linux, the UCRT's `_iobuf` and `_errno` on Windows -- so each
+# call is a typed external edge the host linker resolves (a prototype, Phase 3 linking), and each emitted `extern`
+# declaration agrees with the library's own header the artifact is built beside. No body: the library is the host's.
+def _windows(abi: TargetABI) -> bool:
+    return abi.name.endswith("-windows")
+
+
+def _stdio(abi: TargetABI) -> list[str]:
+    tag = "_iobuf" if _windows(abi) else "_IO_FILE"
+    out = [
+        "#define EOF (-1)",
+        "#define SEEK_SET 0",
+        "#define SEEK_CUR 1",
+        "#define SEEK_END 2",
+        f"typedef struct {tag} FILE;",
+        "extern FILE *stdin;",
+        "extern FILE *stdout;",
+        "extern FILE *stderr;",
+        "FILE *fopen(const char *, const char *);",
+        "int fclose(FILE *);",
+        "size_t fread(void *, size_t, size_t, FILE *);",
+        "size_t fwrite(const void *, size_t, size_t, FILE *);",
+        "int fputs(const char *, FILE *);",
+        "int fputc(int, FILE *);",
+        "int putc(int, FILE *);",
+        "int putchar(int);",
+        "int puts(const char *);",
+        "int fgetc(FILE *);",
+        "int getc(FILE *);",
+        "int getchar(void);",
+        "int ungetc(int, FILE *);",
+        "char *fgets(char *, int, FILE *);",
+        "int fflush(FILE *);",
+        "int ferror(FILE *);",
+        "int feof(FILE *);",
+        "void clearerr(FILE *);",
+        "int fseek(FILE *, long, int);",
+        "long ftell(FILE *);",
+        "void rewind(FILE *);",
+        "int remove(const char *);",
+        "int rename(const char *, const char *);",
+        "FILE *tmpfile(void);",
+        "void perror(const char *);",
+    ]
+    if not _windows(abi):  # POSIX's; the UCRT's are `_fileno` and `_fdopen`
+        out += ["int fileno(FILE *);", "FILE *fdopen(int, const char *);"]
+    return out
+
+
+def _stdlib(abi: TargetABI) -> list[str]:
+    # the allocator's four are both rails' own edges (`_STDLIB_ALLOC`), each with its lifetime event
+    out = [
+        "#define EXIT_SUCCESS 0",
+        "#define EXIT_FAILURE 1",
+        "void exit(int);",
+        "void abort(void);",
+        "long strtol(const char *, char **, int);",
+        "unsigned long strtoul(const char *, char **, int);",
+        "long long strtoll(const char *, char **, int);",
+        "unsigned long long strtoull(const char *, char **, int);",
+        "double strtod(const char *, char **);",
+        "int atoi(const char *);",
+        "long atol(const char *);",
+        "char *getenv(const char *);",
+        "void qsort(void *, size_t, size_t, int (*)(const void *, const void *));",
+        "void *bsearch(const void *, const void *, size_t, size_t, int (*)(const void *, const void *));",
+        "int abs(int);",
+        "long labs(long);",
+    ]
+    if not _windows(abi):
+        out.append("int mkstemp(char *);")  # POSIX's
+        out.append("char *realpath(const char *, char *);")  # ... and XSI's (CSUB-5g)
+    return out
+
+
+def _errno(abi: TargetABI) -> list[str]:
+    loc = "_errno" if _windows(abi) else "__errno_location"
+    # the codes both libraries give the same values (POSIX's on Linux, the UCRT's on Windows)
+    codes = (
+        ("EPERM", 1),
+        ("ENOENT", 2),
+        ("EINTR", 4),
+        ("EIO", 5),
+        ("EBADF", 9),
+        ("EAGAIN", 11),
+        ("ENOMEM", 12),
+        ("EACCES", 13),
+        ("EEXIST", 17),
+        ("EINVAL", 22),
+        ("ENOSPC", 28),
+        ("ERANGE", 34),
+    )
+    return [
+        f"int *{loc}(void);",
+        f"#define errno (*{loc}())",
+        *(f"#define {n} {v}" for n, v in codes),
+    ]
+
+
+def _timespec(abi: TargetABI) -> list[str]:
+    """`time_t` and `struct timespec`, once however many headers declare them: `<time.h>` and `<sys/stat.h>`, whose
+    times are three of them (CSUB-5f)."""
+    return [
+        "#ifndef __BCIR_TIMESPEC",
+        "#define __BCIR_TIMESPEC 1",
+        "typedef long long time_t;" if _windows(abi) else "typedef long time_t;",
+        "struct timespec { time_t tv_sec; long tv_nsec; };",
+        "#endif",
+    ]
+
+
+def _time(abi: TargetABI) -> list[str]:
+    out = [
+        *_timespec(abi),
+        "#define TIME_UTC 1",
+        "int timespec_get(struct timespec *, int);",
+        "time_t time(time_t *);",
+    ]
+    if not _windows(abi):  # POSIX's clocks; the UCRT has none
+        out += [
+            "#define CLOCK_REALTIME 0",
+            "#define CLOCK_MONOTONIC 1",
+            "int clock_gettime(int, struct timespec *);",
+        ]
+    return out
+
+
+def _inttypes(abi: TargetABI) -> list[str]:
+    # the format macros' length modifiers, as the target's library spells them: `l` for a 64-bit integer where `long`
+    # is one (LP64 Linux), `ll` where it is not (i386, Windows); a pointer's and `intmax_t`'s likewise
+    lp64 = abi.long_size == 8
+    widths = {"8": "", "16": "", "32": "", "64": "l" if lp64 else "ll"}
+    widths["PTR"] = "l" if lp64 else "" if abi.pointer_size == 4 else "ll"
+    widths["MAX"] = "l" if lp64 else "ll"
+    return [
+        f'#define PRI{c}{w} "{m}{c}"'
+        for w, m in widths.items()
+        for c in ("d", "i", "u", "x", "X", "o")
+    ]
+
+
+def _unistd(abi: TargetABI) -> list[str] | None:
+    # POSIX's descriptor and process calls the runtime's tools make, as glibc declares them: `ssize_t` its `long` where
+    # pointers are 64 bits and its `int` where they are 32. The UCRT has no `<unistd.h>`, so on Windows it is a header
+    # this module does not supply, read as nothing as any other is (CSUB-5c)
+    if _windows(abi):
+        return None
+    return [
+        "typedef long ssize_t;" if abi.pointer_size == 8 else "typedef int ssize_t;",
+        "typedef int pid_t;",
+        "int close(int);",
+        "int fsync(int);",
+        "ssize_t read(int, void *, size_t);",
+        "ssize_t write(int, const void *, size_t);",
+        "int unlink(const char *);",
+        "pid_t getpid(void);",
+        "pid_t fork(void);",
+        "void _exit(int);",
+    ]
+
+
+# POSIX's file status and directory reading, which the runtime's build tool walks a tree by (`bcir_make.c`), as glibc
+# lays them out and spells them, its classifiers token for token as its `__S_ISTYPE` expands (CSUB-5f). The emit reads a member at its offset, so each layout is the C library's exactly, witnessed
+# against it per target: glibc's x86 layout on x86-64 and on i386 (one header, `__x86_64__` choosing), and its generic
+# Linux one where `long double` is a quad and pointers are 64 bits (aarch64, riscv64). The rails read the layout off
+# the target's facts they already share -- its pointer size and its `long double` -- so they choose it alike. The
+# UCRT has no `<dirent.h>`, and its `<sys/stat.h>` is another interface (`_stat`, no `lstat`), so on Windows neither
+# is a header this module supplies, as `<unistd.h>` is not.
+def _stat_layout(abi: TargetABI) -> str:
+    if abi.pointer_size == 4:
+        return "i386"
+    return "x86_64" if _facts(abi)["ldbl"] == "x87" else "generic"
+
+
+_STAT_FIELDS = {
+    "x86_64": (
+        "unsigned long st_dev; unsigned long st_ino; unsigned long st_nlink; unsigned int st_mode; "
+        "unsigned int st_uid; unsigned int st_gid; int __pad0; unsigned long st_rdev; long st_size; "
+        "long st_blksize; long st_blocks; struct timespec st_atim; struct timespec st_mtim; "
+        "struct timespec st_ctim; long __glibc_reserved[3];"
+    ),
+    "i386": (
+        "unsigned long long st_dev; unsigned short __pad1; unsigned long st_ino; unsigned int st_mode; "
+        "unsigned int st_nlink; unsigned int st_uid; unsigned int st_gid; unsigned long long st_rdev; "
+        "unsigned short __pad2; long st_size; long st_blksize; long st_blocks; struct timespec st_atim; "
+        "struct timespec st_mtim; struct timespec st_ctim; unsigned long __glibc_reserved4; "
+        "unsigned long __glibc_reserved5;"
+    ),
+    "generic": (
+        "unsigned long st_dev; unsigned long st_ino; unsigned int st_mode; unsigned int st_nlink; "
+        "unsigned int st_uid; unsigned int st_gid; unsigned long st_rdev; unsigned long __pad1; long st_size; "
+        "int st_blksize; int __pad2; long st_blocks; struct timespec st_atim; struct timespec st_mtim; "
+        "struct timespec st_ctim; int __glibc_reserved[2];"
+    ),
+}
+
+
+def _sys_stat(abi: TargetABI) -> list[str] | None:
+    if _windows(abi):
+        return None
+    return [
+        *_timespec(abi),
+        "typedef unsigned int mode_t;",
+        f"struct stat {{ {_STAT_FIELDS[_stat_layout(abi)]} }};",
+        "#define S_IFMT 0170000",
+        "#define S_IFDIR 0040000",
+        "#define S_IFREG 0100000",
+        "#define S_IFLNK 0120000",
+        "#define S_ISDIR(m) ((((m)) & 0170000) == (0040000))",
+        "#define S_ISREG(m) ((((m)) & 0170000) == (0100000))",
+        "#define S_ISLNK(m) ((((m)) & 0170000) == (0120000))",
+        "int stat(const char *, struct stat *);",
+        "int lstat(const char *, struct stat *);",
+        "int fstat(int, struct stat *);",
+    ]
+
+
+def _dirent(abi: TargetABI) -> list[str] | None:
+    if _windows(abi):
+        return None
+    return [
+        "typedef struct __dirstream DIR;",
+        "struct dirent { unsigned long d_ino; long d_off; unsigned short d_reclen; unsigned char d_type; "
+        "char d_name[256]; };",
+        "DIR *opendir(const char *);",
+        "struct dirent *readdir(DIR *);",
+        "int closedir(DIR *);",
+    ]
+
+
 def _math(abi: TargetABI) -> list[str]:
     # the constants and the classification macros, spelled as glibc spells them: `isinf` its sign-returning builtin
     return [
@@ -330,7 +715,18 @@ _BUILDERS = {
     "float.h": _float,
     "iso646.h": _iso646,
     "stdalign.h": _stdalign,
+    "stdckdint.h": _stdckdint,
+    "stdatomic.h": _stdatomic,
+    "stdbit.h": _stdbit,
     "math.h": _math,
+    "stdio.h": _stdio,
+    "stdlib.h": _stdlib,
+    "errno.h": _errno,
+    "time.h": _time,
+    "inttypes.h": _inttypes,
+    "unistd.h": _unistd,
+    "sys/stat.h": _sys_stat,
+    "dirent.h": _dirent,
 }
 
 
@@ -346,7 +742,10 @@ def header_text(name: str, abi: TargetABI) -> str | None:
     """The text of the standard header `name` on `abi`'s target, guarded so a second include reads nothing; None for
     a header this module does not supply."""
     build = _BUILDERS.get(name)
-    if build is None:
+    lines = None if build is None else build(abi)
+    if (
+        lines is None
+    ):  # not one, or not on this target (`<unistd.h>`, `<sys/stat.h>`, `<dirent.h>` on Windows)
         return None
-    guard = "__BCIR_" + name.replace(".", "_").upper()
-    return "\n".join([f"#ifndef {guard}", f"#define {guard} 1", *build(abi), "#endif"]) + "\n"
+    guard = "__BCIR_" + name.replace(".", "_").replace("/", "_").upper()
+    return "\n".join([f"#ifndef {guard}", f"#define {guard} 1", *lines, "#endif"]) + "\n"

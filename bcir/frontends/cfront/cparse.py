@@ -9,6 +9,7 @@ standard C precedence with `[]` / `.` / `->` / call postfixes.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 from . import cast
 from .abi import HOST
@@ -16,20 +17,48 @@ from .clex import KEYWORDS, Tok, char_constant, parse_int_literal, tokenize
 from .ctype_model import int_literal_type
 from .ctype_model import is_scalar_name
 from .diagnostics import FixIt, SourceDiagnostic, Span
+from ...model import Timing
 from .lower import (
     BF_WIDTH,
     DIM_RANGE,
     ENUM_INCOMPLETE,
     ENUM_NOT_INT,
+    AGG_BLOCK_TAGGED,
+    AGG_TYPE_NAME,
+    ALIGN_AGG,
+    ALIGN_LARGE,
+    ALIGN_PLACE,
+    ALIGN_POW2,
+    ALIGN_TYPE,
     FN_RET_FP,
+    FP_PARAM_ROWS,
+    FP_PARAM_VLA,
     GENERIC_QUALIFIED,
     QUAL_DEEP,
     QUAL_LEVELS,
+    ROW_PTR_ELEM,
+    ROW_PTR_PLACE,
+    TYPEOF_SCOPE,
     OFFSETOF_BITFIELD,
     OFFSETOF_DESIGNATOR,
     OFFSETOF_INCOMPLETE,
     OFFSETOF_NOT_AGG,
     STATIC_ASSERT_FAILED,
+    ATTR_VENDOR,
+    VENDOR_HINTS,
+    VENDOR_PREFIXES,
+    TIMING_COUNT,
+    TIMING_COUNTS,
+    TIMING_FIELD,
+    TIMING_FIELDS,
+    TIMING_FLAG,
+    TIMING_NESTED,
+    TIMING_PLACE,
+    TIMING_SYNTAX,
+    TIMING_TEXT,
+    TIMING_TEXTS,
+    TIMING_TWICE,
+    TIMING_UNKNOWN,
     TYPE_NAME_NAMED,
     CAST_ARRAY,
     ATOMIC_LITERAL,
@@ -38,6 +67,26 @@ from .lower import (
     fold_constant,
     layout_aggregates,
 )
+
+
+#: the spellings of PORT-3's attribute, `bcir::timing` (C23 6.7.13.2: a prefix and a token may be written `__x__`)
+_BCIR_PREFIX = frozenset({"bcir", "__bcir__"})
+_TIMING_NAME = frozenset({"timing", "__timing__"})
+#: a timing name's literal, whole: its quotes and at most 63 letters, digits, `_`, `.` and `-` (`TIMING_TEXT`)
+_TIMING_LITERAL = re.compile(r'"[A-Za-z0-9_.\-]{0,63}"', re.ASCII)
+
+
+def _bare(name: str) -> str:
+    """An attribute prefix or name with the `__x__` spelling C23 6.7.13.2 allows taken off."""
+    return name[2:-2] if len(name) > 4 and name.startswith("__") and name.endswith("__") else name
+
+
+def _name_rooted(node) -> bool:
+    """`node` is a name and its `[..]` `.m` `->m` selectors, `v`, `a[i]`, `p->in` -- the operand the twin's CF-PAREN
+    pass takes in `(&P)->m` (`up_operand_end`)."""
+    while isinstance(node, (cast.Member, cast.Index)):
+        node = node.base
+    return isinstance(node, cast.Name)
 
 
 class CParseError(Exception):
@@ -236,6 +285,17 @@ class _Parser:
         self._layout_memo = None  # (the aggregate definitions laid out, their layouts): `_layouts`
         self._depth = 0  # recursive-descent nesting depth (see _MAX_DEPTH / _descend)
         self._declared: set = set()  # the file-scope functions declared so far (`Func.declared`)
+        # `_Alignas(N)` in the declaration being parsed: `align_ok` while an object declaration's specifiers are read
+        # (`_decl_stmt`), `align` the strictest N they ask (C11 6.7.5p6; CSUB-2)
+        self.align_ok = False
+        self.align = 0
+        # a statement `[[bcir::timing(...)]]` leads is being parsed: a second inside it is refused (PORT-3)
+        self.timed = False
+        # an untagged `struct { ... }` defined by the specifiers being read: `agg_ok` while a block declaration's are
+        # (`_decl_stmt`); each one the function defines, by its synthesized tag, with its source spelling, which the
+        # emit's typedef spells it by (`Func.block_types`; CSUB-2)
+        self.agg_ok = False
+        self._block_types: dict = {}
         # how C names each anonymous aggregate (`$anonN`, `Unit.anon_spelling`): the file-scope typedef that
         # names it (`typedef struct {...} P;`), else the named member it is the type of -- the aggregate that
         # holds the member, the member's name, and its declarator's `*`s and array dimensions
@@ -335,28 +395,19 @@ class _Parser:
         return self.nxt()
 
     # --- unit ---
-    def _attributes(self) -> dict:
+    def _attributes(self, alignas: bool = True) -> dict:
         """Consume `__attribute__((packed))` / `__attribute__((aligned(N)))` / `alignas(N)` runs, plus a
-        C23 `[[ ... ]]` attribute run. The only C23 attributes acted on are the value-neutral hints
-        `[[unsequenced]]` / `[[reproducible]]` (recorded in the dict); any other C23 attribute (incl.
-        namespaced `gnu::packed` / argument forms) is scanned over and dropped."""
+        C23 `[[ ... ]]` attribute run (`_attribute_run`). The only C23 attributes acted on are the value-neutral hints
+        `[[unsequenced]]` / `[[reproducible]]` (recorded in the dict); any other standard attribute is scanned over
+        and dropped, a vendor's hint too (`gnu::const`), and any other vendor's attribute (`gnu::packed`) refused
+        (CF-VENDORATTR). PORT-3's timing leads a statement alone (`TIMING_PLACE`)."""
         attrs: dict = {}
         while True:
-            if self.at("PUNCT", "[") and self.peek(1).kind == "PUNCT" and self.peek(1).text == "[":
-                self.nxt()  # consume the opening `[[`
-                self.nxt()
-                while not (
-                    self.at("PUNCT", "]")
-                    and self.peek(1).kind == "PUNCT"  # scan to the closing `]]`
-                    and self.peek(1).text == "]"
-                ):
-                    if self.at("EOF"):
-                        raise CParseError("unterminated [[...]] attribute", pos=self.peek().pos)
-                    if self.at("IDENT", "unsequenced") or self.at("IDENT", "reproducible"):
-                        attrs["reproducible"] = True  # both hints fold to one fusion-legality flag
-                    self.nxt()  # robust to args/namespaces: skip every other token
-                self.nxt()  # eat the closing `]]`
-                self.nxt()
+            if self._at_attribute_run():
+                at = self.peek().pos
+                # a timing appertains to a statement's claims alone
+                if self._attribute_run(attrs) is not None:
+                    raise CParseError(TIMING_PLACE, pos=at)
             elif self.at("IDENT", "__attribute__"):
                 self.nxt()
                 self.eat("PUNCT", "(")
@@ -373,13 +424,169 @@ class _Parser:
                         self.nxt()
                 self.eat("PUNCT", ")")
                 self.eat("PUNCT", ")")
-            elif self.at("IDENT", "alignas") or self.at("IDENT", "_Alignas"):
+            elif alignas and (self.at("IDENT", "alignas") or self.at("IDENT", "_Alignas")):
                 self.nxt()
                 self.eat("PUNCT", "(")
                 attrs["aligned"] = self._const_int()
                 self.eat("PUNCT", ")")
             else:
                 return attrs
+
+    def _at_attribute_run(self) -> bool:
+        """The cursor is on a C23 attribute run's `[[` (a `[` is a token of its own, so two adjacent ones)."""
+        return self.at("PUNCT", "[") and self.peek(1).kind == "PUNCT" and self.peek(1).text == "["
+
+    def _at_run_end(self) -> bool:
+        return self.at("PUNCT", "]") and self.peek(1).kind == "PUNCT" and self.peek(1).text == "]"
+
+    def _attribute_run(self, attrs: dict):
+        """One C23 `[[ ... ]]` run, the cursor on its `[[`: `[[unsequenced]]` / `[[reproducible]]` recorded in `attrs`,
+        PORT-3's `bcir::timing(...)` read into a `Timing` -- returned, and in `attrs["timing"]`, where a second one, in
+        this run or another, is refused (`TIMING_TWICE`) -- and every other standard attribute scanned over and dropped,
+        its arguments whatever they are (the run ends at the first `]]`). An attribute starts the run or follows a comma
+        outside any parenthesis; one of the `bcir` prefix other than `timing` is refused (`TIMING_UNKNOWN`), and one of
+        any other prefix unless it is a GNU or Clang hint (`VENDOR_HINTS`; `ATTR_VENDOR`, CF-VENDORATTR). Returns the
+        run's timing, or None. The twin's `c23_attr_run`."""
+        self.nxt()  # consume the opening `[[`
+        self.nxt()
+        timing = None
+        start, depth = True, 0
+        while not self._at_run_end():  # scan to the closing `]]`
+            tk = self.peek()
+            if tk.kind == "EOF":
+                raise CParseError("unterminated [[...]] attribute", pos=tk.pos)
+            if (
+                start
+                and tk.kind == "IDENT"
+                and self.peek(1).kind == "PUNCT"
+                and self.peek(1).text == ":"
+                and self.peek(2).kind == "PUNCT"
+                and self.peek(2).text == ":"
+            ):
+                # another vendor's: dropped if a hint, else refused (CF-VENDORATTR)
+                if tk.text not in _BCIR_PREFIX:
+                    name = self.peek(3)
+                    if not (
+                        _bare(tk.text) in VENDOR_PREFIXES
+                        and name.kind == "IDENT"
+                        and _bare(name.text) in VENDOR_HINTS
+                    ):
+                        raise CParseError(ATTR_VENDOR, pos=tk.pos)
+                    # the prefix, `::` and the hint's name; its arguments are scanned below
+                    for _ in range(4):
+                        self.nxt()
+                    start = False
+                    continue
+                self.nxt()  # the prefix and its `::`
+                self.nxt()
+                self.nxt()
+                name = self.peek()
+                if name.kind != "IDENT" or name.text not in _TIMING_NAME:
+                    raise CParseError(TIMING_UNKNOWN, pos=tk.pos)
+                if "timing" in attrs:
+                    raise CParseError(TIMING_TWICE, pos=tk.pos)
+                self.nxt()
+                timing = attrs["timing"] = self._timing_args()
+                if not (self.at("PUNCT", ",") or self._at_run_end()):
+                    raise CParseError(TIMING_SYNTAX, pos=self.peek().pos)
+                start = False
+                continue
+            if tk.kind == "IDENT" and tk.text in ("unsequenced", "reproducible"):
+                attrs["reproducible"] = True  # both hints fold to one fusion-legality flag
+            if tk.kind == "PUNCT" and tk.text == "(":
+                depth += 1
+            elif tk.kind == "PUNCT" and tk.text == ")":
+                depth -= 1
+            start = depth == 0 and tk.kind == "PUNCT" and tk.text == ","
+            self.nxt()  # robust to args/namespaces: skip every other token
+        self.nxt()  # eat the closing `]]`
+        self.nxt()
+        return timing
+
+    def _timing_args(self) -> Timing:
+        """`bcir::timing`'s arguments, the cursor after its name: none, `()`, or `(field = value, ...)`, each of the
+        model's eight fields at most once (`TIMING_FIELD`) -- a name one string literal (`TIMING_TEXT`), a count an
+        integer constant expression of 64 bits (`TIMING_COUNT`), `critical_path` 0 or 1 (`TIMING_FLAG`). A field it
+        does not name keeps the model's default. The twin's `timing_args`."""
+        fields: dict = {}
+        if not self.at("PUNCT", "("):
+            return Timing()
+        self.nxt()
+        if not self.at("PUNCT", ")"):
+            while True:
+                key = self.peek()
+                if key.kind != "IDENT":
+                    raise CParseError(TIMING_SYNTAX, pos=key.pos)
+                if key.text not in TIMING_FIELDS or key.text in fields:
+                    raise CParseError(TIMING_FIELD, pos=key.pos)
+                self.nxt()
+                if not self.at("OP", "="):
+                    raise CParseError(TIMING_SYNTAX, pos=self.peek().pos)
+                self.nxt()
+                fields[key.text] = self._timing_value(key.text)
+                if not self.at("PUNCT", ","):
+                    break
+                self.nxt()
+        if not self.at("PUNCT", ")"):
+            raise CParseError(TIMING_SYNTAX, pos=self.peek().pos)
+        self.nxt()
+        return Timing(**fields)
+
+    def _timing_value(self, field: str):
+        """One timing field's value, the cursor after its `=`."""
+        at = self.peek()
+        if field in TIMING_TEXTS:
+            if at.kind != "STRING" or not _TIMING_LITERAL.fullmatch(at.text):
+                raise CParseError(TIMING_TEXT, pos=at.pos)
+            self.nxt()
+            # one literal: adjacent ones would be another spelling of one name
+            if self.at("STRING"):
+                raise CParseError(TIMING_TEXT, pos=at.pos)
+            return at.text[1:-1]
+        value = self._const_int()
+        if field == "critical_path":
+            if value not in (0, 1):
+                raise CParseError(TIMING_FLAG, pos=at.pos)
+            return bool(value)
+        if not -(1 << 63) <= value < (1 << 63):
+            raise CParseError(TIMING_COUNT, pos=at.pos)
+        return value
+
+    def _attributed_stmt(self):
+        """A statement or a block declaration C23 attribute runs lead (6.8p1, 6.7p1), the cursor on the first `[[`.
+        Every attribute but PORT-3's timing is dropped, as at file scope. A timing leads a statement -- the claims it
+        lowers carry it (`cast.Timed`) -- never a declaration, a label or a null statement, which would time none
+        (`TIMING_PLACE`), nor one inside a statement another annotates (`TIMING_NESTED`). The twin's `p_attributed`."""
+        at = self.peek().pos
+        attrs: dict = {}
+        while self._at_attribute_run():
+            self._attribute_run(attrs)
+        timing = attrs.get("timing")
+        if timing is None:
+            return self._stmt()
+        label = (
+            self.at("IDENT")
+            and self.peek(1).kind == "PUNCT"
+            and self.peek(1).text == ":"
+            and not (self.peek(2).kind == "PUNCT" and self.peek(2).text == ":")
+        )
+        if (
+            self._is_decl_start()
+            or label
+            or self.at("PUNCT", ";")
+            or any(
+                self.at("IDENT", w) for w in ("static_assert", "_Static_assert", "case", "default")
+            )
+        ):  # it would time no claim: a declaration's, a label's (C23 6.8.1), a null statement's
+            raise CParseError(TIMING_PLACE, pos=at)
+        if self.timed:
+            raise CParseError(TIMING_NESTED, pos=at)
+        self.timed = True
+        try:
+            body = self._stmt()
+        finally:
+            self.timed = False
+        return cast.Timed(timing, body)
 
     def parse_unit(self) -> cast.Unit:
         unit = cast.Unit()
@@ -453,7 +660,8 @@ class _Parser:
             self.storage = set()
             self._typedef(unit)
             return
-        lead = self._attributes()
+        # an `_Alignas(N)` is left for the specifiers to read: of an object it is kept, of anything else refused (CSUB-2)
+        lead = self._attributes(alignas=False)
         self.storage = set()  # per-item storage-class record (see _type_spec)
         if self.at("IDENT", "typedef"):  # a type alias (resolved at parse time)
             start = self.i
@@ -484,12 +692,22 @@ class _Parser:
                 unit.type_defs.append(self._spelled(save, self.i))
                 return
             self.i = save  # a struct *type* (func ret / global)
-        base = self._type_spec()
+        self.align_ok, self.align = (
+            True,
+            0,
+        )  # a declaration of objects may ask an alignment; a function may not
+        try:
+            base = self._type_spec()
+        finally:
+            self.align_ok = False
+        align, align_at = self.align, self.peek().pos
         if self._fn_returning_fp_at():  # `T (*f(P))(Q)` (CF-FPRET)
             raise CParseError(FN_RET_FP, pos=self.peek().pos)
         # a global may be a function pointer, an array of them or a pointer to one (CF-FPTAB)
         tref, name = self._declarator_or_funcptr(base)
         if self.at("PUNCT", "("):  # a function definition (or a prototype)
+            if align:
+                raise CParseError(ALIGN_PLACE, pos=align_at)
             fn = self._func_body(
                 tref,
                 name,
@@ -499,15 +717,23 @@ class _Parser:
             if fn is not None:  # None == a prototype (recorded in protos)
                 unit.funcs.append(fn)
         else:  # file-scope global variables: one per declarator off the specifier (C11 6.7p1)
-            self._globals(unit, base, tref, name)
+            self._globals(unit, base, tref, name, align)
 
-    def _globals(self, unit: cast.Unit, base: cast.TypeRef, tref: cast.TypeRef, name: str) -> None:
+    def _globals(
+        self, unit: cast.Unit, base: cast.TypeRef, tref: cast.TypeRef, name: str, align: int = 0
+    ) -> None:
         """The declarators of one file-scope declaration, `T a[3], *p, b = 5;`, each a global of its own
         type -- its `*`s and dimensions its own, the specifier's storage class every one's -- then its `;`.
         The first declarator (`tref`, `name`) is already parsed. The twin's `p_global`."""
         extern, static = "extern" in self.storage, "static" in self.storage
         while True:
-            unit.globals.append(self._global(tref, name, extern=extern, static=static))
+            if tref.row_ptr:  # `T (*g)[N]` at file scope (CSUB-2d)
+                raise CParseError(ROW_PTR_PLACE, pos=self.peek().pos)
+            unit.globals.append(
+                dataclasses.replace(
+                    self._global(tref, name, extern=extern, static=static), align=align
+                )
+            )
             if not self.at("PUNCT", ","):
                 break
             self.nxt()
@@ -579,8 +805,12 @@ class _Parser:
             base = cast.TypeRef(base=tag, aggregate=kind)
         else:
             base = self._type_spec()
+            if base.typeof_var or base.typeof_expr is not None:  # no scope to type it in: refused
+                raise CParseError(TYPEOF_SCOPE, pos=self.peek().pos)  # as the twin refuses it
         # `typedef T *(*NAME)(PARAMS);`: a pointer return (CF-FPRET)
         base = self._fp_return_stars(base)
+        if self._row_ptr_declarator_at(self._skip_stars(0)):  # `typedef T (*NAME)[N];` (CSUB-2d)
+            raise CParseError(ROW_PTR_PLACE, pos=self.peek().pos)
         if self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*":
             tref, name = self._funcptr_declarator(base)  # typedef RET (*NAME)(PARAMS);
         else:
@@ -651,7 +881,7 @@ class _Parser:
                     )
                 if self.at("IDENT"):  # an optional parameter name (ignored)
                     self.nxt()
-                params.append(pt)
+                params.append(self._fp_array_param(pt))
                 if self.at("PUNCT", ","):
                     self.nxt()
                     continue
@@ -710,6 +940,26 @@ class _Parser:
         if self._is_funcptr_declarator(abstract):
             return self._funcptr_declarator(base, abstract)
         return self._declarator(base, abstract)
+
+    def _fp_array_param(self, pt: cast.TypeRef) -> cast.TypeRef:
+        """A parameter of a function-pointer type declared as an array, `T name[N]` or `T name[]` (CSUB-2): a pointer
+        to `T` (C11 6.7.6.3p7), as a definition's array parameter decays (`lower._param_type`) and as the twin's
+        `fp_param_list` reads it -- `bcir_shard_manifest.h`'s `const uint8_t digest[32]`. The dimension is read as
+        any is (`_dim`), and must be a constant (`FP_PARAM_VLA`). A second dimension, or an element that is an array
+        already, would make a pointer to an array, which no function type spells here (`FP_PARAM_ROWS`)."""
+        if not self.at("PUNCT", "["):
+            return pt
+        pos = self.peek().pos
+        self.nxt()
+        if not self.at("PUNCT", "]") and not isinstance(self._dim(self._assign()), int):
+            raise CParseError(FP_PARAM_VLA, pos=pos)
+        self.eat("PUNCT", "]")
+        if self.at("PUNCT", "[") or pt.array:
+            raise CParseError(FP_PARAM_ROWS, pos=pos)
+        levels = tuple(pt.ptr_quals or ((),) * pt.ptr) + ((),)
+        return dataclasses.replace(
+            pt, ptr=pt.ptr + 1, ptr_quals=_qual_levels(levels) if any(levels) else ()
+        )
 
     def _fn_returning_fp_at(self) -> bool:
         """Whether the cursor is at `( * NAME (` -- the declarator of a function that returns a function pointer,
@@ -949,7 +1199,11 @@ class _Parser:
                         continue
                     break
                 fbase = self._fp_return_stars(base)  # `T *(*name)(params)` (CF-FPRET)
-                if self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*":
+                if self._row_ptr_declarator_at(self._skip_stars(0)):  # `T (*name)[N]` (CSUB-2d)
+                    tref, name = self._row_ptr_member(base)
+                elif (
+                    self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*"
+                ):
                     tref, name = self._funcptr_declarator(
                         fbase
                     )  # `RET (*name)(params)` -- a funcptr member
@@ -991,6 +1245,71 @@ class _Parser:
             return self._type_spec_inner()
 
     def _type_spec_inner(self) -> cast.TypeRef:
+        # an alignment specifier belongs to this run of specifiers alone: a nested type name (`typeof(T)`,
+        # `_Atomic(T)`) is read with none allowed -- and so does the definition of an untagged aggregate
+        align_ok, self.align_ok = self.align_ok, False
+        agg_ok, self.agg_ok = self.agg_ok, False
+        try:
+            return self._type_spec_run(align_ok, agg_ok)
+        finally:
+            self.align_ok, self.agg_ok = align_ok, agg_ok
+
+    def _alignas(self, align_ok: bool) -> None:
+        """`_Alignas ( N )` / `alignas ( N )` at the cursor, among a declaration's specifiers (C11 6.7.5): kept in
+        `self.align` where an object declaration asks for one (`align_ok`), the strictest of several (6.7.5p6), and
+        refused anywhere else (`ALIGN_PLACE`) and in its type-name form `_Alignas(T)` (`ALIGN_TYPE`). N is 0 (no effect,
+        6.7.5p6) or a power of two (`ALIGN_POW2`) at most 4096 (`ALIGN_LARGE`), checked here, as the twin's
+        `alignas_spec` checks it; against the object's type it is checked where each declarator ends
+        (`lower._object_align`)."""
+        pos = self.peek().pos
+        k, depth = (
+            1,
+            0,
+        )  # a declaration that defines the struct it aligns: refused first (`ALIGN_AGG`)
+        while True:
+            t = self.peek(k)
+            depth += (t.text == "(") - (t.text == ")") if t.kind == "PUNCT" else 0
+            k += 1
+            if depth <= 0 or t.kind == "EOF":
+                break
+        if self.peek(k).kind == "IDENT" and self.peek(k).text in ("struct", "union"):
+            k += 1 + (self.peek(k + 1).kind == "IDENT")
+            if self.peek(k).kind == "PUNCT" and self.peek(k).text == "{":
+                raise CParseError(ALIGN_AGG, pos=pos)
+        if not align_ok:
+            raise CParseError(ALIGN_PLACE, pos=pos)
+        self.nxt()
+        self.eat("PUNCT", "(")
+        if self._is_decl_start():
+            raise CParseError(ALIGN_TYPE, pos=pos)
+        n = self._const_int()
+        if n < 0 or n & (n - 1):
+            raise CParseError(ALIGN_POW2, pos=pos)
+        if n > 4096:
+            raise CParseError(ALIGN_LARGE, pos=pos)
+        self.align = max(self.align, n)
+        self.eat("PUNCT", ")")
+
+    def _block_aggregate(self, kind: str, agg_ok: bool) -> str:
+        """`struct { ... }` / `union { ... }` at the cursor (past the keyword) among a block declaration's specifiers
+        (`agg_ok`): the untagged aggregate it defines, under a synthesized tag, its source spelling kept for the emit's
+        typedef (`Func.block_types`) and C's name for it that typedef's, `__bcir_anonN` -- an identifier reserved to
+        the implementation (C11 7.1.3), which no source declares. Anywhere else, refused (`AGG_TYPE_NAME`). The
+        twin's `block_aggregate`."""
+        pos = self.peek().pos
+        if not agg_ok:
+            raise CParseError(AGG_TYPE_NAME, pos=pos)
+        head = self.i - 1
+        tag = f"$anon{self._anon_ctr}"
+        self._anon_ctr += 1
+        agg = self._aggregate_body(kind, tag, {})
+        self.unit.aggregates[tag] = agg
+        self.tags.add(tag)
+        self._block_types[tag] = self._spelled(head, self.i)
+        self._anon_typedef[tag] = f"__bcir_anon{tag[len('$anon') :]}"
+        return tag
+
+    def _type_spec_run(self, align_ok: bool, agg_ok: bool = False) -> cast.TypeRef:
         quals: list[str] = []
         words: list[str] = []
         aggregate = ""
@@ -1031,12 +1350,25 @@ class _Parser:
             if w in ("const", "volatile", "_Atomic"):
                 quals.append(w)
                 self.nxt()
+            elif w in ("_Alignas", "alignas"):  # an alignment specifier (CSUB-2)
+                self._alignas(align_ok)
             elif w in ("static", "extern", "_Thread_local", "thread_local", "inline"):
                 self.storage.add(w)  # recorded (linkable emit reads `extern` and
                 self.nxt()  # `static`); otherwise storage/inline ignored
             elif w in ("struct", "union"):
                 aggregate = w
                 self.nxt()
+                if self.at("PUNCT", "{"):  # an untagged definition: a block declaration's (CSUB-2)
+                    base = self._block_aggregate(w, agg_ok)
+                    break
+                if (
+                    self.peek().kind == "IDENT"
+                    and self.peek(1).kind == "PUNCT"
+                    and self.peek(1).text == "{"
+                ):
+                    raise CParseError(
+                        AGG_BLOCK_TAGGED if agg_ok else AGG_TYPE_NAME, pos=self.peek().pos
+                    )
                 base = self.eat("IDENT").text  # the tag
                 break
             elif w == "enum":  # `enum [tag] [{...}]` -> its compatible integer type (CF-ENUMOBJ)
@@ -1045,25 +1377,43 @@ class _Parser:
             elif (
                 w in _TYPEOF_KW and not words and not aggregate
             ):  # typeof(type-name) / typeof(variable)
+                unqual = w == "typeof_unqual"
                 self.nxt()
                 self.eat("PUNCT", "(")
                 if self._is_decl_start():  # typeof ( type-name ), incl. `typeof(int*)`
                     inner = self._type_spec()
                     ip, ipq = self._stars()
                     self.eat("PUNCT", ")")
+                    self._trailing_specs(quals)
+                    # `volatile typeof(T *)`: the pointer's own qualifier, refused as `T *volatile` is
+                    if "volatile" in quals and (ip or inner.ptr):
+                        raise CParseError(VOLATILE_PTR, pos=self.peek().pos)
+                    iquals = inner.quals
+                    if unqual and not (ip or inner.ptr):  # a pointer's qualifiers are its pointee's
+                        iquals = ()
                     return cast.TypeRef(
                         base=inner.base,
-                        ptr=ip,
+                        ptr=ip + inner.ptr,
                         array=inner.array,
                         aggregate=inner.aggregate,
-                        quals=tuple(quals) + inner.quals,
+                        quals=tuple(quals) + iquals,
                         ptr_quals=ipq,
+                        # `typeof(typeof(a))`: the inner operand, which rebuilding the type had dropped
+                        # ("unknown type ''"), where the twin reads it (CF-TYPEOFARR)
+                        typeof_var=inner.typeof_var,
+                        typeof_expr=inner.typeof_expr,
+                        typeof_unqual=unqual or inner.typeof_unqual,
                     )
                 expr = self._expr()  # typeof ( expression ) -- a general operand
                 self.eat("PUNCT", ")")
+                self._trailing_specs(quals)
                 if isinstance(expr, cast.Name):  # a bare in-scope variable keeps the fast path
-                    return cast.TypeRef(base="", typeof_var=expr.ident, quals=tuple(quals))
-                return cast.TypeRef(base="", typeof_expr=expr, quals=tuple(quals))
+                    return cast.TypeRef(
+                        base="", typeof_var=expr.ident, quals=tuple(quals), typeof_unqual=unqual
+                    )
+                return cast.TypeRef(
+                    base="", typeof_expr=expr, quals=tuple(quals), typeof_unqual=unqual
+                )
             elif (
                 w in ("va_list", "__builtin_va_list") and not words and not aggregate
             ):  # variadic cursor type
@@ -1089,12 +1439,7 @@ class _Parser:
         # declaration specifiers come in any order (C11 6.7p1): a qualifier or storage class after a
         # struct/union tag or a typedef name (`struct s static x`, `uint32_t_alias volatile y`) is the
         # same specifier it is before one -- the scalar keyword run above already took those it met
-        while self.at("IDENT") and self.peek().text in _TRAILING_SPEC:
-            w = self.nxt().text
-            if w in ("const", "volatile"):
-                quals.append(w)
-            else:
-                self.storage.add(w)
+        self._trailing_specs(quals)
         if td is not None:  # merge the alias with any leading quals
             # a qualifier of a pointer typedef qualifies the pointer, not what it points to (C11 6.7.8p3: a
             # typedef is the type it names): `const str_t p` of `typedef char *str_t` is `char *const p`, and a
@@ -1210,6 +1555,50 @@ class _Parser:
                 k += 1
         return k
 
+    def _row_ptr_declarator_at(self, k: int = 0) -> bool:
+        """`( * name ) [` at `k` tokens from the cursor: a pointer-to-array declarator `T (*name)[N]` (C11 6.7.6.1),
+        which a function-pointer declarator `T (*name)(P)` shares its first four tokens with (the twin's
+        `row_ptr_at`)."""
+
+        def tok(j, kind, text):
+            t = self.peek(k + j)
+            return t.kind == kind and t.text == text
+
+        return (
+            tok(0, "PUNCT", "(")
+            and tok(1, "OP", "*")
+            and self.peek(k + 2).kind == "IDENT"
+            and self.peek(k + 2).text not in _PTR_QUAL
+            and tok(3, "PUNCT", ")")
+            and tok(4, "PUNCT", "[")
+        )
+
+    def _row_ptr_member(self, base: cast.TypeRef):
+        """A member `T (*name)[N]` (CSUB-2d), `bcir_cir.h`'s `char (*calls)[BCIR_CIR_NAME]`: a pointer to a row of N
+        scalars, laid out as a pointer, whose `p->m[k][j]` steps by the row. A row of more than one dimension, of no
+        constant size or past 65535, or of an element no plain scalar is (a struct, a pointer, a function pointer, a
+        typedef'd array, a `typeof`, a `_BitInt`, a volatile or `_Atomic` one), is refused (`ROW_PTR_ELEM`), as the
+        twin refuses it."""
+        pos = self.peek().pos
+        if not self.at("PUNCT", "("):  # `T *(*m)[N]`: a row of pointers
+            raise CParseError(ROW_PTR_ELEM, pos=pos)
+        tref, name = self._declarator(base)
+        if (
+            len(tref.array) != 2
+            or not 0 < tref.array[1] <= 65535
+            or base.ptr
+            or base.array
+            or base.funcptr
+            or base.aggregate
+            or base.typeof_var
+            or base.typeof_expr is not None
+            or base.bit_width
+            or "volatile" in base.quals
+            or "_Atomic" in base.quals
+        ):
+            raise CParseError(ROW_PTR_ELEM, pos=pos)
+        return tref, name
+
     def _declarator(self, base: cast.TypeRef, abstract: bool = False):
         """Parse `*` pointer prefixes, the name, and `[N]` array suffixes onto `base`. `abstract`: a
         parameter's, whose name may be left out (the name is then ""). Each `*` keeps its qualifiers
@@ -1245,7 +1634,9 @@ class _Parser:
                         quals=base.quals,
                         typeof_var=base.typeof_var,
                         typeof_expr=base.typeof_expr,
+                        typeof_unqual=base.typeof_unqual,
                         bit_width=base.bit_width,
+                        row_ptr=True,
                     ), nm
             self.i = save  # not `(*name)[..]` -> a normal declarator
         name = self.eat("IDENT").text if not abstract or self.at("IDENT") else ""
@@ -1305,6 +1696,7 @@ class _Parser:
             quals=base.quals,
             typeof_var=base.typeof_var,
             typeof_expr=base.typeof_expr,
+            typeof_unqual=base.typeof_unqual,
             bit_width=base.bit_width,
             ptr_quals=_join_levels(base, ptr, pq),
         ), name
@@ -1363,10 +1755,12 @@ class _Parser:
         declared = frozenset(self._declared)
         # the parameters' scope encloses the body's block
         self.scopes.append(dict.fromkeys(p.name for p in params))
+        self._block_types = {}  # the untagged aggregates its block declarations define (CSUB-2)
         try:
             body = self._block()
         finally:
             self.scopes.pop()
+        block_types, self._block_types = tuple(self._block_types.items()), {}
         return cast.Func(
             ret=ret,
             name=name,
@@ -1376,6 +1770,7 @@ class _Parser:
             reproducible=reproducible,
             static_fn=static,
             declared=declared,
+            block_types=block_types,
         )
 
     # --- statements ---
@@ -1414,6 +1809,18 @@ class _Parser:
                 return scope[w]
         return self.enums.get(w)
 
+    def _trailing_specs(self, quals: list) -> None:
+        """The specifiers after a type's name -- a struct tag, a typedef name, a `typeof(...)`: a qualifier or
+        storage class there is the one before it (C11 6.7p1), so `typeof(x) volatile y` is `volatile typeof(x) y`.
+        One scan for each: the `typeof` branch had returned before the scan the others make, so the unit was a
+        parse error where the twin lowered it (CF-TYPEOFARR)."""
+        while self.at("IDENT") and self.peek().text in _TRAILING_SPEC:
+            w = self.nxt().text
+            if w in ("const", "volatile"):
+                quals.append(w)
+            else:
+                self.storage.add(w)
+
     def _typedef_visible(self, w: str) -> bool:
         """Whether `w` names a typedef where it is read: a name the function declares in a block scope enclosing this
         point -- a local, a parameter, a loop's own declaration, an enumerator a block declares -- hides a file-scope
@@ -1436,10 +1843,14 @@ class _Parser:
             or w == "enum"
             or is_scalar_name(w)
             or w in ("va_list", "__builtin_va_list", "_Atomic")
+            or w in ("_Alignas", "alignas")  # an alignment specifier opens a declaration (CSUB-2)
             or self._typedef_visible(w)
         )
 
     def _stmt(self):
+        # `[[...]] stmt` / `[[...]] T x;` (C23), PORT-3's timing among them
+        if self._at_attribute_run():
+            return self._attributed_stmt()
         if self.at("PUNCT", ";"):  # empty statement -> a no-op (e.g. the
             self.nxt()  # body of `for(...);` / `while(...);`, `if(c);`)
             return cast.Seq(())
@@ -1518,7 +1929,13 @@ class _Parser:
             elif self._is_decl_start():
                 init = self._decl_stmt()  # a declaration (consumes its `;`)
             else:
-                init = cast.ExprStmt(self._incdec() or self._expr())
+                # one or more comma-separated expressions (`r = 0, w = 0`), run in order once before the loop:
+                # the comma operator in its other dominant position, read as the step's pieces are (CSUB-5c)
+                parts = [cast.ExprStmt(self._incdec() or self._expr())]
+                while self.at("PUNCT", ","):
+                    self.nxt()
+                    parts.append(cast.ExprStmt(self._incdec() or self._expr()))
+                init = parts[0] if len(parts) == 1 else cast.Seq(tuple(parts))
                 self.eat("PUNCT", ";")
             cond = cast.IntLit(1) if self.at("PUNCT", ";") else self._expr()
             self.eat("PUNCT", ";")
@@ -1758,7 +2175,17 @@ class _Parser:
         its own pointer/array shape from the base (so `int *p, q;` types p pointer, q int)."""
         self.storage = set()  # this declaration's own storage classes, wherever they are spelled
         start = self.i
-        base = self._type_spec()
+        self.align_ok, self.align = (
+            True,
+            0,
+        )  # an object declaration: `_Alignas(N)` may be among its specifiers
+        # ... and the definition of the untagged aggregate it declares objects of (CSUB-2)
+        self.agg_ok = True
+        try:
+            base = self._type_spec()
+        finally:
+            self.align_ok = self.agg_ok = False
+        align = self.align
         # `enum [tag] { ... };`: a declaration of the enumeration's constants (and tag) alone, in scope to the end of
         # the block (C11 6.7p2; CF-CONSTEXPR2)
         spec = {t.text for t in self.t[start : self.i]}
@@ -1791,7 +2218,14 @@ class _Parser:
                 self.nxt()
                 init = self._init_value()
             decls.append(
-                cast.Decl(tref, name, init, static_storage=is_static, thread_storage=is_thread)
+                cast.Decl(
+                    tref,
+                    name,
+                    init,
+                    static_storage=is_static,
+                    thread_storage=is_thread,
+                    align=align,
+                )
             )
             if self.at("PUNCT", ","):  # another declarator off the same specifier
                 self.nxt()
@@ -1971,6 +2405,8 @@ class _Parser:
                 "const",
                 "volatile",
                 "_Atomic",
+                "_Alignas",  # read as a type name, whose specifiers refuse it (ALIGN_PLACE; CSUB-2)
+                "alignas",
             )  # `(_Atomic T *)p` (CF-RTFP)
             or is_scalar_name(w)
             or self._typedef_visible(w)
@@ -2003,7 +2439,23 @@ class _Parser:
                     node = cast.Member(node, field, arrow=False)
             elif self.at("OP", "->"):
                 self.nxt()
-                node = cast.Member(node, self.eat("IDENT").text, arrow=True)
+                field = self.eat("IDENT").text
+                if isinstance(node, cast.Unary) and node.op == "&" and _name_rooted(node.operand):
+                    # `(&v)->m` is `v.m` (C11 6.5.2.3p4, 6.5.3.2p3), as a macro writes it over an object
+                    # (`bcir_kplan.c`'s `MS_OP(&v, i)`): the object's own member, the spelling the twin's CF-PAREN
+                    # pass rewrites the tokens to, of a name-rooted operand alike (CSUB-2e)
+                    node = cast.Member(node.operand, field, arrow=False)
+                elif (
+                    isinstance(node, cast.Unary)
+                    and node.op == "&"
+                    and isinstance(node.operand, cast.Unary)
+                    and node.operand.op == "*"
+                    and _name_rooted(node.operand.operand)
+                ):
+                    # `(&*p)->m` is `p->m`: `&*E` is `E` (6.5.3.2p3), as the twin's CF-PAREN pass reads it
+                    node = cast.Member(node.operand.operand, field, arrow=True)
+                else:
+                    node = cast.Member(node, field, arrow=True)
             elif (
                 self.at("PUNCT", "(") and isinstance(node, cast.Name) and node.ident == "va_arg"
             ):  # va_arg(ap, T) -- 2nd operand is a type-name
@@ -2239,8 +2691,10 @@ class _Parser:
             )
         if self.at("CHAR"):  # a character constant: its value, typed by its prefix (CF-CONSTEXPR2)
             return cast.IntLit(*char_constant(self.nxt().text, self.abi))
-        if self.at("FLOAT"):  # a floating-point literal (1.5 / 3.14f)
-            return cast.FloatLit(self.nxt().text)
+        # a floating-point literal (1.5 / 3.14f), its spelling without C23 separators: what its claim names and
+        # the emit writes, which C11 reads as `1` and an open `'` (CF-DIGITSEP; the twin's `flt_spelling`)
+        if self.at("FLOAT"):
+            return cast.FloatLit(self.nxt().text.replace("'", ""))
         if self.at("STRING"):
             text = self.nxt().text
             while self.at("STRING"):  # adjacent literals concatenate (phase 6),

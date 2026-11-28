@@ -1,0 +1,96 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_string_read_is_a_libc_edge_on_both_rails",
+  "bcir.tests.test_c_cfront:test_the_linkable_emit_includes_the_header_of_each_libc_edge"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR1 the oracle calls a string read an undefined function",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if node.callee in _LIBC_TYPED and node.callee not in self.func_rets:",
+   "new": "        if False and node.callee in _LIBC_TYPED and node.callee not in self.func_rets:"
+  },
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR2 the oracle types every string read an `int`",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            ty = pointer(scalar(rt[:-2], self.abi)) if rt.endswith(\" *\") else scalar(rt, self.abi)",
+   "new": "            ty = scalar(\"int\", self.abi)"
+  },
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR3 the oracle types `strlen` an `int`",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "    \"strlen\": \"size_t\",",
+   "new": "    \"strlen\": \"int\","
+  },
+  {
+   "expects": "test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+   "label": "SR4 the oracle's linkable artifact misses <string.h> for a string read",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "    if callees & _STRING_CALLS or _MEM_CALL.search(code):",
+   "new": "    if callees & frozenset({\"memcpy\", \"memmove\", \"memset\"}) or _MEM_CALL.search(code):"
+  },
+  {
+   "expects": "test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+   "label": "SR5 the oracle's linkable artifact includes <math.h> for a string read",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "    if callees - libc - _STRING_CALLS - _CTYPE_CALLS and any(",
+   "new": "    if callees - libc - frozenset({\"memcpy\", \"memmove\", \"memset\"}) - _CTYPE_CALLS and any("
+  },
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR6 the oracle takes a string read for an unknown callee",
+   "path": "bcir/frontends/cfront/linkflags.py",
+   "old": "        or callee in _STRING_CALLS\n",
+   "new": "        or callee in (\"memcpy\", \"memmove\", \"memset\")\n"
+  },
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR7 the twin calls a string read an undefined function",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(sr && !unit_defines(c,name)){ uint32_t t;",
+   "new": "    if(0 && sr && !unit_defines(c,name)){ uint32_t t;"
+  },
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR8 the twin types `memchr` a `size_t`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      if(sr==2){ t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,\"\");   /* a `void *` */",
+   "new": "      if(0){ t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,\"\");   /* a `void *` */"
+  },
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR9 the twin types a string search a `size_t`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      else if(sr==4){ bcir_ctype ct;",
+   "new": "      else if(0){ bcir_ctype ct;"
+  },
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR10 the twin types `strlen` an `int`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "      else t = sr==1 ? tempi(c,4,1) : tempi(c,cc_abi(c)->pointer_size,0);   /* an `int`, a `size_t` */",
+   "new": "      else t = tempi(c,4,1);   /* an `int`, a `size_t` */"
+  },
+  {
+   "expects": "test_a_string_read_is_a_libc_edge_on_both_rails",
+   "label": "SR11 the twin types `strcmp` a `size_t`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "{\"strcmp\",1}",
+   "new": "{\"strcmp\",3}"
+  },
+  {
+   "expects": "test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+   "label": "SR12 the twin's linkable artifact misses <string.h> for a string read",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    else if(lk_named(nm,strlen(nm),str_calls)) f_string=1;",
+   "new": "    else if(lk_named(nm,strlen(nm),mem_calls)) f_string=1;"
+  }
+ ]
+}

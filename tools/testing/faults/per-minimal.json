@@ -1,0 +1,175 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_per:test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+  "bcir.tests.test_c_per:test_a_payload_length_in_the_two_octet_form_below_128_is_refused",
+  "bcir.tests.test_c_per:test_per_primitives_agree_across_the_python_and_c_rails",
+  "bcir.tests.test_c_per:test_an_indefinite_length_naming_more_octets_than_the_range_holds_is_refused_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM1 the oracle's minimum-octets predicate never refuses",
+   "path": "bcir/asn1/per.py",
+   "old": "    if len(data) > 1 and data[0] == 0:\n",
+   "new": "    if False:\n"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM2 the oracle's predicate refuses the one-octet zero",
+   "path": "bcir/asn1/per.py",
+   "old": "    if len(data) > 1 and data[0] == 0:\n",
+   "new": "    if len(data) > 0 and data[0] == 0:\n"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM3 the oracle's 11.5.7.4 octets skip the predicate",
+   "path": "bcir/asn1/per.py",
+   "old": "offset = _minimal_unsigned(reader.get_octets(octets), \"11.5.7.4\")",
+   "new": "offset = int.from_bytes(reader.get_octets(octets), \"big\")"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM4 the oracle's 11.7.4 octets skip the predicate",
+   "path": "bcir/asn1/per.py",
+   "old": "return lower + _minimal_unsigned(reader.get_octets(octets), \"11.7.4\")",
+   "new": "return lower + int.from_bytes(reader.get_octets(octets), \"big\")"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM5 the oracle takes a redundant zero sign octet",
+   "path": "bcir/asn1/per.py",
+   "old": "(data[0] == 0x00 and data[1] < 0x80) or ",
+   "new": ""
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM6 the oracle takes a redundant ones sign octet",
+   "path": "bcir/asn1/per.py",
+   "old": " or (data[0] == 0xFF and data[1] >= 0x80)",
+   "new": ""
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM7 the oracle's unconstrained number skips the predicate",
+   "path": "bcir/asn1/per.py",
+   "old": "return _minimal_signed(reader.get_octets(octets))",
+   "new": "return int.from_bytes(reader.get_octets(octets), \"big\", signed=True)"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM8 the oracle takes 127 in the two-octet length",
+   "path": "bcir/asn1/per.py",
+   "old": "    if count <= _LEN_1_OCTET_MAX:\n        raise",
+   "new": "    if count < _LEN_1_OCTET_MAX:\n        raise"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM9 the oracle's whole-number length skips the two-octet check",
+   "path": "bcir/asn1/per.py",
+   "old": "        return _two_octet_length(first, reader)",
+   "new": "        return ((first & 0x3F) << 8) | reader.get_bits(8)"
+  },
+  {
+   "expects": "test_a_payload_length_in_the_two_octet_form_below_128_is_refused",
+   "label": "PM10 the oracle's payload count skips the two-octet check",
+   "path": "bcir/asn1/per.py",
+   "old": "            count = _two_octet_length(first, reader)",
+   "new": "            count = ((first & 0x3F) << 8) | reader.get_bits(8)"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM11 the oracle takes 63 in the long normally small form",
+   "path": "bcir/asn1/per.py",
+   "old": "    if value <= 63:\n",
+   "new": "    if value < 63:\n"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM12 the oracle takes 64 in the long normally small length",
+   "path": "bcir/asn1/per.py",
+   "old": "    if count <= 64:\n        raise",
+   "new": "    if count < 64:\n        raise"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM13 the twin's minimum-octets predicate never refuses",
+   "path": "runtime/c/bcir_per.c",
+   "old": "  return octets <= 1u || (value",
+   "new": "  return octets <= 8u || (value"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM14 the twin's predicate refuses the one-octet zero",
+   "path": "runtime/c/bcir_per.c",
+   "old": "  return octets <= 1u || (value",
+   "new": "  return octets < 1u || (value"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM15 the twin's 11.5.7.4 octets skip the predicate",
+   "path": "runtime/c/bcir_per.c",
+   "old": "    if (!minimal_unsigned(offset, octets)) return BCIR_PER_MALFORMED;\n",
+   "new": ""
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM16 the twin's 11.7.4 octets skip the predicate",
+   "path": "runtime/c/bcir_per.c",
+   "old": "  if (!minimal_unsigned(offset, count)) return BCIR_PER_MALFORMED;",
+   "new": ""
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM17 the twin takes a redundant zero sign octet",
+   "path": "runtime/c/bcir_per.c",
+   "old": "if (top == 0u || top == 0x1FFu)",
+   "new": "if (top == 0x1FFu)"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM18 the twin takes a redundant ones sign octet",
+   "path": "runtime/c/bcir_per.c",
+   "old": "if (top == 0u || top == 0x1FFu)",
+   "new": "if (top == 0u)"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM19 the twin reads the sign from eight bits, not nine",
+   "path": "runtime/c/bcir_per.c",
+   "old": "(raw >> (count * 8u - 9u))",
+   "new": "(raw >> (count * 8u - 8u))"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM20 the twin takes 127 in the two-octet length",
+   "path": "runtime/c/bcir_per.c",
+   "old": "if (second <= 127u) return BCIR_PER_MALFORMED;",
+   "new": "if (second < 127u) return BCIR_PER_MALFORMED;"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM21 the twin takes 63 in the long normally small form",
+   "path": "runtime/c/bcir_per.c",
+   "old": "if (value <= 63) return BCIR_PER_MALFORMED;",
+   "new": "if (value < 63) return BCIR_PER_MALFORMED;"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM22 the twin takes a fragment header as a normally small length",
+   "path": "runtime/c/bcir_per.c",
+   "old": "if (more || count <= 64u) return BCIR_PER_MALFORMED;",
+   "new": "if (count <= 64u) return BCIR_PER_MALFORMED;"
+  },
+  {
+   "expects": "test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails",
+   "label": "PM23 the twin takes 64 in the long normally small length",
+   "path": "runtime/c/bcir_per.c",
+   "old": "if (more || count <= 64u) return BCIR_PER_MALFORMED;",
+   "new": "if (more || count < 64u) return BCIR_PER_MALFORMED;"
+  }
+ ]
+}

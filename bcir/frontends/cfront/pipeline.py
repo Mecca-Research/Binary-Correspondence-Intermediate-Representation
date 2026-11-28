@@ -1,11 +1,12 @@
 """The C-frontend pipeline — the six-artifact gate the ladder requires, end to end:
 
     C source ── parse ──▶ claim graph ── K_BCIR ──▶ plan ── emit ──▶ verified C ── clang ──▶ ≡ check
-                                  └────────────── R1–R18 verifier checkpoint ──────────────┘
+                                  └────────────── R1–R20 verifier checkpoint ──────────────┘
 
 `compile_unit` returns every artifact for a translation unit: the parsed C, the lowered claim graph
-+ K_BCIR plan + `bcir-explain` text per function, the emitted C, the R1–R18 diagnostics (R18 via the
-real `plan_composite` call-graph machinery), and the Clang behaviour-equivalence verdict (which skips
++ K_BCIR plan + `bcir-explain` text per function, the emitted C, the R1–R20 diagnostics (R18 via the
+real `plan_composite` call-graph machinery, R19/R20 over the timing a `[[bcir::timing(...)]]` statement gives its
+claims, PORT-3), and the Clang behaviour-equivalence verdict (which skips
 cleanly without a C compiler, so the structural artifacts still run in the quick tier).
 """
 
@@ -24,7 +25,14 @@ from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
 from ...toolchain import host_link_args
-from ...verify import Diagnostic, cfront_unit_claim_ids_unique, verify, verify_lifetime, verify_plan
+from ...verify import (
+    Diagnostic,
+    cfront_unit_claim_ids_unique,
+    verify,
+    verify_lifetime,
+    verify_plan,
+    verify_timing,
+)
 from .abi import abi_contract_for, verify_abi_contract, HOST, target as resolve_target
 from .clex import CLexError
 from .cparse import CParseError, parse_unit, parse_with_recovery
@@ -59,12 +67,12 @@ class CompileResult:
         None  # escape.EscapeResult: footprints, escape verdicts, narrowed indirect calls
     )
     ipo: dict = field(default_factory=dict)  # inter-procedural plan: worst/expected/leaves/reused
-    diagnostics: list = field(default_factory=list)  # R1–R18 Diagnostics (empty == clean)
+    diagnostics: list = field(default_factory=list)  # R1–R20 Diagnostics (empty == clean)
     lifetime_diagnostics: list = field(
         default_factory=list
     )  # R21 use-after-free / double-free (§5.12) --
     #     ADVISORY: a smart-lowering law over the optional `claim.lifetime` (malloc/free), NOT part of the
-    #     frontend pass/fail (`is_clean`), exactly as R19/R20 timing are advisory. Empty == no dangling access.
+    #     frontend pass/fail (`is_clean`); R19/R20 are in the verdict (PORT-3). Empty == no dangling access.
     lowering_diagnostics: list = field(
         default_factory=list
     )  # §5.12 item 4: cfront-emit lowering faithfulness
@@ -187,6 +195,40 @@ def verify_cfront_lowering(lf, emit_text: str) -> list:
     return []
 
 
+def _whole_unit_r18(lowered: LoweredUnit) -> str | None:
+    """R18 over every function of the unit, as the twin's verifier checks it (`bcir_verify_unit`): each internal
+    callee defined, and no recursive call cycle. The composite plan reaches only what the entry calls, so a function
+    the entry never reaches -- a library unit's other roots -- had gone unchecked: a self-call there lowered clean
+    on the oracle and was refused on the twin (CSUB-5g). None when the call graph is sound; else the violation."""
+    functions = lowered.functions
+    callees = {
+        name: [c.op.split(":", 1)[1] for c in lf.claims if c.op.startswith("c.call:")]
+        for name, lf in functions.items()
+    }
+    for name, calls in callees.items():
+        for callee in calls:
+            if callee not in functions:
+                return f"call to undefined function {callee}"
+    state: dict = {}  # 1 on the walk's stack, 2 finished: an iterative depth-first walk, no recursion of its own
+    for root in functions:
+        if state.get(root):
+            continue
+        state[root] = 1
+        stack = [(root, iter(callees[root]))]
+        while stack:
+            node, it = stack[-1]
+            nxt = next(it, None)
+            if nxt is None:
+                state[node] = 2
+                stack.pop()
+            elif state.get(nxt) == 1:
+                return "recursive call cycle"
+            elif not state.get(nxt):
+                state[nxt] = 1
+                stack.append((nxt, iter(callees[nxt])))
+    return None
+
+
 def compile_unit(
     source: str,
     *,
@@ -231,7 +273,9 @@ def compile_unit(
 
     # --- per-function: plan, verify (R1–R9), emit, explain ---
     for name, lf in lowered.functions.items():
-        diags = verify(lf.module)
+        # R19/R20 (PORT-3): the timing laws over the timing a `[[bcir::timing(...)]]` statement gave its claims --
+        # vacuous without one, as every unit was before -- in the verdict, as `-bcir-verify` holds them on the law rail
+        diags = verify(lf.module) + verify_timing(lf.module)
         plan = optimize(lf.module, h, theta, policy)
         diags += verify_plan(lf.module, plan, h, theta=theta, policy=policy)
         res.plans[name] = plan
@@ -242,7 +286,7 @@ def compile_unit(
         res.diagnostics += [Diagnostic(d.law, f"{name}: {d.message}") for d in diags]
         # R21 lifetime (§5.12): an ADVISORY pass over the optional malloc/free `claim.lifetime` -- a
         # use-after-free / double-free a C program would have left UB. Kept OUT of `res.diagnostics`
-        # (and thus `is_clean`): like the R19/R20 timing laws, it never changes the frontend verdict.
+        # (and thus `is_clean`): unlike the R19/R20 timing laws above (PORT-3), it never changes the verdict.
         res.lifetime_diagnostics += [
             Diagnostic(d.law, f"{name}: {d.message}") for d in verify_lifetime(lf.module)
         ]
@@ -328,6 +372,11 @@ def compile_unit(
         except Exception as e:  # noqa: BLE001 -- recursion / undefined callee == an R18 violation
             res.r18_ok = False
             res.diagnostics.append(Diagnostic("R18", f"call-graph integrity: {e}"))
+        # ... and every function the entry never reaches, as the twin's verifier checks them (CSUB-5g)
+        whole = _whole_unit_r18(lowered) if res.r18_ok else None
+        if whole is not None:
+            res.r18_ok = False
+            res.diagnostics.append(Diagnostic("R18", f"call-graph integrity: {whole}"))
 
     # --- behaviour equivalence vs Clang (clang-gated; host ABI only -- a cross-target layout is not
     #     byte-compatible with the host compiler, so equivalence there would be meaningless) ---

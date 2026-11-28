@@ -30,7 +30,8 @@ from .lower import (
     ScopeOpen,
     SwitchNode,
     WhileNode,
-    _STRING_MEM,
+    _CTYPE_CALLS,
+    _STRING_CALLS,
     _const_spelling,
     _kspell,
 )
@@ -169,6 +170,16 @@ def _atomic_ptr(t: str, vol: bool = False) -> str:
     return f"{t} {q} *" if t.rstrip().endswith("*") else f"{q} {t} *"
 
 
+# A C11 memory order by its value (C11 7.17.3), as an explicit-order atomic's emit spells it (CSUB-4; the twin's
+# `memory_orders`)
+_MEMORY_ORDERS = (
+    "memory_order_relaxed",
+    "memory_order_consume",
+    "memory_order_acquire",
+    "memory_order_release",
+    "memory_order_acq_rel",
+    "memory_order_seq_cst",
+)
 # An increment or decrement of an `_Atomic` object (`c.c11atom.rmw:<kind>`), as the emitted operator.
 _RMW_INCDEC = {"preinc": "++{}", "predec": "--{}", "postinc": "{}++", "postdec": "{}--"}
 
@@ -480,15 +491,17 @@ def emit_linkable(lowered, emitted: dict) -> str:
         body.append(respell_anon(f"{kw}{ret} {name}({ps});", spelling))
     threads = getattr(lowered, "thread_globals", frozenset())
     quals = getattr(lowered, "global_quals", {})
+    aligns = getattr(lowered, "global_align", {})
     for gname, ct, vals, is_extern, is_static in lowered.globals_decl:
         tls = "_Thread_local " if gname in threads else ""  # each thread's own object (CF-TLS)
+        al = f"_Alignas({aligns[gname]}) " if gname in aligns else ""  # its `_Alignas(N)` (CSUB-2)
         decl = respell_anon(_object_declarator(ct, gname, quals.get(gname, ())), spelling)
         if _ANON_REF.search(decl):  # an untagged aggregate no typedef names: C names no type of it
             raise ValueError(
                 f"linkable emit: global {gname!r} has a type C cannot name (an untagged aggregate)"
             )
         if is_extern:
-            body.append(f"extern {tls}{decl};")
+            body.append(f"extern {al}{tls}{decl};")
             continue
         if vals is None:
             raise ValueError(
@@ -499,7 +512,7 @@ def emit_linkable(lowered, emitted: dict) -> str:
         # the initializer as the source spells it, re-spelled (`lower._file_scope_rendering`); none: a
         # tentative definition (zero-init)
         init = f" = {vals[0]}" if vals else ""
-        body.append(f"{kw}{tls}{decl}{init};")
+        body.append(f"{kw}{al}{tls}{decl}{init};")
     # every in-unit call unprefixed, where `bcir_X(` begins an identifier (the twin's `lk_functions`) -- but a
     # wrapped function's: its callers call the emitted function, of the emit's own types, by its `bcir_` name
     plain = [n for n in names if n not in wrapped]
@@ -541,9 +554,11 @@ def emit_linkable(lowered, emitted: dict) -> str:
     libc = {"malloc", "calloc", "realloc", "aligned_alloc", "free"}
     if callees & libc:
         parts.append("#include <stdlib.h>")
-    # the memcpy/memmove/memset edges, and the emit's own copies
-    if callees & _STRING_MEM or _MEM_CALL.search(code):
+    # the <string.h> edges (memcpy/memmove/memset, memcmp/memchr/strlen), and the emit's own copies
+    if callees & _STRING_CALLS or _MEM_CALL.search(code):
         parts.append("#include <string.h>")
+    if callees & _CTYPE_CALLS:  # the <ctype.h> edges, which the library's header declares (CSUB-5c)
+        parts.append("#include <ctype.h>")
     parts += [f"#include {h}" for h, names_re in _OWN_HEADERS if names_re.search(code)]
     # `I`, which the lowering read as <complex.h>'s imaginary unit
     if any(op.startswith("c.cconst:") for op in ops) and "#include <complex.h>" not in parts:
@@ -551,7 +566,7 @@ def emit_linkable(lowered, emitted: dict) -> str:
     parts += [f"#include {h}" for h, names_re in _C11_MACRO_HEADERS if names_re.search(code)]
     if any(op.startswith("c.call.extern:") for op in ops):
         parts.append("#include <stdio.h>")  # the printf/scanf-family edges
-    if callees - libc - _STRING_MEM and any(
+    if callees - libc - _STRING_CALLS - _CTYPE_CALLS and any(
         op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops
     ):
         parts.append("#include <math.h>")  # the remaining libm edges
@@ -803,24 +818,33 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
             nm[rid] = _unqualified_global(nm[rid], ct)
     ref = _Names(nm, used, labels=dict(lf.globals_used))
 
+    def _aligned(
+        rid,
+    ):  # a local's or a static's `_Alignas(N)`, spelled as the source asked it (CSUB-2)
+        n = lf.local_align.get(rid)
+        return f"_Alignas({n}) " if n else ""
+
     def _local_decl(rid, name, ct):
         # the zero baseline as the empty initializer: `= {0}` re-lowers as the baseline AND a store of 0 to the
         # first scalar, which the next emit spells as a store -- one more each round (CF-RTWIDE)
         zi = " = {}" if rid in lf.zero_init_locals else ""
+        al = _aligned(rid)
         if _has_fp(
             ct
         ):  # `RET (*name)(PARAMS)` (no typedef alias), a table `RET (*name[N])(PARAMS)`
-            return f"    {_funcptr_decl(ct, name)}{zi};"
+            return f"    {al}{_funcptr_decl(ct, name)}{zi};"
         if ct.kind == "array":  # `T name[N]` (the dims follow the name)
-            return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
-        return f"    {_cname(ct)} {name}{zi};"
+            return f"    {al}{_cname(ct.of)} {name}[{ct.count}]{zi};"
+        return f"    {al}{_cname(ct)} {name}{zi};"
 
-    def _static_decl(name, ct, init, thread):
+    def _static_decl(rid, name, ct, init, thread):
         # static storage: a once-only constant initializer in the declaration -- the image the lowering
         # folded and rendered (CF-STATICTAB), or zero: `{0}` for an array or aggregate, `0u` for the rest.
         # An array keeps its shape (a multi-dimensional one flat, as its image is rendered); thread storage
         # its `_Thread_local` (CF-TLS)
-        sc = "static _Thread_local" if thread else "static"
+        sc = ("static _Thread_local" if thread else "static") + (
+            " " + _aligned(rid).rstrip() if rid in lf.local_align else ""
+        )
         if ct.kind == "array":
             return f"    {sc} {_cname(ct.of)} {name}[{ct.count}] = {init or '{0}'};"
         if ct.kind in ("struct", "union"):
@@ -830,9 +854,15 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
             return f"    {sc} {_funcptr_decl(ct, name)} = {init or zero};"
         return f"    {sc} {_cname(ct)} {name} = {init or '0u'};"
 
-    decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
+    # an untagged aggregate a block declaration defines: its own typedef, first, as its source spells it -- the
+    # name the unit's `anon_spelling` gives it, which respells every `struct $anonN` of the function (CSUB-2)
+    types = [
+        f"    typedef {spelling} __bcir_anon{tag[len('$anon') :]};"
+        for tag, spelling in lf.block_types
+    ]
+    decls = types + [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
     decls += [
-        _static_decl(nm[rid], ct, init, rid in lf.thread_statics)
+        _static_decl(rid, nm[rid], ct, init, rid in lf.thread_statics)
         for rid, _name, ct, init in lf.statics
     ]
     body = _walk(lf, lf.body, ref, 1, cont=_cont_labels(lf))
@@ -1068,8 +1098,16 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"({_UNOP[suf]}{ref(c.rd[0])})")
     if c.op.startswith("c.cast:"):  # (type)operand — width cast / reinterpret
         rt = lf.rid_types.get(c.wr[0])
-        # a function pointer, a pointer to one: spelled from the temp's type, which carries it whole (CF-RTFP)
-        to = _qual_type(rt, ()) if _has_fp(rt) else c.op.split(":", 1)[1]
+        # a function pointer, a pointer to one: spelled from the temp's type, which carries it whole (CF-RTFP); a
+        # data pointer as the temp is declared (`_load_ctype`): the op's canonical spelling names an 8-byte unsigned
+        # `uint64_t`, which on an LP64 target is `unsigned long`, another type than the `unsigned long long *` the
+        # temp is declared -- `T *t = (uint64_t *)p;`, which GCC 14 refuses as incompatible pointer types (CSUB-4)
+        if _has_fp(rt):
+            to = _qual_type(rt, ())
+        elif rt is not None and rt.kind == "pointer":
+            to = _load_ctype(lf, c.wr[0])
+        else:
+            to = c.op.split(":", 1)[1]
         return deftmp(c.wr[0], f"({to}){ref(c.rd[0])}")
     if c.op == "c.addrof":  # &lvalue -> a pointer value (T *t = &x;)
         rt = lf.rid_types.get(c.wr[0])
@@ -1362,16 +1400,23 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"({expr})", et)
     if c.op.startswith("c.c11atom."):  # C11 <stdatomic.h> generics on _Atomic objects
         fn = c.op.split(".")[-1]  # fetch_add / fetch_sub / fetch_xor / load / store
+        # an explicit-order form carries its orders as immediates, spelled by name after the operands (CSUB-4)
+        sfx = "_explicit" if c.imm else ""
+        mo = "".join(f", {_MEMORY_ORDERS[o]}" for o in c.imm)
         if fn == "load":
-            return deftmp(c.wr[0], f"atomic_load({ref(c.rd[0])})")
+            return deftmp(c.wr[0], f"atomic_load{sfx}({ref(c.rd[0])}{mo})")
         if fn == "store":
-            return f"atomic_store({ref(c.rd[0])}, {ref(c.rd[1])});"
+            return f"atomic_store{sfx}({ref(c.rd[0])}, {ref(c.rd[1])}{mo});"
+        if fn == "flag_tas":  # the flag's operations, by their own names (CSUB-5d)
+            return deftmp(c.wr[0], f"atomic_flag_test_and_set{sfx}({ref(c.rd[0])}{mo})")
+        if fn == "flag_clear":
+            return f"atomic_flag_clear{sfx}({ref(c.rd[0])}{mo});"
         if fn.startswith("cas_"):  # cas_strong/weak -> bool compare_exchange (obj, &exp, des)
             return deftmp(
                 c.wr[0],
-                f"atomic_compare_exchange_{fn[4:]}({ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])})",
+                f"atomic_compare_exchange_{fn[4:]}{sfx}({ref(c.rd[0])}, {ref(c.rd[1])}, {ref(c.rd[2])}{mo})",
             )
-        return deftmp(c.wr[0], f"atomic_{fn}({ref(c.rd[0])}, {ref(c.rd[1])})")
+        return deftmp(c.wr[0], f"atomic_{fn}{sfx}({ref(c.rd[0])}, {ref(c.rd[1])}{mo})")
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
 
 

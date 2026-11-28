@@ -19,8 +19,8 @@
     {
       "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
       "label": "HO2 the oracle starts a declaration with a hidden typedef name",
-      "new": "            or w in (\"va_list\", \"__builtin_va_list\", \"_Atomic\")\n            or w in self.typedefs\n",
-      "old": "            or w in (\"va_list\", \"__builtin_va_list\", \"_Atomic\")\n            or self._typedef_visible(w)\n",
+      "new": "            or w in (\"_Alignas\", \"alignas\")  # an alignment specifier opens a declaration (CSUB-2)\n            or w in self.typedefs\n",
+      "old": "            or w in (\"_Alignas\", \"alignas\")  # an alignment specifier opens a declaration (CSUB-2)\n            or self._typedef_visible(w)\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {

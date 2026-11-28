@@ -86,22 +86,22 @@
     {
       "expects": "test_the_twins_linkable_honors_source_static_and_forward_declarations",
       "label": "LT10 the twin's artifact drops a static global's `static`",
-      "new": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
-      "old": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
+      "new": "    e=emit_putf(out,\"%s%s%s%s\",g->lk_extern?\"extern \":\"\",alb,g->lk_thread?\"_Thread_local \":\"\",\n",
+      "old": "    e=emit_putf(out,\"%s%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",alb,g->lk_thread?\"_Thread_local \":\"\",\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
       "label": "LT11 the twin's artifact drops a global's thread storage",
-      "new": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",\"\",\n",
-      "old": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
+      "new": "    e=emit_putf(out,\"%s%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",alb,\"\",\n",
+      "old": "    e=emit_putf(out,\"%s%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",alb,g->lk_thread?\"_Thread_local \":\"\",\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_the_twins_linkable_globals_define_declare_and_refuse",
       "label": "LT12 the twin defines an `extern` global",
-      "new": "    e=emit_putf(out,\"%s%s%s\",g->lk_static?\"static \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
-      "old": "    e=emit_putf(out,\"%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",g->lk_thread?\"_Thread_local \":\"\",\n",
+      "new": "    e=emit_putf(out,\"%s%s%s%s\",g->lk_static?\"static \":\"\",alb,g->lk_thread?\"_Thread_local \":\"\",\n",
+      "old": "    e=emit_putf(out,\"%s%s%s%s\",g->lk_extern?\"extern \":g->lk_static?\"static \":\"\",alb,g->lk_thread?\"_Thread_local \":\"\",\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

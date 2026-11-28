@@ -54,6 +54,7 @@ from ..gem.control import (
     registry_digest,
 )
 from ..gem.handoff import (
+    CLAIM_MAX_RD,
     EPOCH_MAX,
     HO_REFUSALS,
     HO_VERDICTS,
@@ -678,11 +679,11 @@ def freeze_scenarios() -> list[Scenario]:
         ("unsorted-vector", step_graph(1, g), (g[1], g[0], g[2]), bad),
         (
             "reads-longest",
-            [claim(1, R_ADD, (1,) * 17)],
+            [claim(1, R_ADD, (1,) * CLAIM_MAX_RD)],
             g,
             APPLIED,
         ),  # BCIR_CLAIM_MAX_RD (CF-CALLARGS)
-        ("too-many-reads", [claim(1, R_ADD, (1,) * 18)], g, bad),
+        ("too-many-reads", [claim(1, R_ADD, (1,) * (CLAIM_MAX_RD + 1))], g, bad),
         ("label-control-char", [claim(1, label="c.a\tdd")], g, bad),
         ("label-no-terminator", [claim(1, label="x" * 128)], g, bad),
         ("ids-not-ascending", [claim(2), claim(2)], g, bad),
@@ -1089,8 +1090,8 @@ def _law_graphs():
         ("overflow", [claim(1, R_LOAD, (1,), count=2**32 - 1)], g, None),
         ("no-vector", step_graph(1, g), (), None),
         ("unsorted-vector", step_graph(1, g), (g[1], g[0], g[2]), None),
-        ("reads-longest", [claim(1, R_ADD, (1,) * 17)], g, None),
-        ("too-many-reads", [claim(1, R_ADD, (1,) * 18)], g, None),
+        ("reads-longest", [claim(1, R_ADD, (1,) * CLAIM_MAX_RD)], g, None),
+        ("too-many-reads", [claim(1, R_ADD, (1,) * (CLAIM_MAX_RD + 1))], g, None),
         ("too-many-writes", [claim(1, R_ADD, (1,), (1, 2, 4))], g, None),
         ("label-control-char", [claim(1, label="c.a\tdd")], g, None),
         ("label-no-terminator", [claim(1, label="x" * 128)], g, None),

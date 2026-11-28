@@ -289,6 +289,1226 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
 
 ## 3. Condensed dated changelog
 
+- **2026-11-27 — CSUB-2's close-out: a pointer element subscripted, and `(*q)->m` on the twin.**
+  - The last form a unit's first refusal named for the rung: `j->pa[k][i] = v` of a member array of pointers
+    (`bcir_tensor.c`), which both rails refused. One subscript past the array's dimensions now indexes the pointer
+    the element holds, as `v[k][i]` of a local `T *v[N]` does, in every position: read, stored, compound-assigned,
+    stepped, assigned as a value and addressed, of two dimensions, through a loaded pointer and of a union. The
+    oracle's member-array index takes its own dimensions' subscripts and steps through the pointer for the rest; the
+    twin reads the form in one function (`load_member_ptr`) that every path through a member's pointer takes.
+  - **On the way, three twin defects at the base.** A `T **` member's subscript chain stopped after one step
+    (`s.p[0][1] = x` refused, where the oracle lowered it); a loaded `T **` member was typed a `T *` in the emit,
+    which no compiler took; and `const uint32_t g(void);` was declared without its qualifier, which Clang refuses
+    beside the source as conflicting.
+  - **A6, `(*q)->m` through a dereferenced `T **`**, is the twin's as it is the oracle's in every position
+    (`paren_deref_base`); the twin had refused each.
+  - **What stays refused is refused in one set of words:** a member through a pointer element (`s.pp[i]->m`,
+    CF-IDXARROW), `(&**q)->m`, a subscript of a scalar element, and a pointer to an array as a block object, which a
+    member or a parameter is (CSUB-2d). The twin had said `;`, `=` or `expected declarator name`.
+  - **Evidence.** `test_a_pointer_element_and_a_dereferenced_pointer_lower_alike_on_both_rails`: 32 units lowered
+    digest-equal on both rails, each rail's emit run as Clang's build of the source and compiled as C11 strictly,
+    and 9 refused alike.
+  - **Standing faults.** `cfront-ptrelem.json`, 24, each swept RED. A loaded element left an array field survived the
+    first sweep and was dropped as an equivalent mutant: no path reads the array's flags once its element is loaded.
+    The ratchet stays at 46 of 68: `bcir_tensor.c`
+    moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
+
+- **2026-11-28 — REVIEW-829a: Codex's four findings on the ready PR, each verified against the tree and fixed with a
+  witness that fails without the fix.**
+  - **The exposition read a NULL name.** `bcir_prom_write` ordered each series name against the one before it
+    (`bytes_lt`) before any text check, so a name of a nonzero length and no pointer was dereferenced, before it or
+    after it. A NULL name of a length is a NULL argument now (`BCIR_PROM_ERR_ARG`, as the header names it), refused
+    before it is ordered. Every name compared has passed that test, so the comparison reads only bytes it holds.
+  - **The loader's "no permutation yet" was an epoch.** `bcir_tokload_init` set the epoch to `UINT64_MAX` to say no
+    permutation had been drawn. With one window, the last sample, `2^64 - 1`, is of that epoch, so its batch read the
+    caller's workspace unwritten and walked past the shards. Whether the workspace holds a permutation is a flag of its
+    own (`perm_ready`), and no epoch is a sentinel.
+  - **The CSP solver negated `INT64_MIN`.** `mag` negated in `int64_t`, which is undefined for `INT64_MIN`, so a bound,
+    a coefficient, an offset or a rectangle's offset of it could pass the range checks. It saturates now: `|INT64_MIN|`
+    is past every bound it is compared with, as the oracle's `abs()` puts it, and each is `BCIR_CSP_ERR_RANGE`.
+  - **The cumulative's scans stepped by a task's duration.** Its timetable is kept as intervals so that its cost is
+    the spans' count, not the domain's width, but both scans still moved one duration at a time through a full span:
+    a part 2^50 long beside a task of 1 was 2^50 passes for one bound. A start that meets a full span covers one of
+    its instants up to its end, and below its beginning less the duration, so each scan now passes a span whole. The
+    bound is the same; `test_cpp_csp`'s parity with the oracle holds node for node.
+  - **Witnesses.** `test_prom` refuses a NULL name before and after a name, and `test_tokload` asks a one-window
+    loader over a poisoned workspace for batch `2^64 - 1` first. `test_csp`'s refusals take `INT64_MIN` in each of
+    the four places. `test_a_long_compulsory_part_is_passed_in_one_step` solves the two long-span models under a
+    minute's bound; the oracle's set of instants cannot hold such a span, so its answers, the models' only
+    solutions, are written into the test.
+  - **Each fix was shown RED by hand on the code before it:** UBSan's null load in `bytes_lt`, ASan's overflow past
+    the shards, UBSan's negation of `INT64_MIN`, and the scans past a 60-second timeout.
+  - **Standing faults.** PR29 (`prom.json`), L20 (`tokload.json`), and C34 and C35 (`cpp-csp.json`), each swept RED.
+    C9 and L12 were re-anchored to the lines they mutate and swept RED. The negation's fault survived the sweep: the
+    witnesses' optimized build folds `-v` into a range test, so the verdict was `ERR_RANGE` there all along, and only
+    UBSan sees the overflow. Its witness is `check_solver.sh`'s run of `test_csp` under UBSan, which went RED on the
+    old `mag`. The fault was dropped from the table rather than kept as one the table cannot see.
+
+- **2026-11-28 — CSUB-5g: a pointer member's step, R18 over every function, and the build tool under the verified compiler.**
+  - `j->p++` steps a pointer member by its pointee on both rails, as `j->p += 1` does. Of a volatile or a device's
+    object it stays refused alike.
+  - The twin had loaded a `char *` member as an `int8_t *`; it keeps the plain `char` now.
+  - CF-STEP's one refused for-step, `s.p++`, now lowers alike and runs as Clang's build; its table refuses a row
+    pointer's step in its place.
+  - The oracle's R18 now walks every function. Recursion the entry never reaches, `bcir_make.c`'s `map_slot` among
+    it, had lowered clean on the oracle and been refused on the twin.
+  - `strerror`, `realpath` and a feature-gated `PATH_MAX` are the library's on both rails.
+  - In the unit: a target's name read through a named pointer, and a map that grows without calling itself.
+    `make_parity.py`: 401 trees, 0 differ.
+  - The ratchet moves to **65 of 68**.
+  - **Standing faults.** `cfront-csub5g.json`, 16, over this slice's test and the two CSUB-2 tests whose refusals
+    the step must keep (a pointer to a row, a member of an array element), each swept RED; CS2V1 re-anchored and
+    swept. The oracle's volatile test beside its device test survived as an equivalent mutant (a volatile object's
+    storage is a device's) and was dropped with its line.
+
+- **2026-11-28 — CSUB-5f: `<sys/stat.h>` and `<dirent.h>` on both rails.**
+  - `struct stat` and `struct dirent` are laid out as glibc lays them out: its x86 layout on x86-64 and i386, and its
+    generic Linux one on aarch64 and riscv64. Both rails choose the layout from the target's pointer size and its
+    `long double`.
+  - The headers also carry the mode classifiers, `stat`, `lstat` and `fstat`, an opaque `DIR` and its three calls.
+    `struct timespec` is one guarded definition that `<time.h>` and `<sys/stat.h>` share. Neither header is supplied
+    on Windows.
+  - **Evidence.** `test_the_posix_file_headers_lay_out_their_structures_as_the_c_library_on_every_target`:
+    - every target's layout of the rails' text is asserted on both rails;
+    - the host's glibc headers give the same layout, and so do the biarch x86 headers for i386;
+    - a tree walk runs as Clang's build on both rails.
+  - `bcir_make.c` now stops at `bf->targets[i]->name` (CF-IDXARROW); the count stays **64 of 68**.
+  - **Standing faults.** `cfront-posix-files.json`, 14; HC18 re-anchored.
+
+- **2026-11-28 — CSUB-6a: a call of 24 arguments, and a call through a member of a member; the tensor kernels under the verified compiler.**
+  - A call carries 24 arguments on both rails, and a twenty-fifth is refused alike. The limit was 16, and the
+    attention kernels' workspace calls pass 18. The freeze's mirror of a claim's reads (`CLAIM_MAX_RD`) and its
+    fixtures hold 25.
+  - Past the bound was an oracle defect. `s->provider.silu(...)`, a call through a function-pointer member of a
+    struct-valued member, was fused over the outer base and emitted as `s.silu(...)`, which compiles nowhere. The
+    twin read the pointer at its offset and called through it. Both rails do that now, and the dispatch forms keep
+    their fused claim.
+  - **Evidence.** `test_a_function_pointer_member_of_a_struct_member_is_called_through_its_value_on_both_rails`: 8
+    units run as Clang's build on both rails and compile as C11 strictly, and the two kernel units lower to one digest
+    on both rails.
+  - The ratchet moves to **64 of 68**: `bcir_tensor.c` and `bcir_decoder_train.c`, each as its serial scalar build.
+  - **Standing faults.** `cfront-csub6a.json`, 4, each swept RED; `cfront-calls.json`'s CL46 to CL48 re-swept at the
+    new bound.
+
+- **2026-11-28 — CSUB-5e, first slice: a pointer element of a `T **` member, stored, on the twin.**
+  - `s->v[s->n++] = x` (`bcir_make.c`'s string vectors) was read by the twin as the start of a walk through the
+    element, and refused. The element is now stored, and a null pointer constant takes the element's pointer type.
+  - **Evidence.** `test_a_pointer_element_of_a_member_is_stored_alike_on_both_rails`: 2 units run as Clang's build
+    on both rails and compile as C11 strictly.
+  - `bcir_make.c` now stops at `struct stat`; the count stays **62 of 68**.
+  - **Standing faults.** `cfront-ptrelem-store.json`, 3, each swept RED.
+
+- **2026-11-28 — O1: `bcir_channel.c`'s JSON skip on an explicit stack; the channel reader under the verified compiler.**
+  - The reader skipped an unknown key's value by recursive descent, which R18 refuses by design. It is now one loop
+    over an explicit stack of the open containers, with the same grammar and the same 64-container bound.
+  - **Evidence.**
+    - The recursive version and this one, differentially, over 20,030 documents across the bound: identical verdicts,
+      8,411 accepted and 11,619 refused.
+    - `test_the_channel_readers_json_skip_is_its_grammar_at_every_depth`: the C reader is held to a reference walk
+      over 3,030 seeded documents.
+  - The ratchet moves to **62 of 68**.
+  - **Standing faults.** `channel-jskip.json`, 7, each swept RED. A trailing comma's own check was an equivalent
+    mutant -- the walk then reads the closer as a value or a key and refuses it all the same -- and was dropped.
+
+- **2026-11-28 — CSUB-5d: `<stdatomic.h>`'s flag on both rails; the quarantine under the verified compiler.**
+  - `atomic_flag` is the built-in untagged one-byte structure, named in the emit by its typedef (Clang's flag is a
+    tagged structure, GCC's is not). Its operations, both forms, are CSUB-4's generics, emitted by their own names; a
+    clear takes no acquire or acq_rel order. Both rails had refused the type.
+  - The quarantine's `weak` is under `__GNUC__`, which neither rail defines: the source's own choice for a compiler
+    that is not GCC or Clang, recorded in the audit.
+  - **Evidence.** `test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails`: the header is one text on
+    both rails for the five targets; 2 units run as Clang's build; 6 forms are refused alike; and the 2 quarantine
+    units lower to one digest.
+  - The ratchet moves to **61 of 68**.
+  - **Standing faults.** `cfront-atomic-flag.json`, 14, each swept RED.
+
+- **2026-11-28 — CSUB-5c: the tools' next forms on both rails; four more tools under the verified compiler.**
+  - **Forms.** Both rails read:
+    - a `for` init's comma expression;
+    - a cast to a pointer type as a base, `((char *)b)[len] = 0`, in every path a parenthesized `(*q)` base takes;
+    - `<string.h>`'s writes and `<ctype.h>`'s functions, as typed libc edges;
+    - POSIX's `<unistd.h>` on Linux.
+  - **`<ctype.h>`** is no header the rails supply: a library may define its functions as macros too (C11 7.1.4p1).
+    glibc does, so an emitted `extern int isspace(int);` beside its header did not compile; the declarations witness
+    found it, and the artifact includes the library's own.
+  - **One twin defect:** a call of the function being defined, whose result is a struct, was typed an unsigned int and
+    refused as the struct's initializer before R18 saw the cycle.
+  - **Evidence.**
+    - `test_a_for_inits_comma_a_cast_base_and_the_string_writes_lower_alike_and_run_as_clangs_build`: 5 units run as
+      Clang's build, 2 forms refused alike, the self-call reaching R18 on both rails, and the 4 tools to one digest.
+    - `test_unistd_is_one_text_on_both_rails_and_the_c_librarys_declarations`: `<unistd.h>` one text on both rails
+      for the five targets; every declared or recognized function's emit compiled beside glibc's headers.
+  - The ratchet moves to **59 of 68**.
+  - **Standing faults.** `cfront-csub5c.json`, 20, each swept RED; FS5, PE17–PE19, ST4, SR1, SR5 and HP14
+    re-anchored and re-swept. HC14 and HC15 (an artifact without `<ctype.h>`) first survived: both witnesses compiled
+    each emit after the source's own include. The linkable emit's header rows now hold it, compiled alone.
+
+- **2026-11-27 — CSUB-5b: the hosted headers on both rails; eight tools under the verified compiler.**
+  - Both rails read `<stdio.h>`, `<stdlib.h>`, `<errno.h>`, `<time.h>` and `<inttypes.h>` as the target's C library
+    declares what the runtime's tools call of it: glibc's `struct _IO_FILE` and `__errno_location` on Linux, the
+    UCRT's `struct _iobuf` and `_errno` on Windows, and each format macro's length modifier. Each call is a typed
+    external edge, a prototype as Phase 3 linking takes; no lowering changed. They had read each as nothing.
+  - **Two twin defects, found by the units the headers let through:**
+    - An anonymous struct was numbered by every aggregate before it, where the oracle counts the anonymous ones, so
+      a cast naming it gave `bcir_cc.c` two digests.
+    - Another unit's or the library's function was declared by the emit's own spelling, `int64_t strtoll(...)`,
+      which conflicts with glibc's `long long`. The twin's type now records an integer's `long`s as spelled.
+  - **Evidence.**
+    - `test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations`: the five headers are
+      one text on both rails for the five targets. Every function they declare lowers alike, and each rail's emit
+      compiles beside glibc's headers as C11 strictly.
+    - `test_the_hosted_profile_lowers_alike_and_runs_as_the_c_librarys_build`: 6 units lower alike and run as the
+      host build against glibc; a `FILE` object and `sizeof(FILE)` are refused on both rails; the 8 units the profile
+      brings in lower to one digest on both rails.
+  - The ratchet moves to **55 of 68**.
+  - **Standing faults.** `cfront-hosted.json`, 16, each swept RED.
+
+- **2026-11-27 — CSUB-4: the atomics API on both rails; `bcir_ring.c` under the verified compiler.**
+  - Both rails read `<stdatomic.h>`'s macros: `ATOMIC_*_LOCK_FREE` (2 on every target of the matrix, held to Clang's),
+    `ATOMIC_FLAG_INIT` and `kill_dependency`. They had read the header as nothing.
+  - Each C11 generic's explicit-order form -- load, store, exchange, the three fetch-ops, both compare-exchanges --
+    lowers as its implicit form's claim, with its memory orders as the claim's immediates, which the digest holds.
+    It is emitted as the explicit call, each order spelled by name.
+  - An order is a constant, read as the fence's is; a variable order is refused as a follow-on. An order the
+    operation does not take (C11 7.17.7) is refused alike; Clang only warns of those.
+  - A generic of any other number of operands is refused in CF-ARGC's words. The oracle had raised an `IndexError`
+    at `atomic_load()`, and the twin lowered a claim of no object.
+  - **On the way, the oracle's pointer casts.** A cast to `unsigned long long *` was emitted `(uint64_t *)` beside a
+    temp declared `unsigned long long *`: on LP64 another type, which GCC 14 refuses. A data-pointer cast is now
+    spelled as its temp is declared.
+  - **Evidence.**
+    - `test_the_explicit_order_atomics_lower_alike_and_run_as_clangs_build`: 7 units lower alike, R18 clean, each
+      rail's emit run as Clang's build and compiled as C11 strictly. Each explicit call spells exactly its claim's
+      orders: a run of one thread cannot tell a relaxed load from an acquire one. `bcir_ring.c` lowers to one digest
+      on both rails.
+    - `test_an_explicit_order_atomic_is_refused_alike_where_its_order_or_its_operands_are_wrong`: 20 forms refused
+      alike.
+  - The ratchet moves to 47 of 68: `bcir_ring.c` is clean.
+  - **Standing faults.** `cfront-atomics-explicit.json`, 24, each swept RED.
+
+- **2026-11-27 — CSUB-3c: the runtime's one copy of its byte-order helpers, `bcir_bytes.h`.**
+  - Fifteen units had each defined their own fixed-width loads and stores. The spellings were `rd16`, `rd32`, `rd64`,
+    `wr16`, `wr32`, `wr64`, `ld32`, `st32`, `read_u32`, `rd32be` and `load64_be`, of three pointer spellings, one
+    `rd16` returning a `uint32_t`. That is one mechanism with fifteen copies (L14).
+  - `runtime/c/bcir_bytes.h` holds the one copy: little- and big-endian loads of every width, little-endian stores of
+    every width, and the big-endian 32-bit store SHA-256's digest writes. Each is a `static inline` function of
+    `<stdint.h>` alone, in the verified subset. The fifteen units include it.
+  - The bytes are unchanged, as the runtime's byte-identity gates hold them. The machine code is not: GCC inlines
+    the `static inline` helpers where it had kept some plain `static` ones out of line.
+  - **Evidence.**
+    - `test_the_byte_order_helpers_are_int_from_bytes_and_lower_alike_on_both_rails`: each function equals Python's
+      `int.from_bytes` or `int.to_bytes` over 64 octet strings. A unit of every function lowers alike on both C
+      front-end rails, R18 clean, and runs as the host compiler's build.
+    - `test_the_runtime_has_one_copy_of_its_byte_order_helpers`: no runtime unit or header but the header defines a
+      static load or store through a byte pointer by the helpers' name shape. The test drivers and fuzzers are out
+      of the scan's declared scope: they keep their own encoders.
+  - The ratchet stays at 46 of 68, each unit at its verdict.
+  - **Standing faults.** `csub-bytes.json`, 14, each swept RED.
+
+- **2026-11-27 — CSUB-3b: `<stdbit.h>` on both rails, and a call's arguments counted (CF-ARGC).**
+  - Both rails read `<stdbit.h>` (C23 7.18) as one text for the target:
+    - the version and the endian macros, `__STDC_ENDIAN_NATIVE__` the target's byte order;
+    - for each of the five standard unsigned types, its fourteen typed functions, `static inline` functions in the
+      subset's own C over the integer builtins both rails lower verbatim. A narrow type's count is taken in the
+      builtin's width and narrowed, a zero argument's count is the width, and `bit_ceil` of a value whose ceiling
+      the type cannot hold is 0;
+    - each type-generic form a `_Generic` of them.
+
+    Neither rail had the header: `stdc_leading_zeros(x)` was a call of an undeclared function on both.
+  - What C23 7.18.1p3 leaves out -- a type-generic form of a signed, `bool`, floating or pointer argument -- names no
+    association, refused alike, now in one set of words; the twin had said `the controlling type`. glibc's
+    type-generic forms check no argument's type, so Clang takes each against them.
+  - **On the way, CF-ARGC.** Both rails had lowered a call of a function with a prototype that passed too few
+    arguments, or too many where it does not end in `...` -- `g()` of a `g(unsigned x)`, `g(k, k)` of it -- to an
+    emit no compiler builds, where Clang refuses the source. That covered a definition, a prototype, a
+    function-pointer object, a member, a table element, a select and a dereferenced designator. Each is refused now,
+    in Clang's words: `too few arguments to function call`, `too many arguments to function call`. The twin counts a
+    direct call's arguments once the unit is parsed, as it types their null pointers (CF-NULLARG). The oracle reads
+    the function type a pointer's value points at through `_fn_type`: a designator's value carries no parameters of
+    its own.
+  - **Evidence.**
+    - `test_stdbit_is_one_text_on_both_rails_and_its_functions_are_c23s`: the text is token-identical on both rails
+      for the five targets. Each of the 70 typed functions, built for the host, equals a Python model of the clause
+      over every single bit, every run of low ones, their complements and the half points of its type.
+    - `test_stdbit_lowers_alike_and_runs_as_the_c_librarys`: 11 units lower alike and R18 clean -- each typed
+      function of each type, each type-generic form of each type, and five idioms (a power-of-two capacity, an
+      integer log2, a bitmap scan, a byte order by the endian macros, a `size_t` count). Each rail's emit runs as the
+      host compiler's build of the source against glibc's own `<stdbit.h>`, and compiles as C11 strictly. 6 forms are
+      refused alike.
+    - `test_a_call_passes_as_many_arguments_as_its_prototype_has_parameters_on_both_rails`: 16 calls refused alike
+      as Clang refuses them, 2 units lowered alike.
+  - The standard-header test leaves `<stdbit.h>` to the C library, as it does `<math.h>`: no Clang resource
+    directory has the header, and glibc spells its type-generic forms through its own helpers. On a glibc host its
+    constants are held to the library's by value and type.
+  - The ratchet stays at 46 of 68.
+  - **Standing faults.** `cfront-stdbit.json`, 25, each swept RED.
+
+- **2026-11-21 — N14: budgeted planning in the C planner.**
+  - Tier 3 of the native port audit: on-target re-planning under a budget, `min M(pi) s.t. R(pi, Theta) <= B`.
+    `bcir_kp_plan_budgeted` (`runtime/c/bcir_kplan.c`) is the twin of `kbcir.rcsp.optimize_constrained`. It runs
+    over the C planner's own offer and edges, with the min-plus relaxation replaced, when caps are given, by the
+    oracle's label DP:
+    - per realization, the non-dominated (score, tracked resources) labels extending the column before's;
+    - an extension past a cap cut;
+    - a dominated label pruned, with ties keeping the first;
+    - the plan the last column's least (score, resources) label.
+
+    The resources are coupled as the oracle couples them: x1.25 heat and power for wide SIMD on a hot machine,
+    x0.75 memory on a vector edge sharing a read operand. The realization is written by the planner's one writer, so its BKPR is the
+    record the oracle encodes.
+
+    The caps are the caller's argument, never a BKPI field, so the record and both its encoders are unchanged.
+    The earlier note that N14 needed the records to carry a budget was wrong. `BCIR_ERR_INFEASIBLE` (26,
+    appended) names `rcsp.Infeasible`, with the claim no label survives. `*labels_kept` reports the labels the
+    plan kept.
+  - **Evidence.** `test_c_rcsp.py` draws 500 cases from the planner corpus: every example program and generated
+    module under every target, Theta and policy. Each case is planned five ways: with no cap, under three budgets
+    of one to three capped dimensions scaled from the unconstrained plan's own resources, and under one cap at a
+    point of the oracle's own Pareto front. That is 2,500 plans:
+    - 1,188 planned, each `optimize_constrained`'s BKPR octet for octet, 135 of them where the budget binds;
+    - 1,312 refused as infeasible at the oracle's claim;
+    - every one keeping the oracle's labels, 228,251 in all, counted off `rcsp._insert`'s slot lists;
+    - with no cap, each `bcir_kp_plan`'s plan byte for byte.
+
+    `test_kplan --api-budget` holds what the oracle cannot state, each refusal zeroing the output:
+    - too many caps;
+    - a dimension past `cost.DIMS`, or falling or repeated dimensions;
+    - label storage absent, or short of the plan's columns.
+
+    The `rcsp` section runs both.
+  - **Standing faults.** `rcsp.json`, 18, each swept RED. The first sweep left RC12 standing: a dominated label
+    kept in its slot changes no plan, because the least label is the same. The planner now reports the labels
+    it kept, and the test holds that count to the oracle's. The planner's own table (`planner.json`) was still
+    swept RED over the edited unit. `bcir_kplan.c` still compiles clean under `bcir-cc`.
+  - **What it reopens.** PORT-7's third condition (deltas that carry Theta) now has its budgeted DP in the
+    oracle, the law rail and C. A delta chain re-planning under a budget remains a consumer to be named before
+    N6 is reopened.
+
+- **2026-11-21 — N13: the telemetry export's Prometheus exposition, in freestanding C.**
+  - Tier 3 of the native port audit: the body a native telemetry or ledger service returns to `GET /metrics`.
+    `runtime/c/bcir_prom.c` is the twin of `to_prometheus` (`bcir/telemetry_export.py`), octet for octet: the
+    availability block (one `bcir_signal_up` series a signal, labelled from its definition when one is known),
+    each reading's HELP (the description with newlines folded and Python's whitespace -- `str.isspace()`'s set,
+    NEL, NBSP and the Unicode spaces among it -- stripped from both ends, or the definition's name), TYPE and
+    value, the sensitivity ranking, and the integrity witness (the frame counters and the frame-order gauge only
+    when a frame counter is nonzero, as the oracle decides). Names map to Prometheus's charset as
+    `sanitize_metric_name` maps them, one `_` a code point; label values escape a backslash, a quote and a newline.
+    The text is measured, then written only when it fits.
+  - **Integers only, on purpose.** A native exporter carries what native sources measure -- counters, levels,
+    milli-unit ratios -- and the oracle writes an integer as `str(int)`. A float's text is Python's shortest
+    round-trip `repr`, which the C does not reimplement, so float series and the T3 derived metrics stay the
+    oracle's; so do the OTLP push and the Redfish report, which are hosted adapters' JSON. The signals come in the
+    oracle's order, names strictly ascending by octet (code point order) and UTF-8, or the C refuses them.
+  - **Evidence.** `test_c_prom.py`: over 600 generated snapshots -- names with dots, a leading digit, non-ASCII and
+    astral code points; descriptions with newlines and Python's whitespace at both ends; label values with
+    quotes, backslashes and newlines; counters and gauges; signals that read and that do not, with a known
+    definition and without; values across int64 -- with and without the sensitivity ranking and the witness,
+    `test_prom FILE` writes `to_prometheus`'s text octet for octet (962,888 octets). `test_prom.c` holds what the
+    oracle cannot state: a short output (its length, nothing written), names out of order or not UTF-8, a reading
+    without its definition, every NULL, a known snapshot's text, witness counters past 2^63 printed unsigned. The
+    `prom` section runs the comparison.
+  - **Standing faults.** `prom.json`, 28, each swept RED; two survived the first sweep -- a frame counter alone as
+    frame evidence, which the corpus never drew until it drew each counter alone, and a short output's write that
+    was an equivalent mutant, replaced by the real hazard (writing while measuring). `bcir_prom.c` compiles clean
+    under `bcir-cc` once its UTF-8 decoder's comma-operator statements were split (the ratchet: 46 of 68 units).
+
+- **2026-11-21 — N11: device manifests bound at instantiation, in freestanding C.**
+  - Tier 3 of the native port audit: an instance binds its device's static hardware schema (D-R1) from the persisted
+    envelope the planner was given when it starts, rather than from a header generated per device.
+    `runtime/c/bcir_devman.c` is the twin of `load_device_manifest`, `check_device_manifest` and `probe_agree`
+    (`bcir/kbcir/device_manifest.py`). One JSON reader on both rails, as the tokenizers have: the bounded JER reader
+    under one limits profile (`MANIFEST_LIMITS` on the oracle's, `bcir_devman_limits` on this rail) -- three levels
+    of nesting are all the schema has, 256 elements an array bound the banks, a row and the rows, 18 digits an
+    integer, so every integer either rail admits is an int64 -- then UTF-8, then the grammar, with no member name
+    repeated and no NaN. Then the oracle's laws in its order, each refusal its own code with the bank or row it
+    names; the digest re-derived over `json.dumps(..., sort_keys=True)`, which the C writes octet for octet,
+    ASCII-escaped as Python escapes it (the short escapes, `\u` in lowercase hex, an astral code point as its
+    surrogate pair, DEL escaped); `check_device_manifest`'s consistency laws as bits. The binding is the bank
+    table `bcir_dma_admit` and `bcir_kv_init` take, and `probe_agree`'s veto: what a probe observed equals the
+    manifest or the instance refuses to run; discovery never steers.
+  - **The oracle's two changes.** `load_device_manifest` reads through the bounded reader, so the oracle now
+    refuses, as malformed, what the reader refuses and `json.loads` took: NaN, an escaped lone surrogate, an
+    integer past 18 digits, an array past 256 elements, nesting past 8 -- each of which it refused later before
+    (as a type, the digest or a bank's shape) or, for a lone surrogate in a name, carried into the digest. And the
+    calibration generation is compared with the caller's only when it is an integer: a `true` or a `3.0` is
+    refused as a type, not as stale. Both are refusals moved earlier or renamed; no envelope the oracle loaded is
+    refused, and none it refused now loads.
+  - **Evidence.** `test_c_devman.py`: over 40 generated manifests -- names with quotes, backslashes, control
+    characters, DEL, non-ASCII and astral code points, every domain, capacities to 10^17 -- saved as the oracle
+    saves them and respelled (other key orders, compact, raw UTF-8), loaded with and without the expected target
+    and generation, and 55 to 59 mutations of each reaching every refusal -- 2,706 envelopes, 2,473 refused -- `test_devman FILE` gives
+    `load_device_manifest`'s verdict for every envelope: the banks and the re-derived digest, or the refusal, its
+    bank or row and each consistency kind. Each of 240 generated views against the bound table gets `check_strided_view`'s
+    verdict bit for bit, and each of 160 probes `probe_agree`'s vetoes and message count. `test_devman.c` holds what the
+    oracle cannot state: a short workspace or bank table -- the workspace asked for only after the scan, sized by
+    what it counted, so a short one never hides the reader's refusal, and the smallest that loads never written
+    past -- a tile past 32 bits, a known envelope's digest, every NULL. A libFuzzer target, `fuzz_devman`, re-seals a tampered envelope's digest to reach the laws and the
+    binding, and holds whatever loads to them. 1,000,000 runs from saved envelopes, no finding. The `devman` section runs the comparison.
+  - **Standing faults.** `devman.json`, 40, each swept RED. `bcir_devman.c` compiles clean under `bcir-cc` (the
+    ratchet: 45 of 67 units). On the way: DV2 (the scan skipped) first survived, the parse enforcing most of
+    the same limits; an envelope past the scan's node bound now separates them, and that case showed the
+    workspace was asked for before the scan, so the C answered SPACE where the oracle answered malformed.
+  - **What stays the oracle's.** `move_cost`, `move_claim` and `check_bank_moves` are the planner's: they price and
+    check claims, which an instance does not plan.
+
+- **2026-11-21 — N10: the serving loop's control plane in freestanding C.**
+  - Tier 3 of the native port audit, the part of serving that needs no hardware: what a native server runs beside
+    the decoder's numerics, which stay `bcir_decode.c`'s and `bcir_llama.c`'s. `runtime/c/bcir_serve.c` is the twin
+    of `PagedKV`'s registry acts (`bcir/frontends/models/paged_kv.py`) and of the token schema
+    (`bcir/frontends/models/serve.py`). The page table: construction is allocation, each page a strided view
+    admitted against its bank by `bcir_dma_admit` (D-R4, N12's admission) before any token flows, the first page
+    refused named with its admission's bits and nothing written; a row past the capacity refused
+    (`gem.kv_cache`'s law); each row bumping the `data_gen` of the page that owns it (R11's currency); eviction,
+    refused while the session is live because attention is full-context, bumping the page's `map_gen` and freeing
+    its view. The schema: `check_token_dfa`'s verdict as bits, one per kind of message, and one constrained step,
+    `_masked_argmax` and the state's edge -- ties to the lowest id, a NaN never displacing the token before it,
+    a state that admits no token refused as a deadlock. The DFA has one spelling in C, runs of (token, successor)
+    delimited by offsets, each run ascending, so a repeated token is adjacent to its twin and the oracle's
+    first-entry edge map is the reader's; a falling run and offsets that delimit no runs are refused, neither of
+    which the oracle's tuples can spell. Freestanding, no heap, no recursion; page arithmetic past 64 bits is a
+    refusal.
+  - **Evidence.** `test_c_serve.py`: over 160 generated decoders (one to three layers, MHA and GQA) on generated
+    manifests, `test_serve FILE` gives PagedKV's construction refusal for refusal (every kind reached, 78 tables
+    refused at a page's view) and its state after each of 1,078 rows, 115 evictions and every refused row, lookup and
+    eviction of sessions driven past their capacity; over 400 generated schemas (202 admitted, 198 refused, every
+    kind of message but the two bounds, which the contracts hold), `check_token_dfa`'s verdict, 1,200 constrained
+    steps -- the oracle's token and successor -- and 105 deadlocks, over logits with ties, infinities and NaNs. `test_serve.c` holds what the oracle
+    cannot state: too few page records say how many are needed and write nothing, page arithmetic past 64 bits,
+    the schema's layout and order, its transition bound at 2^20 and one past it, every NULL. The `serve` section
+    runs both. Not reachable through either rail, and so not faulted: a row into an evicted page (eviction waits
+    for a complete session, which takes no more rows).
+  - **Standing faults.** `serve.json`, 34, each swept RED. `bcir_serve.c` compiles clean under `bcir-cc` (the
+    ratchet: 44 of 66 units).
+  - **What stays the oracle's.** The session modules, the split and batch certificates, the streaming broker and
+    the provenance manifest are planning and records over the claim graph, not the serving loop's run-time path.
+
+- **2026-11-21 — PORT-10: the GO/STOP for a native kernel lowering in MLIR (N8). STOP.**
+  - The port audit put N8 behind a GO/STOP written after PORT-5;
+    [`BCIR_N8_NATIVE_LOWERING_GO_STOP_2026-11-21.md`](research/BCIR_N8_NATIVE_LOWERING_GO_STOP_2026-11-21.md) is
+    it. The lowering it would port is one claim wide (`lower_contract`); the C backend is already a second path to
+    LLVM, held to one alias-fact set by `alias.backends.disagree`; and no slice the master roadmap schedules
+    generates code at run time. A native emitter would be a third realization of a one-claim contract for no
+    consumer.
+  - It reopens when a runtime consumer is scheduled (driver roadmap §7.5's small verifiable slices), when the
+    lowering contract widens past the straight-line claim, or when the Python emitter is scheduled for retirement
+    (CXX7), and the record says what PORT-10 contains then.
+  - Where the rest of the PORT order stands: PORT-6's first slice landed (`kbcir.csp`); PORT-7 (N6) and PORT-8
+    (N9's planning half) are not started; PORT-9 (N7) waits on IF-1 and IF-2, as the audit's N7 row says.
+
+- **2026-11-21 — PORT-8's first slice: the optimization memory's hard rail in C.**
+  - N9's planning half, measured before it was moved. The native optimization-memory query
+    (`NativeOptimizationIndex`) ran its hard-fact filter in Python before the C top-k, and the filter was
+    the query: 2.40 of 2.50 ms at 4,096 patterns, 0.59 of 0.66 ms at 1,024. `bcir_ai_facts_admit`, beside
+    `bcir_ai_q15_topk` in `runtime/c/bcir_ai_kernels.c`, admits a pattern exactly when every fact it requires
+    is active -- each pattern's facts as indexes into the canonical fact list, computed once when the index
+    is built; the query's active facts as a byte mask -- and refuses every malformed input before it writes
+    the mask. The oracle's boundary is split in two (`_check_optimization_query`, shared; the oracle's own
+    eligibility after it), so the checks are one function on both paths and the oracle's answers are
+    unchanged. The query is now 0.156 ms at 4,096 patterns, 0.09 ms at 1,024 and 0.067 ms at 256
+    ([`measurements/2026-11-21/omem-facts/`](research/measurements/2026-11-21/omem-facts/README.json), wall
+    class, indicative).
+  - **Evidence.** `test_native_fact_admission_is_the_oracles_hard_rail`: over generated memories (no facts,
+    patterns needing none and up to five, active sets from empty to whole, 1 to 512 patterns), the C mask is
+    the oracle's verdict for every pattern and the native index answers 60 queries as the oracle does, both
+    verdicts reached in the hundreds. `test_ai_kernels.c`'s `facts_admit_test`: one missing fact refuses a
+    pattern, a pattern needing nothing is admitted, and each refusal (a NULL, no pattern, offsets that do
+    not start at 0, fall or end past the ids, an id past the facts, an active byte of 2, too many patterns)
+    leaves the mask as it was; the harness passes under ASan and UBSan.
+  - **Standing faults.** `ai-facts.json`, 10, each swept RED.
+  - **The rest of N9.** HAM's route planning (`kbcir.ham`, 1,553 lines) stays the oracle's: its input is an
+    attested `HardwareEnvelope`, which has no native producer before HMF-D0's capability adapter, and the
+    master roadmap's item 6 keeps native HAM behind the driver evidence. Context-shard activation
+    (`kbcir.context_shard`) is manifest work over hosted artifacts, for the AI system's services.
+
+- **2026-11-21 — PORT-7: N6, a native incremental engine -- STOP.**
+  - [The GO/STOP](research/BCIR_N6_INCREMENTAL_ENGINE_GO_STOP_2026-11-21.md), measured
+    ([`measurements/2026-11-21/n6-incremental/`](research/measurements/2026-11-21/n6-incremental/README.json)):
+    on the planner audit fixture's one-claim deltas, the C planner's whole plan takes 0.16 ms at 512 claims
+    and 10.5 ms at 32,768 (about 0.32 µs a claim); the oracle's incremental planner takes 0.18 ms and
+    2.1 ms; the oracle from scratch 6.5 ms and 312 ms. A native incremental engine would save at most the C
+    whole plan per delta, to a consumer that does not exist -- the deltas v0 admits are replacements under a
+    fixed Θ, and on-target re-planning (N14) re-plans on a change of Θ -- and would add a fourth spelling of
+    a DP the oracle, `bcir_kplan.c` and `-bcir-plan` already hold. It reopens on a native consumer with a
+    budget the C whole plan misses, on modules past that budget's size, or when deltas carry Θ; GO is the C
+    planner's own DP keeping its columns, not a C++ re-implementation.
+
+- **2026-11-21 — N12's run-time half: DMA programs from strided views, in freestanding C.**
+  - Tier 3 of the native port audit, the part that needs no hardware: what a driver needs when it moves bytes.
+    `runtime/c/bcir_dma.c` is the twin of `check_strided_view` (D-R4: the strided view the only allocation
+    currency at the driver seam) and `dma_descriptors` (A2: a view pair compiled into a scatter-gather ring).
+    Admission refuses what the oracle refuses and says why as bits, one per message the oracle writes -- the early
+    refusals alone; the alignment, the capacity and each of the two innermost extents against the native tile
+    together. The ring is each view's runs (a unit innermost stride coalesces its last dimension, anything else is
+    per element) paired by the two-pointer byte walk, merged while both sides stay contiguous, after the pair's
+    refusals: either view's admission, unequal shapes or widths, one bank's overlapping spans. Freestanding, no
+    heap, no recursion (an odometer); every product checked, so arithmetic past 64 bits is a refusal where the
+    oracle's integers would not wrap. The pricing, the transfer module and `kbcir.events`' laws stay the oracle's
+    and the law rail's: they are planning, not the run-time path.
+  - **Evidence.** `test_c_dma.py`: over 25 generated manifests and 1,000 view pairs -- ranks to 3, dense, gapped,
+    scattering and random strides, aligned and not, inside, at and past each bank's last byte, on and off the
+    native tile, one bank and two -- `test_dma FILE` gives the oracle's admission bit for bit (2,150 views) and its
+    ring descriptor for descriptor (7,365 in 174 rings) or its refusal (every kind reached). `test_dma.c` holds what
+    the oracle cannot state: a ring past its capacity says the length it needs and writes no further, arithmetic
+    past 64 bits, every NULL. The `dma` section runs both.
+  - **Standing faults.** `dma.json`, 17, each swept RED. `bcir_dma.c` compiles clean under `bcir-cc` (the
+    ratchet: 43 of 65 units).
+  - **Where the rest of Tier 3 stands.** N10 (native serving), N11 (device manifests bound at instantiation), N13
+    (telemetry export) and N14 (`kbcir.rcsp`, budgeted re-planning) are not started; N14 needs the planner records
+    (BKPI) to carry a budget on both rails before the C planner's DP can take one.
+
+- **2026-11-21 — The native data loader: token shards, and batches straight into the trainer's arrays.**
+  - The trainer took its token ids from Python; this is the C subset audit's loader, the last of its three native
+    additions. A BTKS shard (version 0) is one token sequence at 2 or 4 bytes a token, addressed by the SHA-256 of
+    its payload -- its generation -- and `runtime/c/bcir_tokload.c` opens one only whole: header, exact length,
+    every token below the vocabulary, the digest (on the hardware path the probe allows), before a token is read,
+    and reads it in place. The loader's windows are T + 1 tokens with one shared between neighbours, as the hosted
+    token source's rows are; sample p is window perm_e[p mod N] of epoch p / N, perm_e the RNG's Fisher-Yates
+    permutation under the loader's key on stream e; batch b is samples [bB, (b + 1)B), written into the trainer's
+    `tokens` and `targets`. A batch is a function of its index alone, so a run resumes exactly. Freestanding; the
+    permutation's workspace is the caller's. `bcir-tokload` (hosted) packs shards and maps them from files
+    (`mmap` where the host has it, the hosted allocator where it has not). The oracle is
+    `bcir/frontends/models/token_shards.py`, which states the format. `bcir_tokload.c` compiles clean under
+    `bcir-cc` (the ratchet: 42 of 64 units); `bcir-tokload` waits on CSUB-5's `<stdio.h>`, as the other tools do.
+  - **Evidence.** `test_c_tokload.py`: the oracle's laws (an epoch visits every window once, a batch is its
+    index's alone, neighbours share a token, the unshuffled walk is shard order); `bcir-tokload pack` writes the
+    oracle's octets at both widths; `info` answers as `open_shard` does over shards and every field's corruption;
+    `batch` prints the oracle's rows over generated corpora -- short shards, contexts and sizes to small bounds,
+    shuffled and not, batches straddling epochs and next to the last sample -- and its refusals the oracle's codes.
+    `test_tokload.c` holds the C contracts: every refusal leaves the caller's shard as it was, an exact resume
+    across epochs, the last sample's index. `fuzz_tokload.c` feeds hostile shards, also with their digests made
+    whole so the token checks and the loader are reached. The `tokload` section runs the harness and the tool.
+  - **Standing faults.** `tokload.json`, 19, each swept RED; the two on the oracle are caught by its own laws (a
+    shard of 40 tokens holds 9 windows of 5, and epoch 1 is not epoch 0 again).
+
+- **2026-11-21 — The hardware digests: SHA-256 and CRC-32 on the CPU's own instructions.**
+  - CRC-SLICE took the portable half of the digest work; this is the hardware half the C subset audit names.
+    `runtime/c/bcir_digest_hw.c` computes the SHA-256 of `bcir_sha256.c` on SHA-NI or the ARMv8 SHA-2
+    instructions, and the CRC-32 of `bcir_crc32.h` by carry-less-multiply folding (Gopal et al., Intel, 2009:
+    four lanes of sixty-four bytes down to sixteen, which the slicing-by-8 table reduces) or the ARMv8 CRC32
+    instructions. The portable code stays the reference and the default: every existing call site keeps it, and a
+    caller opts in with the mask `bcir_digest_probe` returns (CPUID; Linux's auxiliary vector on AArch64), so no
+    call probes and nothing is global. Freestanding. Under `bcir-cc`, which predefines neither `__GNUC__` nor an
+    architecture, the unit is its portable branch and compiles clean (the ratchet: 41 of 62 units); the vector
+    code stays behind the fallback boundary.
+  - **Evidence.** `test_c_digest_hw.py`: the fold's four constants are x^544, x^480, x^160 and x^96 modulo the
+    polynomial, derived and read out of the source (and the published pair); every path the probe reports, one at
+    a time and together, answers as `hashlib` and `zlib` do over every length to 300 bytes and longer messages from
+    running CRC states, and a witness build shows the forced path did the work and a bit the build does not carry
+    ran nothing; the probe's mask is the one `/proc/cpuinfo` gives. `test_digest_hw` runs FIPS 180-4's vectors
+    (the million `a` in uneven pieces) and zlib's check value on every path, and each path against the portable
+    code from every alignment and every split of an update. The `digest_hw` section runs both. On this host
+    (an x86-64 VM; [`measurements/2026-11-21/digest-hw/`](research/measurements/2026-11-21/digest-hw/README.json),
+    wall class, indicative): SHA-NI 5.2 to 6.9 times the portable SHA-256, the fold 10.9 to 13.1 times the CRC.
+    The AArch64 paths are compiled here by Clang 18 and 23 and run natively on CI's ARM runner; no AArch64 time
+    is claimed.
+  - **Standing faults.** `digest-hw.json`, 16, each swept RED: the SHA-NI byte order, schedule, round pairing,
+    feed-forward and state lanes; the length's bulk blocks and a buffered block skipped; the fold's state, its
+    constants, its high halves, its lanes' order, its reduction and its threshold; the probe's PCLMULQDQ bit; a
+    bit the build does not carry run. An AArch64-only fault cannot be swept on this host and is not claimed.
+
+- **2026-11-21 — The counter-based RNG: Philox4x32-10 in freestanding C, and its oracle.**
+  - The C rail had no random-number generator; native weight initialization, sampling, dropout and shuffling all
+    went through Python (the C subset audit's first native addition). `runtime/c/bcir_rng.c` is Philox4x32-10 --
+    a key plus a counter and no hidden state, so element `i` of a stream is one number whatever thread or batch asks
+    for it -- with the streams over it: a 64-bit stream id beside the key, element `i` lane `i & 3` of block
+    `i >> 2`; fills; floats in [0, 1) from the top 24 or 53 bits, exact; bounded integers by multiply-and-shift
+    with rejection (Lemire); and Fisher-Yates permutations, the data loader's shuffle. Freestanding: no allocation,
+    no libc. `bcir/frontends/models/rng.py` is its oracle.
+  - **Evidence.** Both rails give the generator's published known answers (Random123's three Philox4x32-10
+    vectors: Salmon, Moraes, Dror and Shaw, SC11). `test_c_rng.py`: the C driver answers 1,309 generated requests
+    as the oracle does -- blocks at the counter space's corners, fills from every lane offset and up to its last
+    element, bounded draws across the rejection band, permutations, both float conversions -- and reaches the
+    rejection loop. `test_rng.c` holds the contracts; the `rng` section runs both. `bcir_rng.c` compiles clean
+    under `bcir-cc`: the ratchet is 40 of 61 units.
+  - **Standing faults.** `rng.json`, 17, each swept RED. A band one short (2^32 - 1 mod the bound) differs
+    only at a power-of-two bound, so the corpus draws below 2^30 and 2^31; and every oracle entry checks its
+    request before it draws, so a fill of 0 or a bound of 0 refuses a bad stream as a draw does.
+
+- **2026-11-21 — PORT-6, first slice: the exact finite-domain solver (`kbcir.csp`) in the hosted C++ library.**
+  - G28's integer CSP / ILP rail -- the one exact rail a problem spanning schedule and memory has -- ran in Python
+    only. `runtime/cpp/bcir_csp.cpp` behind `bcir_csp.h` is `csp.solve` node for node: bounds consistency on each
+    linear row, the compulsory-part timetable on each cumulative, the disjunction on each rectangle pair, the
+    incumbent's objective as a cut, the narrowest open domain of the lowest priority split at its floor midpoint, the
+    lower half first, a fixed node a solution only where the definitions agree, a budget of nodes. It draws on the
+    memory and errors PORT-5 laid down, now one header for the library (`bcir_solver.hpp`).
+  - Two changes of representation, neither of meaning. The cumulative's timetable is sorted intervals where the
+    oracle keeps a set of instants, so its cost is no longer the domain's width. Integers are 64 bits where the
+    oracle's are unbounded, so a model whose arithmetic could leave 62 bits is refused (`BCIR_CSP_ERR_RANGE`) --
+    bounds, offsets, durations and heights within 2^60, each row's and the objective's weighted bound sum within
+    2^61 -- never wrapped.
+  - **Evidence.** `test_cpp_csp.py`: `test_csp FILE` prints the oracle's answer over 1,308 runs -- every model the
+    oracle's own tests generate (`random_model`, the joint schedule x memory regions), bare and seeded with an
+    assignment a short search found, under six budgets -- reaching every stop; every assignment it returns satisfies
+    the model by the oracle's definitions, and every closed search's objective is brute force's. `test_csp.cpp`
+    holds the refusals, the budget's bound, a seeded and a refused incumbent, term merging, determinism and every
+    allocation refused in turn. `fuzz_csp.cpp` enumerates each small model itself and holds every answer to that
+    optimum under libFuzzer, ASan and UBSan. `tools/cpp/check_solver.sh` now builds and runs both solvers.
+  - **Standing faults.** `cpp-csp.json`, 30, each swept RED. Two more survived as equivalent mutants and were
+    dropped: the timetable's overload check, which the per-task scan repeats (a task whose compulsory part holds an
+    overloaded instant is blocked at every start), and a tie replacing the best, which the cut never lets through.
+    The sweep also found a scan fault that never terminates, reworded to one that does, and two contract cases
+    refused for a second reason, isolated. The inventory gains its third C++ twin. N5's other
+    solvers (`gem.dispatch`, `gem.diff`, `kbcir.joint`, regions, dataflow, expectation, io_bounds, objectives,
+    scope, static memory, movement) stay Python's, the port audit's PORT-6 row the place they are counted.
+
+- **2026-11-20 — PORT-5: the hosted C++ solver library, and `gem.exact` in it at parity.**
+  - The GEM+ solver portfolio (N5 of the native port audit) had no native form. `runtime/cpp/bcir_exact.cpp` is the
+    hosted solver library's foundation and its first solver, behind a C ABI (`bcir_exact.h`): records in, a
+    placement and its certificate out, a status for every refusal. It is C++23 -- the manifest now names a C++
+    unit's standard, `cxx_standard`, 17 when absent -- and every allocation goes through the caller's
+    `bcir_host_allocator`, one arena per phase. Inside, a failure is a value (`bcir::expected`, `std::expected`
+    where the standard library has it); the C entry point catches what the standard library may throw. The object
+    exports one strong symbol and constructs no global state.
+  - The solver is `exact_schedule`'s branch-and-bound step for step: the root bound stack, the node bound, the twin
+    and empty-stream symmetry rules, the child order, the stack discipline, the budget the phases share and the
+    pending phases after a stop. A run spends the oracle's expansions and stops where it stops. The heuristic
+    placement each phase starts from is the caller's (the artifact's `schedule_eft`), and the façade checks that it
+    is a schedule of the phase spanning the heuristic, since the search returns it certified when nothing beats it.
+  - **What the gates found.** The allocation-failure campaign's first run crashed inside the standard library:
+    `std::pmr::unsynchronized_pool_resource` (libstdc++ 13, and 16 under Clang 23) does not survive its upstream
+    refusing its first allocation -- the next allocation reads a pool it never finished building. Reproduced in
+    isolation, so the library's arena is its own: `phase_arena`, power-of-two classes over the caller's allocator,
+    unchanged by a refused refill. The fuzzer then found an input outside the oracle's domain, a claim the tail and
+    a wave stream could both take, for which the work bound is no bound. The oracle's dispatch never gives one, and
+    the façade refuses it.
+  - **Evidence.** `test_cpp_exact.py`: `test_exact FILE` prints the oracle's text over 7,430 runs -- the six-job
+    fixture under every fourth duration vector, 240 random modules on two targets and one to three domains, 60 on
+    targets whose bandwidth knee is below their domains (8 and 128), the quality corpus, five budgets from 0 to
+    past closing -- and every placement it returns is checked by code that shares nothing with the solver.
+    `test_exact.cpp` holds every refusal, the budget's stops and pending phases, determinism and each of a run's
+    allocations refused in turn (NOMEM, nothing live). `fuzz_exact.cpp` holds the façade's invariants under
+    libFuzzer, ASan and UBSan, and replays a fixed stream where libFuzzer is absent. `tools/cpp/check_solver.sh`
+    (CTest `cpp-solver`, the library's gate) builds it all warning-clean under C++23 without RTTI on GCC 13, Clang 18
+    and Clang 23 and runs it.
+  - **Standing faults.** `cpp-exact.json`, 25, each swept RED. Five more survived as equivalent mutants and were
+    dropped: a phase after a stop searched with the budget it has left, which is none; a stopped phase's bound
+    without the root, which every stack bound already holds; a tie taking the incumbent and a child at the
+    incumbent's bound kept, which pruning never lets reach the comparison; and the root's early close, which the
+    first pop makes anyway. The sweep also found two contract cases refused for a second reason and a corpus thin
+    in phases whose knee is below their domains; both were fixed before the faults were re-swept. The inventory
+    gains its second C++ twin. Not yet wired into a planning path: when a planner takes a native solver, its plan
+    goes to the C verifier's R9 and the pack's R10/R11, as the port audit's rule 5 says.
+
+- **2026-11-20 — PORT-4: the event transducer in C.**
+  - Driver-packet ingestion had no executable transducer or grammar-to-claims parser in C (N4 of the native port
+    audit). `bcir_etl.c` ports the three oracle modules, freestanding: the finite-state transducer (`etl.fsm`), the
+    event descriptors (`etl.events`) and the mini-ROP grammar (`etl.parse`). Strings are (pointer, length) pairs,
+    every output goes to a buffer the caller sized, nothing allocates, and each refusal names the element, field or
+    offset the oracle's exception names. `bcir-etl` spells each verdict in the oracle's words.
+  - **Defects at the base and closed, on the oracle.** An unknown lane or stride raised a `KeyError`, a traceback and
+    no verdict; a count past the signed 64-bit wire domain was taken; a second `reads` replaced the first and kept the
+    resources it had named, read by no claim; an unknown statement was placed at the token after it. Each is a
+    `ParseError` at its own token now, on both rails.
+  - **Evidence.** `test_c_etl.py`: `bcir-etl` == the oracle over 601 programs (hand-written, generated, mutated), 312
+    machines and their runs, and 300 descriptors, and the corpora reach every verdict. `test_etl.c` holds every output
+    buffer one short and every NULL; `fuzz_etl.c` ran 16.6 million inputs under libFuzzer, ASan and UBSan with no
+    finding. `bcir_etl.c` compiles clean under `bcir-cc`, so the ratchet is 39 of 60 units (the tool, a hosted CLI,
+    waits on CSUB-5's `<stdio.h>`).
+  - **Standing faults.** `etl.json`, 23, each swept RED. A 24th, a run that accepts in a state both accepting and an
+    error, survived as an equivalent mutant: `bcir_fsm_compile` refuses such a state, as the oracle does, so no run
+    reaches it; the C line keeps the oracle's form. The inventory goes to 73 twinned modules (C 54).
+
+- **2026-11-20 — PORT-3: the timing laws R19 and R20 on the C verifier, and a statement's timing in C source.**
+  - R19 (synchronous timing) and R20 (clock-domain crossing) had run on the oracle and the law rail only, over a
+    claim's optional timing, which no C front end could give one. Neither rail took an attribute before a statement
+    at all.
+  - A C23 attribute run now leads a statement and a block declaration on both rails, and a member's on the twin as on
+    the oracle; a standard attribute is dropped. `[[bcir::timing(field = value, ...)]]` gives every claim the
+    statement lowers the model's `Timing`. `__has_c_attribute(bcir::timing)` is 1 on both preprocessors, so a unit
+    Clang builds too guards it. The cross-rail canon holds each claim's timing (`|t:...`); a unit without one keeps
+    its canon byte for byte.
+  - `bcir_verify_unit` refuses a unit that breaks either law, in the oracle's words, and `bcir_verify_timing` lists
+    every diagnostic. The oracle's pipeline runs `verify_timing` per function into its verdict, where it had run
+    none. `bcir-cc` refuses such a unit, naming the law.
+  - **CF-VENDORATTR, a defect at the base and closed.** Both rails dropped every attribute a run held; on the oracle
+    `[[gnu::aligned(8)]]` and `[[gnu::packed]]` laid a struct out at offsets Clang's are not (`sizeof` 8 where Clang's
+    is 16 and 5). A vendor's attribute is refused alike now, unless it is a GNU or Clang hint both rails know
+    (`gnu::const`, `gnu::hot`), which is dropped as a standard one is.
+  - **Evidence.** `test_a_timing_annotation_gives_its_statement_s_claims_the_timing_laws_on_both_rails`: 26 units
+    lower digest-equal with each rail's emit run as Clang's build; 7 units break R19 or R20 and both verdicts refuse
+    them, the twin's every diagnostic the oracle's; 36 malformed or misplaced timings are refused alike in one set of
+    words. `test_has_c_attribute_answers_the_timing_attribute_alone_on_both_rails` beside it, and
+    `test_a_vendor_attribute_is_refused_alike_where_both_rails_had_dropped_its_meaning`: 7 vendor forms refused alike,
+    3 units of hints lowered alike, `cfront_reproducible.c`'s `gnu::const` among them.
+  - R20 follows the claim graph's resources, function by function, as the oracle defines it: a crossing between two
+    functions through a global, or through memory a pointer reaches, is not one it sees.
+  - The ratchet stays at 38 of 58.
+  - **Standing faults.** `cfront-timing.json`, 30, each swept RED.
+
+- **2026-11-20 — CSUB-3a: `<stdckdint.h>` on both rails.**
+  - Both rails read `<stdckdint.h>` as Clang and GCC write it: `ckd_add(R, A, B)` is
+    `__builtin_add_overflow((A), (B), (R))`, and `ckd_sub` and `ckd_mul` alike. The standard-header test holds each
+    rail's expansion to the other's and to Clang's on every target.
+  - The three builtins lower as the integer builtins do: verbatim, opaque to R18, each a `bool`, true when the
+    mathematical result does not fit `*R`, which takes it wrapped. Neither rail had the header or the builtins.
+  - The builtins' constraints are refused alike, as Clang refuses them: a `bool`, floating or pointer operand, a
+    result that is no pointer to an integer, any other arity. A result through a pointer to `_Atomic` or volatile
+    storage is refused as a follow-on; Clang takes the volatile one.
+  - **Evidence.** `test_checked_arithmetic_is_the_overflow_builtin_on_both_rails`: 10 units lower alike and R18 clean.
+    Each rail's emit runs as Clang's build of the source -- the wrapped result and the flag -- and compiles as C11
+    strictly. 9 forms are refused alike, 8 of them as Clang refuses them.
+  - The ratchet stays at 38 of 58.
+  - **Standing faults.** `cfront-ckd.json`, 11, each swept RED.
+
+- **2026-11-20 — CSUB-5a: the `<string.h>` reads are libc edges on both rails.**
+  - `memcmp`, `strcmp`, `strncmp`, `memchr`, `strchr`, `strrchr`, `strstr` and `strlen`, freestanding since C23
+    (4p7), are called verbatim, opaque to R18 and never renamed, as `memcpy` is. Each is typed by its declared
+    result: a comparison's `int`, `memchr`'s `void *`, a string search's `char *`, `strlen`'s `size_t`.
+  - Both rails had read each as a call of an undefined function, and R18 refused the unit. The oracle had typed the
+    result an `int32_t`.
+  - One set names every `<string.h>` routine either rail calls: the oracle's `_STRING_CALLS`, the twin's
+    `string_read` and `str_calls`. The linkable artifact includes `<string.h>` for each and never `<math.h>`, and the
+    link-flag map knows each as libc.
+  - **Evidence.**
+    - `test_a_string_read_is_a_libc_edge_on_both_rails`: 15 units lower alike and R18 clean. Each rail's emit runs
+      as Clang's build of the source and compiles as C11 strictly, two of them where each result's type shows in
+      its value (`strlen(s) - 20 > 0`, `strcmp("a", s) < 0`). A unit's own definition of a name is its function.
+    - The CF-RTWIDE linkable test's `string reads` entry: both rails' artifacts compile with implicit declarations
+      refused.
+  - The ratchet is **38 of 58**: `bcir_spm.c`, `bcir_bpe.c`, `bcir_verify.c`, `bcir_diag.c`, `bcir_decoder_gem.c` and
+    `bcir_decoder_pack.c` compile clean. `bcir_channel.c` moves on to R18's refusal of its recursive JSON skip. No
+    rung lifts that refusal; the record names it `outside`.
+  - `sizeof` of a call to a `<string.h>` routine, `memcpy`'s too, stays refused on both rails, in different words.
+  - **Standing faults.** `cfront-strread.json`, 12, each swept RED. `cfront-filescope.json`'s FS13 and
+    `cfront-roundtrip.json`'s O37 and O38 are re-anchored on `_STRING_CALLS` and swept RED again.
+
+- **2026-11-20 — CSUB-2e, fifth slice: an object through a loaded pointer.**
+  - The address of a member of the struct a loaded pointer reaches is taken on the twin as the oracle takes it:
+    - a struct member (`&s->t->arena`, `bcir_bpe.c`), a scalar or nested member (`&s->t->arena.used`);
+    - a pointer member;
+    - a member array's element, of one or two dimensions;
+    - a volatile member, as a pointer to volatile.
+
+    The twin's address of a named pointer's member is now one function (`addr_of_member`), and the walk through a
+    loaded pointer ends in it. A pointer element's address, `&s->pp[j]`, is a `T **`. The twin had refused each.
+  - A member array's element through a loaded pointer is an lvalue: `s->t->arr[i]` stored, compound-assigned,
+    assigned as a value and stepped, in a for-step too, an `_Atomic` one as one atomic step (the walk's fifth kind).
+    The twin had refused each but the read.
+  - An assignment as a value into device storage through a loaded pointer is refused in the oracle's words, where the
+    twin had said `)`.
+  - **Evidence.** `test_an_object_through_a_loaded_pointer_lowers_alike_on_both_rails`: 15 units lower alike. Each
+    rail's emit runs as Clang's build of the source and compiles as C11 strictly. 3 device forms are refused alike.
+  - The ratchet stays at 32 of 58. `bcir_bpe.c` moves on to `memcmp` (CSUB-5).
+  - **Standing faults.** `cfront-loaded.json`, 11, each swept RED. Seven of `cfront-csub2.json`'s, whose code
+    `addr_of_member` now holds, are re-anchored and swept RED again.
+
+- **2026-11-20 — CSUB-2e, fourth slice: a pointer assigned as a value, and a for-step as a statement (CF-STEP).**
+  - A pointer assigned as a value is stored, then reloaded, as a scalar one is, on both rails:
+    - a member, of a value and through a pointer (`!(t->pieces = (piece_t *)...)`, `bcir_spm.c`);
+    - an element of an array of pointers, of function pointers or through a `T **`, a null pointer stored as the
+      element's type;
+    - a dereferenced `T **`, of a scalar or a struct pointee, in a chain (`*low = *high = &absent`, `bcir_emit.c`);
+    - a function-pointer member, which the oracle alone had refused.
+  - What stays the oracle's follow-on is refused for its reason on both rails: a pointer's compound assignment as a
+    value, and an assignment into device storage as a value, whose reload would be a second access. The twin had
+    refused the first with a bare `)`. It lowered the second with a volatile reload, through a `volatile struct t *`,
+    of a volatile struct local and of a struct holding volatile storage (`member_value_device`).
+  - **CF-STEP.** Probing those refusals found the twin reading a for-step through the expression grammar, where the
+    oracle's `_for_step` lowers a statement. Of 21 steps, 12 disagreed with the oracle:
+    - a stored member or element was reloaded;
+    - a pointer member's `+=` was left unread, so `for (t->p = buf; t->p != buf + 4; t->p += 1)` emitted a loop that
+      never advanced;
+    - a step read in part was lowered with the rest dropped (`(x) += 1u`, `x++, s.p -= 0, s.p++`);
+    - a volatile `*a += 1u` was refused as a value is.
+
+    A step piece that stores to a member, an element or through a pointer is now read by the statement grammar, with
+    the piece's end as the statement's `;` (`step_store_piece`, `eat`). A step not read whole is refused. CF-PAREN's
+    pass takes a step piece as a statement start, and so an unbraced statement after a condition, `else`, `do` or a
+    for header: `(x) += 1u` there is `x += 1u`. The twin had refused `if (k) (x) += 1u;`, which the oracle lowers.
+  - A store through a call's result, `h()->n = 1u`, is a recorded split: the oracle lowers it, the twin refuses it in
+    every position.
+  - **Evidence.**
+    - `test_a_pointer_assigned_as_a_value_is_stored_then_reloaded_on_both_rails`: 17 units lower alike. Each rail's
+      emit runs as Clang's build of the source and compiles as C11 strictly. 2 value forms have their spelled
+      statements' summary, and 11 forms are refused alike in the oracle's words.
+    - `test_a_for_step_store_is_a_statement_on_both_rails`: 23 units lower alike, as above; 1 step is refused alike;
+      the step the twin reads in part is refused.
+  - The ratchet stays at 32 of 58, but two units move on:
+    - `bcir_spm.c` to `memcmp` (CSUB-5);
+    - `bcir_emit.c` to R18's refusal of the emitter's recursive descent over the schema tree. R18 stays, so the record
+      names it `outside`: the unit needs an explicit stack, as `bcir_per.c` did.
+  - **Standing faults.** `cfront-ptrvalue.json`, 16, and `cfront-step.json`, 9, each swept RED.
+
+- **2026-11-20 — CSUB-2e, third slice: a member through an object's own address, `(&v)->m`.**
+  - `(&v)->m` is `v.m` on both rails (C11 6.5.2.3p4, 6.5.3.2p3), and `(&*p)->m` is `p->m` (`&*E` is `E`). Both had
+    refused it, and `bcir_kplan.c`'s `MS_OP(&v, i)` had stopped the ratchet at `parse error: )`.
+    - The oracle folds the parse (`_name_rooted`, in the `->` branch).
+    - The twin's CF-PAREN pass folds the tokens (`unparen_body`): `(&P)->m` becomes `P.m`, and `(&*Q)->m` becomes
+      `Q->m`.
+    - A global array of structs carries its element's type, as a local array does, so `g + i` is a `struct P *`.
+  - On the twin, a parenthesized operand of `&` or `*` -- `&(x)`, `&((x).m[1])`, `*(p)` -- is the operand. The oracle's
+    parse never kept the parentheses. The twin had refused `&(x)` (`unsupported address-of`), and read `(*(p)).n` as
+    a struct converted to a scalar.
+  - An inner run of `(` now closes with its own closers. The twin had counted the enclosing run's too, and so refused
+    `(&(x))->n` and `(++(y))` whole.
+  - `(&*&*p)->m` and `(&**q)->m` stay refused on both rails, in different words.
+  - **Evidence.** `test_an_address_folded_into_a_member_access_lowers_alike_on_both_rails`:
+    - 14 units lower alike. Each rail's emit runs as Clang's build of the source and compiles as C11 strictly.
+    - 5 spelled forms each have their plain form's summary.
+  - The ratchet stands at 32 of 58: `bcir_kplan.c` compiles clean, and the record promotes it.
+  - **Standing faults.** `cfront-ampmember.json`, 8, each swept RED. `cfront-splits.json`'s T5 and
+    `cfront-unary.json`'s UT11 are re-anchored, and swept RED again.
+
+- **2026-11-20 — `typeof` of an array object is the array on both rails, and six more `typeof` defects (CF-TYPEOFARR).**
+  - The tracked split: `__typeof__(a) b` of `uint16_t a[3]` declared one element of `a` on the twin and the array on
+    the oracle. So `sizeof b` read 2 where C reads 6, and `b[2]` was refused. Probing the rest of `typeof` found it in
+    every array form on the twin, and six more defects:
+    - **The twin, miscompiles.** `typeof(p->v)` of a member array declared an uninitialized pointer, stored through.
+      `typeof("ab") s = "xy"` returned another value than Clang's build. `typeof_unqual` of a `const` global array
+      declared an uninitialized pointer.
+    - **The twin, a crash.** Every `typeof` of an expression at file scope, in a global, a typedef, a struct member
+      or a return type, dereferenced no function. After a function, it lowered into that function's graph and rolled
+      it back. The oracle refused these as `unknown scalar type ''` or `unknown type ''`.
+    - **The oracle.** A global's or a member's array was laid out nested, unlike a declared one of the same type: one
+      digest for `typeof(g) h` and another for `uint8_t h[2][4]`. `typeof(typeof(a))` dropped its operand. A
+      specifier after `typeof` (`typeof(x) volatile y`) was a parse error, where the twin lowered it.
+    - **Both rails.** `typeof_unqual` kept `volatile` and `_Atomic`. `volatile typeof(a) b` of an array dropped the
+      qualifier, so its device accesses were plain ones. `volatile typeof(p) q` of a pointer, which C makes the volatile
+      pointer object `T *volatile`, was read as a pointer to volatile on the oracle and dropped on the twin. A pointer
+      to a typeof'd array and `typeof` of an array of unknown or variable length lowered to an emit that did not
+      build, or split.
+  - **The twin** types the operand with the static designator walk `sizeof` uses (`typeof_array`, over `sz_unary`).
+    It never lowers it, and hands the dimensions on as an array typedef's are (`td_nd`). A row is marked in the walk
+    (`szt.row`) and refused as before. Any other operand keeps its old path, the cursor and the failure state restored,
+    so the walk's refusals are never `sizeof`'s words in a `typeof`. File scope is a flag of its own (`fscope`, set at
+    each top-level item, cleared where a function's parameters open), and so is a struct body's depth (`sbody`).
+  - **The oracle** lays a typeof'd array out as a declared one, flat with its `shape`, under the declarator's
+    dimensions (`_typeof_array`, `_array_dims`, `_inferred_array`). It refuses a member's, a global's and a typedef's
+    `typeof` of an expression (`TYPEOF_SCOPE`), carries a nested `typeof`'s operand, and reads the specifiers after one
+    (`_trailing_specs`, the one scan a struct tag and a typedef name use too).
+  - **Both rails** now:
+    - give `typeof_unqual` the unqualified type, an array's element's too;
+    - keep a qualifier written before or after `typeof` on an array's elements;
+    - refuse a typeof'd pointer's `volatile` as `T *volatile` is refused (`VOLATILE_PTR`; the twin through
+      `td_ptr_qual`, as a pointer typedef's);
+    - refuse, in one set of words, a pointer to a typeof'd array, an array of unknown or variable length, and more than
+      three dimensions (`TYPEOF_ARR_PTR`, `TYPEOF_UNSIZED`, `TYPEOF_DIMS`).
+
+    A local array past three dimensions is refused in the oracle's words on the twin too.
+  - `typeof(chs[k].name)`, an array member of an element, is the member's array on both rails. The CSUB-2c test had
+    pinned it refused alike.
+  - **Evidence.** `test_typeof_of_an_array_object_is_the_array_on_both_rails`:
+    - 23 units lower alike, and each rail's emit runs as Clang's build of the source. The 20 without C23's keywords
+      also compile as C11 with a wrong pointer type an error.
+    - 8 pairs give one summary for the `typeof` form and its spelled-out form: a local, a 2-D global, `typeof(a) b[2]`,
+      a `volatile` before and after `typeof`, an array's `volatile`, and `typeof_unqual` of volatile and `_Atomic`
+      storage.
+    - 20 units Clang takes are refused alike, in one set of words.
+    - A function designator and a call of an undeclared function keep the twin's typing, never `sizeof`'s words.
+
+    The C front end's family passes, the CSUB-2c test with its moved unit.
+  - **Left as before.** `typeof` of a call, of `?:` or of a function designator is the split the guide records: the
+    oracle refuses it, the twin lowers it.
+  - **Standing faults.** `cfront-typeofarr.json`, 32, each swept RED.
+    - `cfront-csub2.json`'s CS2X7 is retired: the fault it injected, `typeof(a[i].m)` typed as the member's array, is
+      now the behaviour, and TO17 holds its inverse.
+    - CS2W6 and `cfront-gaps.json`'s O14 are re-anchored and swept RED again. O14 now holds the one scan of trailing
+      specifiers, which the `typeof` branch shares.
+
+- **2026-11-20 — PER refuses every longer spelling of a whole number or a length, on both rails (PER-MIN).**
+  - Both PER rails read `a0 00 00 00 00 00 05`, an ALIGNED INTEGER (0..2^40), as 5. The encoder writes `00 05`.
+    Probing the rest of clause 11 found the same second spelling, accepted alike by the oracle (`per.py`) and the twin
+    (`bcir_per.c`), in five more places:
+    - a semi-constrained number with a leading zero octet (§11.7.4);
+    - an unconstrained one whose first octet only repeats the sign, as in `02 00 05` and `02 ff ff` (§11.8.2);
+    - a two-octet length below 128, as in `80 05` (§11.9.3.6 and §11.9.3.7), including a string's or a list's count
+      and the remainder after a fragment;
+    - the long form of a normally small number up to 63 (§11.6.1);
+    - the long form of a normally small length up to 64 (§11.9.3.4).
+  - The decision is per variant, and it is the same for both. Each of these is a "shall" in its own clause, not one of
+    the choices CANONICAL-PER takes from BASIC-PER, so a longer spelling is not BASIC-PER either. Both variants refuse
+    it on both rails. The generated UPER codecs (`cgen.py`) already refused the length and whole-number forms; the
+    oracle and the twin now hold the same rule.
+  - One predicate each, used at every site:
+    - minimum octets, unsigned: `_minimal_unsigned` / `minimal_unsigned`;
+    - minimum octets, two's complement: `_minimal_signed` / the twin's nine-bit sign test;
+    - the two-octet length: `_two_octet_length` / `bcir_per_length`.
+
+    The twin answers `BCIR_PER_MALFORMED`, its second-spelling status, and the oracle raises an `Asn1Error` that
+    cites the clause.
+  - The twin's normally small length also took a fragment header as the length (16K, with the fragment flag dropped).
+    The oracle refused it, and now the twin does too.
+  - **Evidence.**
+    - `test_every_longer_spelling_of_a_whole_number_or_a_length_is_refused_on_both_rails`: in both variants, each
+      longer spelling is refused on both rails (the twin's reply exactly `ERR 3`). The encoder's own spelling beside
+      each still reads, at the edges 0, 63/64, 127/128, ±128, 255/256 and 2^32.
+    - `test_a_payload_length_in_the_two_octet_form_below_128_is_refused`: the same, for the oracle's payload count,
+      alone and after a 16K fragment.
+    - The campaign of encoder output (`test_per_primitives_agree_across_the_python_and_c_rails`) and every
+      PER and ASN.1 module pass unchanged.
+  - **Standing faults.** `per-minimal.json`, 23, each swept RED.
+
+- **2026-11-20 — The twin's macro table grows to one bound on both rails (CF-MACROCAP).**
+  - The twin held each macro in 2 KiB of fixed fields, whatever it spelled, in a table of 1024 (2.3 MB). It refused
+    the 1025th (`too many macros`), where the oracle took any number, and found a macro by walking the whole table.
+  - The twin now holds each macro's parameters and body in one allocation of their own size, in a table grown from
+    its allocator, and finds a macro by an FNV-1a hash index: linear probing, kept at most half full, with
+    backward-shift removal. A removal moves the last macro into the freed place, and the index follows it. `#undef`,
+    a context reset and its end free each macro's allocation.
+  - The twin's hide sets name a macro by a 16-bit index, and a token from a macro's body by `PPX_BODY` plus that index.
+    So one bound holds on both rails: 65 534 macros at once, the 5 predefined ones and each `-D` included
+    (`cpp._MAX_MACROS`, `BCIR_CPP_MAX_MACROS`, a `_Static_assert` beside `PPX_BODY`). The set the twin builds a hide
+    set in is sized to it.
+  - **Evidence.** `test_the_macro_table_holds_65534_macros_on_both_rails_and_refuses_one_more`:
+    - a unit at the bound lowers alike, and one past it is refused alike;
+    - at the bound, a redefinition, an `#undef`, a new macro and a function-like one are taken;
+    - 3 000 macros, every third undefined and every fifth redefined, keep every name, each tested by `#ifdef` and
+      `#if`;
+    - a 2 000-macro chain, past the old table, expands alike.
+
+    At the bound the twin preprocesses the unit in about 0.03 s.
+  - **Standing faults.** `cfront-macrocap.json`, 9, each swept RED.
+
+- **2026-11-20 — A computed `#include` and `#embed`, read by one predicate on both rails (CF-INCLUDEX).**
+  - A `#include` or `#embed` whose operand is no header name is macro-expanded and must then be one (C11 6.10.2p4).
+    The oracle did so; the twin refused every computed operand (`malformed #include`), so `#include HDR` and
+    `#include S(h.h)` lowered on the oracle alone. Each rail now reads a `#include`, `#embed`, `__has_include` and
+    `__has_embed` operand by one predicate (`cpp._header_operand`, the twin's `header_operand`).
+  - Found on the way, on the oracle:
+    - It expanded a header name written as one, which C forbids (6.10.2p2-3), so a macro named `h` turned
+      `<h.h>` into `<nothere.h>`.
+    - It took a bare `#include h.h` for a quoted one, and an unterminated `<stdint.h` for a whole one. Clang refuses
+      both, and so do both rails now.
+  - Found on the way, on both rails:
+    - Each read the whole file past C23's `#embed` parameters, so `limit(1)` embedded two bytes where Clang's build
+      has one: a miscompile. Both now refuse the parameters (`#embed parameters are not supported`).
+    - The twin never evaluated `__has_embed` (a malformed `#if` there). It now gives C23's three answers, which
+      the oracle now gives too: it had answered 1 for an empty resource, where C23 says 2.
+    - A missing header is named in one set of words: the oracle's had added the search path.
+  - **Evidence.** `test_a_computed_include_and_embed_read_by_one_predicate_on_both_rails`: each unit is checked
+    beside its header and its two resources; each one Clang takes lowers alike, and each one it refuses is refused
+    alike in one set of words. Clang 23's `#embed` verdicts are checked where the host's Clang has `#embed`.
+  - **Standing faults.** `cfront-includex.json`, 17, each swept RED.
+
+- **2026-11-20 — `__LINE__` after a spliced line is Clang's on both rails (CF-SPLICELINE).**
+  - A backslash-newline deletes a new-line (translation phase 2), and both rails numbered the logical lines that
+    were left. So every `__LINE__` after a spliced line was one less than Clang's and GCC's for each splice above
+    it, and after any multi-line `#define` an assertion's line was wrong. Each rail now puts the new-lines a
+    logical line's splices deleted back where it ends (`cpp._splice`, the twin's `splice_lines`), so each line
+    keeps its physical number, in a header and with CRLF ends of line too.
+  - On a spliced line itself, Clang and GCC give a `__LINE__` that stands after the splice the physical line it
+    stands on, which neither rail tracks per token. Both rails refuse it (`__LINE__ on a line a backslash
+    continues`), as `LINE_IN_CONTINUED_ARGS` refuses a token on an invocation's continued line. The test: the
+    continuation holds the text `__LINE__`, and `__LINE__` is expanded there. A `__LINE__` before the splice, or one
+    reached through a macro named before it, is the line the logical line starts on, as both compilers give it where
+    they agree; they part over a macro named after the splice (Clang gives the logical line's start).
+  - **Evidence.** `test_line_after_a_spliced_line_is_clangs_on_both_rails`: nine probes after each kind of splice,
+    with LF and with CRLF, and a header's probes, are token-equal to `clang -std=c23 -E -P` on both rails. A function
+    returning its line lowers alike with Clang's value. The refusal holds in a text line, a `#if`, a splice that
+    ends the text, a line after a joined invocation and a header.
+  - **Standing faults.** `cfront-spliceline.json`, 12, each swept RED. PS14, PS16, PS17 (`cfront-ppsplits.json`)
+    and SQ3, SQ4, SQ6 (`cfront-stripquote.json`) are re-anchored to the new splicing code and swept RED again.
+
+- **2026-11-20 — An open quote ends at its line, and the twin splices before it strips (CF-STRIPQUOTE).**
+  - Both comment strippers (`cpp._strip_comments`, the twin's `strip_comments`) ran a literal whose quote never
+    closes on to the next quote anywhere after it. So the `'` of `don't` in a `#if 0` group kept a later `// it's
+    fine` from being stripped, and the unit was refused on both rails where Clang and GCC take it. An open literal
+    now ends at its line, as theirs does (C 6.4p3 leaves it undefined). Each lexer's scan stops there too, so a
+    lexer's literal is the preprocessor's token: both had read an open one on to the next quote, lines on.
+  - Found on the way: the twin stripped comments before it spliced lines, the reverse of translation phases 2
+    and 3, which the oracle runs in order. So a `//` comment a backslash continues ended at its new-line on the twin,
+    and a function on the next line, which the oracle and Clang read as part of the comment, lowered on the twin
+    alone. The same held in a header. The twin now splices the whole text first (`splice_lines`, the oracle's
+    `replace("\r\n", "\n").replace("\\\n", "")` pass for pass) and reads each line once: a backslash-newline that
+    splicing makes is not spliced again, as on the oracle. The two rails now number lines alike after a splice.
+  - Left for its own slice: `__LINE__` after a spliced line is one less than Clang's for every splice above it, on
+    both rails.
+  - **Evidence.** `test_an_open_quote_ends_at_its_line_and_splicing_precedes_comments_on_both_rails`: each unit Clang
+    compiles lowers alike to one function and runs as Clang's C23 build of it, a header's continued comment
+    included; each unit Clang refuses is refused alike.
+  - **Standing faults.** `cfront-stripquote.json`, 12, each swept RED. Four first survived: their witnesses held an
+    odd count of quotes, so a lexer pairing them across lines still left the last one open. The witnesses now hold two
+    open quotes each. `cfront-ppsplits.json`'s PS16 and PS17 follow the CRLF rule from the line reader into
+    `splice_lines` and are swept RED again.
+
+- **2026-11-20 — C23's digit separators, read by one grammar on every rail (CF-DIGITSEP).**
+  - C23 admits a `'` into a pp-number only as `pp-number ' digit` or `pp-number ' nondigit` (6.4.8), and into a
+    constant only between two digits of its part (6.4.4.1, 6.4.4.2). Four scanners had read it four ways:
+    - both preprocessors (`_TOKEN_RE`, `ntok`) took any `'` into a number, so `F(1',')` passed two arguments and
+      `1'c'` was one number, where Clang and GCC read `1` and `','`, and `1'c` and an unterminated `'`;
+    - both lexers dropped each `'` before reading the digits, so `1'u`, `0x'1`, `1''0`, `1'.5` and `1.5'f` lowered;
+      `1e1'0` was refused on both, `0x1'0p1'0` on the twin alone, and `0x1p'1` lowered on the oracle alone.
+  - The rails now share each rule. A `'` goes on through a number only before a digit or a nondigit, the two one
+    step, so a sign after `'e` is no exponent's (Clang 18 and 23 and GCC 13 read `1'e+X` so). One predicate on each
+    rail (`clex.separators_ok`, `digit_seps_ok` in `bcir_intlit.h`) holds a constant's separators between two digits
+    of their part, for the lexer and the `#if` evaluator alike. A misplaced one refuses the constant as `invalid
+    integer literal` or `invalid floating constant`, its spelling quoted as Python's `repr` quotes it and cut at 48
+    characters on both rails: the twin had quoted `1e'5` with `'`.
+  - Found on the way, in the same family:
+    - The oracle cut an unterminated quote off as a token of its own, so `S(')` stringized to `"'"` where the twin,
+      Clang and GCC ran out of the argument list. An open quote now takes the rest of the text on both rails.
+    - The twin's lexer named an open character constant `unsupported character constant` and read an open string
+      to the end of the unit, refused later as a bare `;`. Both now give the oracle's words, which name an open
+      prefixed character constant as the plain one's.
+    - A floating constant's spelling carried its separators into each rail's emit and linkable emit, which C11 reads
+      as `1` and an open character constant. The parser (`cast.FloatLit`) and the twin (`flt_spelling`) now drop
+      them.
+  - Left as it was, documented in `clex.parse_int_literal`: the oracle refuses a malformed integer or character
+    constant where the parser reads it, the twin where it lexes it. A unit with two errors can therefore name a
+    different first one on each rail (`return 1'c';` holds a bad constant and an open quote). The witnesses hold
+    one error each.
+  - **Evidence.** `test_a_c23_digit_separator_is_read_by_one_grammar_on_every_rail`:
+    - each probe expands to Clang's tokens on both rails;
+    - each constant Clang takes lowers alike and runs, on each rail's emit, as Clang's C23 build of the source, the
+      emit compiling as C11;
+    - each unit Clang refuses is refused alike.
+
+    `test_the_preprocessors_give_one_answer_on_generated_macro_programs` and the `_PPARITH_*` separator cases stay
+    green.
+    The preprocessor ends a number before a `'` that is no pp-number's and spaces the two apart, so through it
+    neither lexer meets one. Each lexer's own rule is therefore witnessed at its own entry: `clex.tokenize`, and the
+    twin's `bcir_cfront_compile`.
+  - **Standing faults.** `cfront-digitsep.json`, 41, each swept RED. Two of them first survived, because they were
+    checked only through the preprocessor; the lexer-entry witness above catches both. `cfront-pparith.json`'s PO17
+    and PT23 are re-anchored to the new tokenizer lines and swept RED again.
+
+- **2026-11-20 — The cfront digest holds a claim's volatile bit.**
+  - The cross-rail structural canon, the oracle's `cfront_structural_canon` and the twin's `bcir_cfront_digest`,
+    adds a sixth field to each claim's record: `<op>|<opcode>|<reads>|<imm>|<domain>|<volatile>`. Before, two claim
+    graphs differing only in whether a claim is a volatile access digested the same. A store the emit spells through
+    the object's typed pointer (`c[k] = v`, `gv = v`) is volatile whatever the bit says, so nothing but the claim
+    graph held the bit, and three of CSUB-2e's standing faults had to be retired for want of a witness.
+  - **What the bit found.** The twin's initializer stores into volatile storage were plain claims: the brace
+    initializer of a volatile array (`volatile uint32_t st[4] = {...}`, in `cfront_railsplit.c`) and of a volatile
+    member (`struct d { volatile uint32_t r; } v = {s}`). The oracle marks each as the volatile write it is.
+    `init_store` now marks them from the slot's own qualifier (`iunit.vol`).
+  - **Evidence.** The canon is byte-identical on both rails over the whole fixture corpus
+    (`test_python_canon_equals_c_twin_canon_byte_for_byte_on_the_corpus`), and the volatile gate's rows are all 0.
+    `test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails` pins the new field.
+  - **Standing faults.** `cfront-csub2.json` gains 8, CS2V26–CS2V33, each swept RED: the three retired marks (a
+    named object's write, a pointer sum's and an element's step store), the two initializer marks, the bit dropped
+    from either canon, and the oracle's named write unmarked.
+
+- **2026-11-16 — CSUB-2e, second slice: volatile objects stepped, and reached through a pointer sum.**
+  - A step of a volatile scalar is one read and one write on both rails. The oracle takes it in `_incdec_value`. The
+    twin takes it on its deref, element, member, element-field, loaded-pointer, named-value and statement paths,
+    and refuses a narrowing prefix step at each, by one predicate (`step_dev`) where the slot is reached by name. The quarantine units' `return (*c)++;` was the form both
+    stopped at first.
+  - A narrowing prefix step, a bitfield of a device region, and an assignment through a pointer to volatile storage
+    used as a value are refused alike.
+  - Defects at the base, each closed:
+    - The twin typed a pointer sum of a pointer to volatile storage a `T *`, so every access through it lost its
+      volatile, a miscompile.
+    - The oracle read a named volatile object twice for its postfix value.
+    - The twin's `gv++;` claimed neither device access.
+    - The twin loaded a pointer member of a volatile struct's element into an integer temp.
+  - **Evidence.** `cfront_csub2_volatile.c` (in `_ABI`) runs as the original under Clang and GCC on each rail's emit.
+    A cross-rail test holds 33 lowered forms to one digest and to a strict build of both emits, and 14 refused ones
+    to one reason each; each rail's linkable artifact, built as C11, returns what the original does. CF-SPLIT2's
+    device test keeps the assignments used as values and a narrowing prefix step; its three steps through a loaded
+    pointer, which both rails had refused, are lowered forms of the new test. The round-trip set is pinned at 127 (the
+    new fixture re-parses from the emit).
+  - **A witness the digest lacked.** The cross-rail digest holds no claim's volatile bit, and a strict build accepts
+    the explicit cast of a byte copy. So a store the twin did not mark volatile, emitted as `memcpy((char *)c, ...)`
+    of a `volatile T *`, passed both. The test now holds both rails' emits to the same number of volatile accesses.
+    The marks on a named object's write (`gv++;`) and on an element's store (`c[k]`, emitted through its typed
+    pointer) change only that bit, which nothing reads yet. They have no standing fault, and adding the bit to the
+    digest is tracked.
+  - **Standing faults.** `cfront-csub2.json` gains 25 (CS2V1–CS2V25), each swept RED. CS2C21 is re-anchored with its
+    mutation. `cfront-splits.json`'s S4, whose guard the slice retires, injects into the narrowing prefix step's
+    refusal instead. Both are swept RED.
+  - **The ratchet.** 31 of 58, unchanged: `bcir_quarantine.c` and `bcir_quarantine_recover.c` move on to `FILE`
+    (CSUB-5).
+
+- **2026-11-16 — CSUB-2c, third slice: an array member of an element used as a value.**
+  - An array member of scalars of an array element used as a value is the pointer to its first element on both rails,
+    `&a[i].m[0]` (the oracle's `_elem_member_array` and `_scalar_row`, the twin's `aos_member_array_x` with `pad` 2):
+    `channels[best].name` and `f->qcasts[k].type`, the first refusal of `bcir_channel.c` and `bcir_verify.c`. Passed,
+    assigned, chosen, stepped, compared, sized and dereferenced, of a named array's element, a pointer parameter's and
+    through a loaded pointer member. Its address, `typeof` of it, member arrays of structs, pointers or two dimensions,
+    and one of an element of a member array stay refused alike.
+  - **Evidence.** `cfront_csub2_elemarrays.c` (in `_ABI`) runs as the original under Clang and GCC on each rail's
+    emit. A cross-rail test holds 9 lowered forms to one digest and to a strict build of both emits, and 7 refused ones
+    to one reason each; each rail's linkable artifact, built as C11, returns what the original does. Two pins move:
+    CF-NESTMEM's `g[1].m.arr`, which both rails had refused, is a lowered form there, and the round-trip set is
+    pinned at 126 (the new fixture re-parses from the emit).
+  - **Standing faults.** `cfront-csub2.json` gains 13 (CS2X1–CS2X13), each swept RED; seven CS2W faults the slice's
+    edits moved are re-anchored with the same mutation and swept RED again.
+  - **The ratchet.** 31 of 58, unchanged: `bcir_channel.c` and `bcir_verify.c` move on to `memcmp` and `memchr`
+    (CSUB-5).
+
+- **2026-11-15 — CSUB-2d, second slice: a row used as a value.**
+  - A row of scalars used as a value is the pointer to its first element on both rails, `&m[k][0]`, lowered as that
+    form lowers (the oracle's `_scalar_row`, the twin's `row_value` and `member_row_value`): `f->calls[k]`,
+    `seen_keys[i]`, `fsub(a, p[1], p[0])` of a `gf p[4]` and `ys[v]`, the first refusal of `bcir_verify.c`,
+    `bcir_channel.c`, `bcir_ed25519.c` and `bcir_tensor.c`. Passed, assigned, chosen, stepped, compared, sized and
+    dereferenced (`*m[k]`, `*(m[k] + i)`), of every array form and of a pointer-to-array member's row.
+  - A row's address, `&m[k]`, is refused on both rails for one reason, `ROW_ADDR`; so are `typeof` of a row and a
+    row of rows, structs or pointers.
+  - Defects at the base: the twin read `&g[k]` of a two-dimensional global and `&s->m[k]` of a member array as
+    `&g[0][k]` and `&s->m[0][k]`, and the oracle stepped `&g[k] + 1` by one element; the twin read a member array's
+    row used as a value, `f(s->m[k])`, as its first element, an emit no compiler takes; the oracle typed
+    `typeof(m[k])` as its element; the twin typed the address of a volatile array's element or member a `T *`. Each
+    is closed. `typeof` of an array object still differs between the rails (the twin declares one element) and is
+    tracked.
+  - **Evidence.** `cfront_csub2_rows.c` (in `_ABI`) runs as the original under Clang and GCC on each rail's emit. A
+    cross-rail test holds 22 lowered forms to one digest and to a strict build of both emits, and 13 refused ones to
+    one reason each; each rail's linkable artifact, built as C11, returns what the original does.
+  - **Standing faults.** `cfront-csub2.json` gains 31 (CS2W1–CS2W31), each swept RED; four faults the slice's edits
+    moved (`cfront-quals.json`'s IT7 and IT8, `cfront-fptab.json`'s FT8, a `volatile.json` oracle fault) are
+    re-anchored and swept RED again.
+  - **The ratchet.** 31 of 58 (30 before): `bcir_ed25519.c` compiles clean.
+
+- **2026-11-15 — CSUB-2: a struct returned through a prototype.**
+  - A struct or union a call returns through a prototype -- a callee another unit defines, `bcir_handoff.c`'s
+    `c = bcir_ctl_admit_pack(...)` -- is the aggregate value on the twin, as a defined callee's is: initialized from,
+    assigned, read a member of in place, passed and returned on by value, stored and chosen by `?:`. The oracle had
+    lowered it; the twin had refused it.
+  - A gap at the base: the twin read no `->` or `[]` after a pointer a prototyped callee returns, which the oracle
+    lowered. A call's postfix now reads a prototype's return as a definition's (`declared_ret`).
+  - **Evidence.** `cfront_csub2_protoret.c` lowers to one claim graph on the four targets, and each emit runs as the
+    original, linked with a driver that defines the callees. A cross-rail test holds 12 lowered forms to one digest
+    and to a strict build of both emits, and 5 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 4 (CS2P1–CS2P4), each swept RED.
+  - **The ratchet.** 30 of 58 (29 before): `bcir_handoff.c` compiles clean.
+
+- **2026-11-15 — CSUB-2d, first slice: pointer-to-array members.**
+  - A member `T (*m)[N]` is a pointer to a row of N scalars on both rails, laid out as a pointer and typed as a
+    `T m[][N]` parameter is: `p->m[k][j]` is element `k*N + j`, read, stored, stepped and addressed, `sizeof *p->m`
+    is the row, and the pointer is tested, copied and passed to a row-pointer parameter. `bcir_cir.h`'s
+    `char (*calls)[BCIR_CIR_NAME]` had been a parse error on both rails. The oracle's type carries the declarator
+    (`TypeRef.row_ptr`) and resolves the member to the parameter's shaped pointer. The twin records the row on the
+    member (`field.row_n`) and on a pointer loaded from it (`bcir_resource.row_n`, in padding), and subscripts it
+    through one helper, `ptr_member_sub`, in each walker that subscripts a pointer member.
+  - A defect on both rails at the base: `*rows` of a row-pointer parameter and `*m` of a two-dimensional array, used
+    as a value, had read the row's first element, an emit Clang 23 refuses. Both now refuse each as a row used as a
+    value, by one predicate per rail (the oracle's `_row_valued`, the twin's `rid_multidim`). A file-scope
+    `T (*g)[N]`, which the oracle had read as an array of rows, is refused on both, as is a typedef of one.
+  - **Evidence.** `cfront_csub2_rowptr.c` (in `_ABI`) runs as the original on each rail's emit, and as each rail's
+    linkable artifact built as C11. A cross-rail test holds 13 lowered forms to one digest and to a strict build of
+    both emits, and 21 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 28 (CS2D1–CS2D28), each swept RED. The first sweep left one
+    uncaught: the twin refused `*rows` of a parameter in a check of its own, which the general dereference's already
+    made. That check is gone; the one that replaced it, at the top of `emit_deref`, decides `*m` of an array.
+  - **The ratchet.** 29 of 58 (27 before): `bcir_hydrate.c` and `bcir_plan.c` compile clean. `bcir_verify.c` and
+    `bcir_channel.c` reach a row used as a value, the next slice, and `bcir_cc.c` reaches `FILE` (CSUB-5).
+
+- **2026-11-15 — CSUB-2c, second slice: struct members of array elements.**
+  - A struct or union member of an array element is the aggregate value on both rails: read, stored, copied element
+    to element, passed and returned by value, and addressed, on a direct array, a member array and through a loaded
+    pointer (`set->slots[j].name = name`, `d->notes[i].span` passed by value). Both rails had refused it. The twin's
+    element loads now take the aggregate temp a plain struct's member read takes (`tempagg`), and its lvalue walk
+    through a loaded pointer takes a struct leaf as an object an address takes.
+  - An aggregate member assigned as a value is refused for the oracle's reasons on every path, where the twin had
+    lowered `(t[i].sp = v)`. The aggregate as an operand is refused for C's.
+  - **Evidence.** `cfront_csub2_structmembers.c` (in `_ABI`) runs as the original on each rail's emit, and as each
+    rail's linkable artifact built as C11. A cross-rail test holds 8 lowered forms to one digest and to a strict build
+    of both emits, and 7 refused ones to one reason each. CSUB-2c's first test had pinned `&s->a[i].in` as refused
+    and `test_paren_and_nested_member_refusals_on_both_rails` a struct member at depth; both now lower, and the
+    pins move to the new test. The fixture round-trips, so the round-trip set's pin grows to 125.
+  - **Standing faults.** `cfront-csub2.json` gains 8 (CS2C33–CS2C40), each swept RED. CS2C29's premise inverted, a
+    struct member's address taken against the oracle, so it now injects the opposite, the address refused; CS2C2,
+    CS2E7, CS2E14 and CS2E15 are re-anchored. All five were swept RED again.
+  - **The ratchet.** Still 27 of 58: `bcir_bpe.c` moves on to a struct member's address through a loaded pointer
+    (`&s->t->arena`, CSUB-2e), and the hosted `bcir_diag.c` to `strlen` (CSUB-5).
+
+- **2026-11-15 — CSUB-2e, first slice: struct elements through a loaded pointer.**
+  - An element of a pointer to structs reached through a loaded pointer is an lvalue on both rails: `&set->slots[j]`,
+    `&d->fixits[i]`, `&c->claims[v->claim_id]`, `&t->slots[i]`. Its address is a pointer to the struct; a member of
+    it can be stepped, assigned as a value, compound-assigned or addressed; a store or a step reaches through a
+    pointer member it holds. The oracle had lowered each. The twin's lvalue walk through a loaded pointer
+    (`plv_chain`) gains two kinds, a struct element's member and the element itself. Its store through an element's
+    pointer member had asked for an `=`, a gap CSUB-2c had opened.
+  - **A both-rails defect.** `a[i]->m` of a struct element was read as `a[i].m` on both rails, an emit no C
+    compiler takes, in every position. Both now refuse it for C's reason.
+  - **Evidence.** `cfront_csub2_lvalues.c` (in `_ABI`) runs as the original on each rail's emit, and as each
+    rail's linkable artifact built as C11. A cross-rail test holds 6 lowered forms to one digest and to a strict
+    build of both emits, and 14 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 17 (CS2E1–CS2E17), each swept RED. The first sweep left one
+    uncaught: the twin had kept the struct element itself out of its inc/dec paths, while the arithmetic's own refusal
+    of a struct operand already refused it, for C's reason. That check is gone; the one that decides, a struct
+    element assigned as a value, now gives the oracle's reason for a compound assignment too.
+  - **The ratchet.** Still 27 of 58, but seven units move on: `bcir_bpe.c` and `bcir_diag.c` to the record table's
+    struct members, `bcir_emit.c` and `bcir_spm.c` to later CSUB-2e forms, `bcir_handoff.c` to a struct returned
+    through a prototype, and the hosted `bcir_decoder_gem.c` and `bcir_decoder_pack.c` to `strlen` (CSUB-5).
+
+- **2026-11-15 — CSUB-2c, first slice: pointer members of array elements.**
+  - A pointer member of an array element is a value of its pointer type on both rails: `order[i].name`,
+    `d->notes[i].message`, `set->slots[i].name.s`. It is loaded strided by the element, then compared, passed,
+    subscripted, dereferenced, followed with `->`, stored and stored through. An increment through one is lowered,
+    and its address is a `T **`. Both rails had refused it as a non-scalar element field.
+  - Stepping the member itself, a function-pointer, bit-field or struct member of an element, and what C forbids
+    after one are refused alike, the last for C's reason.
+  - **What the witnesses found.** Five twin defects, three of them invalid C that the digest cannot see, since it
+    carries no declared type. The twin had typed `&s->name` of a `const char *` member `int8_t **` and `&s->pp` of
+    a `T **` member `T **`. It had loaded an element's function-pointer member as an integer, then assigned it to
+    the function pointer, and had typed its address an integer's. It had taken `&s.arr[i].in`, which the oracle
+    refuses, and refused `->` through a pointer to no struct for its own reason. Each lowered form's emits are now
+    also compiled strictly beside their source.
+  - **Evidence.** `cfront_csub2_records.c` (in `_ABI`) runs as the original on each rail's emit, and as each rail's
+    linkable artifact built as C11. A cross-rail test holds 9 lowered forms to one digest and to a strict build of
+    both emits, and 13 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 32 (CS2C1–CS2C32), each swept RED. The first sweep left one
+    uncaught: the twin refused the member itself stepped in a check of its own, while its general refusal of a step
+    it does not take, `incdec_rest`, already refused it. The redundant check is gone; the faults aim at the decision
+    that matters, that such a member is never stepped as a scalar.
+  - **The ratchet.** `bcir_ab_listing.c` and `bcir_provenance.c` compile clean (27 of 58). `bcir_bpe.c`,
+    `bcir_diag.c` and `bcir_emit.c` stop at an element's address through a loaded pointer (`&d->fixits[i]`), a
+    CSUB-2e form; `bcir_decoder_train.c` at a call of 18 arguments, past the claim graph's 16 reads (CSUB-6).
+  - **Found for CSUB-2e.** An object of a struct element reached through a loaded pointer (`s->q[1].y--`,
+    `&h->next[1]`) and `->` through a dereferenced `T **` (`(*q)->v`): the oracle lowers them and the twin refuses
+    them, on plain structs as on elements.
+
+- **2026-11-15 — CSUB-2b, second half: untagged struct tables in a block.**
+  - An untagged struct or union a block declaration defines lowers on both rails: `static const struct { ... } t[]`,
+    automatic or static, a union, a nested untagged member, several declarators, a `for` declaration's. Both rails
+    had refused every block-scope struct definition, each for a different reason.
+  - Nothing else can name the type, so each emit opens the function with a typedef of it, its members as the source
+    spells them, under `__bcir_anonN`, a name reserved to the implementation. The unit's existing respelling of
+    synthesized tags then names every object, temp and copy by it. The twin carries the typedef lines on its
+    function record, `bcir_func.block_types`, which only the emit reads.
+  - A tag defined in a block is refused alike, as is a struct or union defined anywhere else a type is named.
+  - **Evidence.** `cfront_csub2_untagged.c` runs as the original on each rail's emit, and each rail's linkable
+    artifact of it, built as C11, returns what the original does. A cross-rail test holds 4 lowered forms to one
+    digest and to both emits' typedefs, and 10 refused ones to one reason each.
+  - **Standing faults.** `cfront-csub2.json` gains 12 more (CS2B13–CS2B24), each swept RED.
+  - **The ratchet.** `bcir_ab_listing.c` and `bcir_emit.c` move on to the record table (CSUB-2c).
+
+- **2026-11-15 — CSUB-2b, first half: string literals in a static's image.**
+  - A string literal is the address of its array, an address constant (C11 6.6p9). Both rails take one as an entry
+    of a static's image: a block-scope `static const char *const t[]`, a pointer member of a static table's records,
+    a scalar static. Both had refused every one as no integer constant expression.
+  - Each entry is rendered by one canonical spelling on both rails, so the image and the digest over it agree. `?`
+    is an octal escape, so the emit never spells a trigraph, which `-std=c11` reads.
+  - It is taken only where C converts the address without a diagnostic: a pointer to plain `char`, from a literal
+    of no prefix, and only the literal itself. Every other slot, prefix or computed address is refused alike. The
+    twin's members now record whether a pointer member points at plain `char`.
+  - **Evidence.** `cfront_csub2_strtab.c` runs as the original on each rail's emit. A cross-rail test holds 4
+    lowered forms to one digest and to both emits' spellings, and 16 refused ones to one reason each. It also runs
+    each rail's linkable artifact of the fixture, built as C11, against the original.
+  - **Standing faults.** `cfront-csub2.json` gains 12 (CS2B1–CS2B12), each swept RED. The first sweep found two
+    checks no witness could fire. Each rail had asked that the entry make no claim, a check that never decided an
+    outcome, and the real rule was missing: the entry must be the literal itself. Both rails now ask that, and
+    the two faults aim at it.
+  - **The ratchet.** `bcir_artifact_bundle.c`, `bcir_jer.c` and `bcir_sp_listing.c` compile clean (25 of 58).
+    `bcir_decoder_pack.c` stops at `&c->claims[v->claim_id]`, a CSUB-2e form.
+  - **What CI on Clang 23.1.6 found.** The twin had declared an inferred array of pointers, `T *a[] = {...}`, as
+    `uint32_t *a[n]`: it recorded the pointee only for an explicit size. The defect predates this slice. It was
+    invisible while such an array held only null pointers; a string made Clang 23 refuse the emit, which makes
+    `-Wincompatible-pointer-types` an error. Automatic locals had it too. The fix takes the inferred array as the
+    sized one. The CSUB-2 tests' C11 linkable build now makes that warning an error on every toolchain, so Clang 18
+    and GCC catch it as well, and fault CS2B25 holds it RED.
+
+- **2026-11-14 — CSUB-2a: array parameters of function types, and `_Alignas` on objects.**
+  - The first slice of the table-idioms rung, on both rails. A function-pointer type's array parameter is a pointer
+    to its element (C11 6.7.6.3p7), as a definition's is. `bcir_shard_manifest.h`'s `const uint8_t digest[32]`
+    had been a parse error on both rails.
+  - `_Alignas(N)` / `alignas(N)` works on locals, block statics and file-scope objects. Each emit spells it where
+    the object is declared. The oracle had read a file-scope one and dropped it, a silent loss of alignment, and
+    the twin had refused it.
+  - Every form C forbids or the emit cannot spell is refused alike, for one reason, by checks at the same points on
+    both rails. The twin's definition and function-pointer parameters now decay by one predicate.
+  - **Evidence.** `cfront_csub2_decl.c` runs as the original under Clang and GCC on each rail. Each of its functions
+    reads the address of what it aligns, and dropping the specifier from either emit was caught by both the
+    differential and the parity gates. A cross-rail test holds 6 lowered forms to one digest and 18 refused ones
+    to one reason each. The fixture keeps the escape corpus private: no local array of it leaves its function, so
+    `escape.unproved` stays on its floor of 0 and `icall.unresolved` within its range.
+  - **Standing faults.** `cfront-csub2.json` holds 12, each swept RED by the cross-rail test. The slice moved code
+    that nine existing faults inject into (FT7, TL5, LT10–LT12, O43, HO2, T28 and `volatile.json`'s row-pointer
+    decay); each is re-anchored and was swept RED again.
+  - **The ratchet.** `bcir_shard_manifest.c` compiles clean (22 of 58 units). `bcir_handoff.c` and
+    `bcir_tensor.c` stop at this rung's next constructs.
+
 - **2026-11-11 — CSUB-1: the C subset's conformance rung, a ratchet over the runtime, one macro engine.**
   - **The rung, on both rails.** A function-like invocation may run across lines (C11 6.10.3p10).
     `static_assert` and `_Static_assert` work at file, block and member scope. The freestanding

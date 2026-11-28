@@ -1,0 +1,109 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF1 the oracle without the explicit test-and-set",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        \"atomic_flag_test_and_set_explicit\": (\"c.c11atom.flag_tas\", Opcode.ATOMIC_ADD, 1, 1),\n",
+   "new": ""
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF2 the twin without the explicit clear",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    {\"atomic_flag_clear_explicit\",\"c.c11atom.flag_clear\",BCIR_OP_STORE,AK_FLAG_CLEAR,1,1},\n",
+   "new": ""
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF3 the oracle without the implicit test-and-set",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        \"atomic_flag_test_and_set\": (\"c.c11atom.flag_tas\", Opcode.ATOMIC_ADD, 1, 0),\n",
+   "new": ""
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF4 the twin without the implicit clear",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    {\"atomic_flag_clear\",\"c.c11atom.flag_clear\",BCIR_OP_STORE,AK_FLAG_CLEAR,1,0},{0,0,0,0,0,0}};",
+   "new": "    {0,0,0,0,0,0}};"
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF5 the oracle's clear takes an acquire",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        \"c.c11atom.flag_clear\": (frozenset({2, 4}),),  # no acquire or acq_rel (7.17.8.2p2)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF6 the twin's clear takes an acquire",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!strcmp(op,\"c.c11atom.flag_clear\")) return o!=2 && o!=4;   /* 7.17.8.2p2 (CSUB-5d) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF7 the oracle's test-and-set spelled an exchange",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "f\"atomic_flag_test_and_set{sfx}({ref(c.rd[0])}{mo})\"",
+   "new": "f\"atomic_exchange{sfx}({ref(c.rd[0])}, 1{mo})\""
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF8 the twin's clear spelled a store",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "\"atomic_flag_clear%s(%s%s);\\n\",sfx,rname(f,cl->rd[0],a),mo);",
+   "new": "\"atomic_store%s(%s, 0%s);\\n\",sfx,rname(f,cl->rd[0],a),mo);"
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF9 the oracle's flag unknown",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "        \"__bcir_builtin typedef struct { _Bool __bcir_flag; } atomic_flag;\",\n",
+   "new": ""
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF10 the twin's flag unknown",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  hput(b, \"__bcir_builtin typedef struct { _Bool __bcir_flag; } atomic_flag;\");   /* the flag (CSUB-5d) */\n",
+   "new": ""
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF11 the oracle's flag four bytes",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "typedef struct { _Bool __bcir_flag; } atomic_flag;\",",
+   "new": "typedef struct { unsigned __bcir_flag; } atomic_flag;\","
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF12 the twin's flag four bytes",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "typedef struct { _Bool __bcir_flag; } atomic_flag;\");",
+   "new": "typedef struct { unsigned __bcir_flag; } atomic_flag;\");"
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF13 the twin's clear reads a value too",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  else if(kind==AK_FLAG_CLEAR) cl->n_rd=1;",
+   "new": "  else if(kind==AK_FLAG_CLEAR){ cl->n_rd=2; cl->rd[1]=args[0]; }"
+  },
+  {
+   "expects": "test_atomic_flag_lowers_alike_and_runs_as_clangs_build_on_both_rails",
+   "label": "AF14 the oracle's clear a value-less store spelled as a test",
+   "path": "bcir/frontends/cfront/emit.py",
+   "old": "            return f\"atomic_flag_clear{sfx}({ref(c.rd[0])}{mo});\"",
+   "new": "            return f\"(void)atomic_flag_test_and_set{sfx}({ref(c.rd[0])}{mo});\""
+  }
+ ]
+}

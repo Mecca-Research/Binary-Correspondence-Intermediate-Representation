@@ -170,6 +170,38 @@ BCIR_NODISCARD bcir_status bcir_kp_decode_realization(const uint8_t *data, size_
  * the canonical phase order, a claim no step plans. Then the encoder's: WIDTH for a width that
  * is not a power of two, OVERFLOW for a negative offset or stride (a block field is a u64). */
 
+/* ---- budgeted planning (N14): kbcir.rcsp's optimize_constrained ------------------------------
+ *
+ * min M(pi) s.t. R(pi, Theta) <= B: the planner's offer and edges, with each tracked resource
+ * dimension (a cost.DIMS index) capped. The label DP of bcir/kbcir/rcsp.py, label for label:
+ * per realization the non-dominated (score, resources) labels extending the column before's, an
+ * extension past a cap cut, a dominated label pruned with ties keeping the first; the plan is the
+ * last column's least (score, resources) label, the first on a tie. With no cap it is
+ * bcir_kp_plan's plan, byte for byte (the unconstrained core is the degenerate case). The caps
+ * are the caller's, never a BKPI field: the record is unchanged.
+ *
+ * Refused: caps past BCIR_KP_BUDGET_MAX, a dimension past cost.DIMS or not strictly ascending
+ * (BCIR_ERR_PLANNER); label storage short (BCIR_ERR_NOSPACE, C only -- the oracle's labels are
+ * unbounded); a claim no label survives (BCIR_ERR_INFEASIBLE, its id in *infeasible_claim).
+ * *labels_kept (may be NULL) is how many labels the plan kept -- every column's surviving labels,
+ * the oracle's count. The storage a plan takes is at least that many labels: a column's pruning can
+ * free labels it held on the way. */
+#define BCIR_KP_BUDGET_MAX 12u
+
+typedef struct bcir_kp_cap {
+  uint32_t dim; /* cost.DIMS index */
+  uint64_t cap; /* R(pi)'s bound on it */
+} bcir_kp_cap;
+
+/* The label storage `labels` labels take under `n_caps` caps (0 past what a size_t holds). */
+size_t bcir_kp_label_bytes(size_t n_caps, size_t labels);
+
+BCIR_NODISCARD bcir_status bcir_kp_plan_budgeted(const bcir_kp_input *in, const bcir_kp_cap *caps,
+                                                 size_t n_caps, void *scratch, size_t scratch_len,
+                                                 void *labels, size_t labels_len, uint8_t *out,
+                                                 size_t cap, size_t *out_len,
+                                                 uint32_t *infeasible_claim, size_t *labels_kept);
+
 #define BCIR_KP_BINDING_MAGIC       "BKPB"
 #define BCIR_KP_BINDING_HEADER_SIZE 32u
 #define BCIR_KP_PLAN_NAME_MAX       65535u

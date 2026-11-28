@@ -576,7 +576,7 @@ def _event_laws(module: Module) -> list[Diagnostic]:
 # A digest that is invariant to (1)-(3) yet still catches the mandated corruptions is the per-function
 # multiset of each claim's DATAFLOW VALUE-NUMBER:
 #
-#   record(claim) = <op-base>|<opcode-int>|<read value-numbers>|<semantic imm>|<dom-int>
+#   record(claim) = <op-base>|<opcode-int>|<read value-numbers>|<semantic imm>|<dom-int>|<volatile 0/1>
 #   value_number(rid) = the FNV-1a (64-bit, 16 hex digits) of `<op-base>(<vns of that producer claim's
 #                       reads>)` if some claim writes rid (see _vn_number: linear, not the tree spelled);
 #                       else "in:p<j>" if rid is the j-th PARAMETER (position is cross-rail stable, so
@@ -595,6 +595,10 @@ def _event_laws(module: Module) -> list[Diagnostic]:
 #   CF-ATOMIC fixed -- keeps every other field of the record (see _vn_op).
 # - opcode/domain: their INTEGER values (Opcode/Domain are IntEnum valued 0..17 / 0..5 to match the C
 #   bcir_opcode/bcir_domain enums by construction -- no enum->name table can drift between rails).
+# - volatile: 1 when the claim is a volatile access, else 0 (the oracle's `Claim.volatile`, the twin's
+#   `is_volatile`). It is the claim's own bit: a store the emit spells through the object's typed pointer
+#   (`c[k] = v`, `gv = v`) is volatile whatever the bit says, so before the bit joined the record nothing but
+#   the claim graph held it, and the rails could disagree on it unseen (CSUB-2e).
 # - SEMANTIC imm is folded per op (see _vn_imm): c.const's value; the struct member BYTE OFFSET (c.load
 #   imm[0] / c.addrof / c.store imm[0]); the bitfield BIT-OFFSET/WIDTH/SIGN (c.bf.get/c.bf.set). So
 #   tampering a constant (5->999), reading the wrong member (s->x vs s->y), or the wrong/oppositely-
@@ -802,9 +806,15 @@ def _canon_func_records(lf) -> list[str]:
     for c in claims:
         parts = _ordered(c, [vn_first(int(r), 0) for r in c.rd])
         recs.append(
-            "{}|{}|{}|{}|{}".format(
-                _vn_op(c), int(c.opcode), ",".join(parts), _vn_imm(c), int(c.domain)
+            "{}|{}|{}|{}|{}|{}".format(
+                _vn_op(c),
+                int(c.opcode),
+                ",".join(parts),
+                _vn_imm(c),
+                int(c.domain),
+                int(bool(c.volatile)),
             )
+            + _canon_timing(c.timing)
         )
     recs.sort()
 
@@ -840,6 +850,25 @@ def _canon_func_records(lf) -> list[str]:
         )
     )
     return recs
+
+
+def _canon_timing(tm) -> str:
+    """A claim's timing in its canon record (PORT-3): nothing for none -- every unit without one keeps its canon byte
+    for byte -- else `|t:` and its eight fields in the model's order, the flag as 0 or 1. Its names are letters,
+    digits, `_`, `.` and `-` (the front ends' `TIMING_TEXT`), so a comma parts them. The twin's `canon_timing`."""
+    if tm is None:
+        return ""
+    fields = (
+        tm.clock_domain,
+        tm.latency_cycles,
+        tm.min_throughput_q16,
+        int(bool(tm.critical_path)),
+        tm.power_domain,
+        tm.sync_type,
+        tm.clock_frequency_mhz,
+        tm.setup_hold_margin,
+    )
+    return "|t:" + ",".join(str(f) for f in fields)
 
 
 def cfront_structural_canon(lowered) -> str:

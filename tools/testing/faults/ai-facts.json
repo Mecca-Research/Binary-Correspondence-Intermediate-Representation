@@ -1,0 +1,83 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_ai:_CC",
+    "bcir.tests.test_native_ai:test_native_ai_c_harness_c11_and_c23",
+    "bcir.tests.test_native_ai:test_native_fact_admission_is_the_oracles_hard_rail",
+    "bcir.tests.test_native_ai:test_native_q15_index_matches_hard_fact_filtered_python_oracle"
+  ],
+  "faults": [
+    {
+      "expects": "test_native_fact_admission_is_the_oracles_hard_rail",
+      "label": "FA1 a pattern admitted when any one fact it needs is active",
+      "path": "runtime/c/bcir_ai_kernels.c",
+      "old": "      admitted &= active[required_ids[at]];",
+      "new": "      admitted |= active[required_ids[at]];"
+    },
+    {
+      "expects": "test_native_fact_admission_is_the_oracles_hard_rail",
+      "label": "FA2 a pattern that needs nothing refused",
+      "path": "runtime/c/bcir_ai_kernels.c",
+      "old": "    uint8_t admitted = 1u;\n    for (at = required_offsets[pattern];",
+      "new": "    uint8_t admitted = required_offsets[pattern] == required_offsets[pattern + 1u] ? 0u : 1u;\n    for (at = required_offsets[pattern];"
+    },
+    {
+      "expects": "test_native_fact_admission_is_the_oracles_hard_rail",
+      "label": "FA3 a pattern's last required fact never asked",
+      "path": "runtime/c/bcir_ai_kernels.c",
+      "old": "    for (at = required_offsets[pattern]; at < required_offsets[pattern + 1u]; ++at)\n      admitted",
+      "new": "    for (at = required_offsets[pattern]; at + 1u < required_offsets[pattern + 1u]; ++at)\n      admitted"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "FA4 an id past the facts taken",
+      "path": "runtime/c/bcir_ai_kernels.c",
+      "old": "    if (required_ids[at] >= fact_count) return BCIR_AI_INVALID_ARGUMENT;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "FA5 falling offsets taken",
+      "path": "runtime/c/bcir_ai_kernels.c",
+      "old": "    if (required_offsets[pattern + 1u] < required_offsets[pattern]) return BCIR_AI_INVALID_ARGUMENT;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "FA6 an active byte of 2 taken",
+      "path": "runtime/c/bcir_ai_kernels.c",
+      "old": "    if (active[fact] > 1u) return BCIR_AI_INVALID_ARGUMENT;\n",
+      "new": ""
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "FA7 offsets that do not end at the count taken",
+      "path": "runtime/c/bcir_ai_kernels.c",
+      "old": "      required_offsets[0] != 0u || required_offsets[pattern_count] != required_count)",
+      "new": "      required_offsets[0] != 0u)"
+    },
+    {
+      "expects": "test_native_fact_admission_is_the_oracles_hard_rail",
+      "label": "FA8 the native index marks no fact active",
+      "path": "bcir/kbcir/native_ai.py",
+      "old": "            active[self._fact_index[fact]] = 1\n",
+      "new": "            active[self._fact_index[fact]] = 0\n"
+    },
+    {
+      "expects": "test_native_q15_index_matches_hard_fact_filtered_python_oracle",
+      "label": "FA9 the native index takes each pattern's facts one short",
+      "path": "bcir/kbcir/native_ai.py",
+      "old": "            self._ids.extend(self._fact_index[fact] for fact in pattern.required_facts)",
+      "new": "            self._ids.extend(self._fact_index[fact] for fact in pattern.required_facts[:-1])"
+    },
+    {
+      "expects": "test_native_ai_c_harness_c11_and_c23",
+      "label": "FA10 with no fact required anywhere, every pattern refused",
+      "path": "runtime/c/bcir_ai_kernels.c",
+      "old": "    for (pattern = 0u; pattern < pattern_count; ++pattern) eligible[pattern] = 1u;",
+      "new": "    for (pattern = 0u; pattern < pattern_count; ++pattern) eligible[pattern] = 0u;"
+    }
+  ]
+}

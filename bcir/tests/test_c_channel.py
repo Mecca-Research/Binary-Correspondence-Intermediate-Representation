@@ -146,3 +146,174 @@ def test_c_channel_parser_rejects_malformed():
             ).returncode
             == 1
         )
+
+
+# The channel reader's JSON skip, as its grammar reads: whitespace is space, tab, newline and return; a string is ASCII
+# from 0x20 up to 0x7f with the escapes `\" \\ \/ \b \f \n \r \t`; `true`, `false` and `null` match as a prefix; a number
+# is JSON's; and a value nested in more than 64 open containers is refused. A reference walk, written from that grammar
+# and recursive, as the C one was until it took an explicit stack for R18 (`bcir_channel.c`'s `jskip`).
+_JSKIP_DEPTH = 64
+
+
+def _jws(s: str, i: int) -> int:
+    while i < len(s) and s[i] in " \t\n\r":
+        i += 1
+    return i
+
+
+def _jstr(s: str, i: int):
+    if i >= len(s) or s[i] != '"':
+        return None
+    i += 1
+    while i < len(s) and s[i] != '"':
+        c = s[i]
+        i += 1
+        if not 0x20 <= ord(c) < 0x80:
+            return None
+        if c == "\\":
+            if i >= len(s) or s[i] not in '"\\/bfnrt':
+                return None
+            i += 1
+    return i + 1 if i < len(s) else None
+
+
+def _jnum(s: str, i: int):
+    def digits(j):
+        k = j
+        while k < len(s) and s[k].isascii() and s[k].isdigit():
+            k += 1
+        return k
+
+    if i < len(s) and s[i] == "-":
+        i += 1
+    if i >= len(s):
+        return None
+    if s[i] == "0":
+        i += 1
+    elif "1" <= s[i] <= "9":
+        i = digits(i)
+    else:
+        return None
+    if i < len(s) and s[i] == ".":
+        if digits(i + 1) == i + 1:
+            return None
+        i = digits(i + 1)
+    if i < len(s) and s[i] in "eE":
+        i += 1
+        if i < len(s) and s[i] in "+-":
+            i += 1
+        if digits(i) == i:
+            return None
+        i = digits(i)
+    return i
+
+
+def _jskip(s: str, i: int, depth: int = 0):
+    i = _jws(s, i)
+    if i >= len(s) or depth > _JSKIP_DEPTH:
+        return None
+    c = s[i]
+    if c == '"':
+        return _jstr(s, i)
+    if c in "{[":
+        close = "}" if c == "{" else "]"
+        i = _jws(s, i + 1)
+        if i < len(s) and s[i] == close:
+            return i + 1
+        while True:
+            if c == "{":
+                i = _jstr(s, i)
+                if i is None:
+                    return None
+                i = _jws(s, i)
+                if i >= len(s) or s[i] != ":":
+                    return None
+                i += 1
+            i = _jskip(s, i, depth + 1)
+            if i is None:
+                return None
+            i = _jws(s, i)
+            if i < len(s) and s[i] == close:
+                return i + 1
+            if i >= len(s) or s[i] != ",":
+                return None
+            i = _jws(s, i + 1)
+            if i >= len(s) or s[i] == close:
+                return None
+    for word in ("true", "false", "null"):
+        if s.startswith(word, i):
+            return i + len(word)
+    return _jnum(s, i)
+
+
+def _profile_value(rnd, depth: int) -> str:
+    r = rnd.random()
+    if depth > 70 or r < 0.35:
+        return rnd.choice(["1", "-0", "0.5", "1e9", "-1.2E-3", "true", "false", "null", '"s"', '"a\\nb"', "01", "1.",
+                           "-", "tru", '"x', "nul", "1e", ".5", "truex", '"\\u0041"'])  # fmt: skip
+    sep = rnd.choice([",", ", ", " ,", " "])  # ... and no comma at all
+    if r < 0.68:
+        body = sep.join(_profile_value(rnd, depth + 1) for _ in range(rnd.randint(0, 3)))
+        return (
+            rnd.choice(["[", "[ "])
+            + body
+            + ("," if rnd.random() < 0.05 else "")
+            + rnd.choice(["]", " ]"])
+        )
+    members = [
+        rnd.choice(['"k"', '"a b"', "k"])
+        + rnd.choice([":", " : ", " "])
+        + _profile_value(rnd, depth + 1)
+        for _ in range(rnd.randint(0, 3))
+    ]
+    return "{" + sep.join(members) + ("," if rnd.random() < 0.05 else "") + "}"
+
+
+def test_the_channel_readers_json_skip_is_its_grammar_at_every_depth():
+    """O1. The channel reader skips the value of a key it does not know by its grammar, at most 64 containers
+    deep, on an explicit stack: the recursive walk it replaced, which R18 refuses by design, is the reference. Each of
+    a seeded corpus of documents, and nestings of 60 to 69 arrays, objects and empty containers across the bound, is
+    accepted by the C reader exactly where the reference walk accepts its profile -- both verdicts drawn, each many
+    times."""
+    import random
+
+    if not _CC:
+        return
+    rnd = random.Random(20261128)
+    profiles = [_profile_value(rnd, 0) for _ in range(3000)]
+    for k in range(60, 70):
+        profiles += ["[" * k + "1" + "]" * k, '{"a":' * k + "1" + "}" * k, "[" * k + "]" * k]
+    docs = [
+        '{"name":"x","kind":"cpu","meta":' + v + "}" for v in profiles
+    ]  # a key the reader does not know
+    want = [_jskip(v, 0) == len(v) for v in profiles]
+    assert sum(want) > 500 and len(want) - sum(want) > 500, sum(want)
+    assert want[-30:-27] == [True, True, True] and want[-3:] == [
+        False,
+        False,
+        False,
+    ]  # 60 deep, and 69
+    with tempfile.TemporaryDirectory() as d:
+        drv = os.path.join(d, "drv.c")
+        with open(drv, "w", encoding="utf-8") as fh:
+            fh.write(
+                '#include <stdio.h>\n#include <string.h>\n#include "bcir_channel.h"\n'
+                "int main(void){ static char line[1 << 16]; bcir_channel ch; char dg[256];\n"
+                "  while (fgets(line, sizeof line, stdin)) { size_t n = strlen(line);\n"
+                "    if (n && line[n - 1] == '\\n') line[--n] = 0;\n"
+                '    printf("%d\\n", bcir_channel_parse(line, n, &ch, dg, sizeof dg)); }\n  return 0; }\n'
+            )
+        exe = os.path.join(d, "drv")
+        b = subprocess.run(
+            [_CC, "-std=c11", "-O1", "-I", _C, os.path.join(_C, "bcir_channel.c"), drv, "-o", exe],
+            capture_output=True,
+            text=True,
+        )
+        assert b.returncode == 0, b.stderr
+        run = subprocess.run([exe], input="\n".join(docs) + "\n", capture_output=True, text=True)
+        got = [
+            line == "0" for line in run.stdout.split()
+        ]  # bcir_channel_parse returns 0 on a document it accepts
+    assert len(got) == len(docs), (len(got), len(docs))
+    wrong = [(docs[k][:120], want[k]) for k in range(len(docs)) if got[k] != want[k]]
+    assert not wrong, wrong[:4]

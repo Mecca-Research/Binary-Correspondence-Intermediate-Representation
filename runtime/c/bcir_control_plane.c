@@ -11,6 +11,7 @@
 #include "bcir_control_plane.h"
 
 #include "bcir_execution_plan.h"
+#include "bcir_bytes.h"
 
 /* The domain-separation tags (each ends with its NUL: sizeof counts it, as the spec's
  * `|| 0x00` does). */
@@ -27,17 +28,6 @@ static const uint8_t ZERO32[32] = {0};
 
 /* --- little-endian primitives ------------------------------------------------------------ */
 
-static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)(p[1] << 8)); }
-static uint32_t rd32(const uint8_t *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-static uint64_t rd64(const uint8_t *p) { return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32); }
-static void wr32(uint8_t *p, uint32_t v) {
-  for (unsigned i = 0; i < 4u; ++i) p[i] = (uint8_t)(v >> (8u * i));
-}
-static void wr64(uint8_t *p, uint64_t v) {
-  for (unsigned i = 0; i < 8u; ++i) p[i] = (uint8_t)(v >> (8u * i));
-}
 static void copy_bytes(uint8_t *dst, const uint8_t *src, size_t n) {
   for (size_t i = 0; i < n; ++i) dst[i] = src[i];
 }
@@ -70,20 +60,20 @@ uint32_t bcir_ctl_body_bytes(uint16_t version, uint8_t kind) {
 
 static void read_header(const uint8_t *d, bcir_ctl_header *h) {
   for (unsigned i = 0; i < 4u; ++i) h->magic[i] = d[i];
-  h->version = rd16(d + 4);
-  h->flags = rd16(d + 6);
+  h->version = bcir_ld16le(d + 4);
+  h->flags = bcir_ld16le(d + 6);
   h->kind = d[8];
   h->scope = d[9];
   h->reason = d[10];
   h->reserved0 = d[11];
-  h->body_len = rd32(d + 12);
-  h->generation = rd32(d + 16);
-  h->expect = rd32(d + 20);
-  h->capability = rd64(d + 24);
-  h->boundary = rd64(d + 32);
-  h->sequence = rd64(d + 40);
-  h->lease = rd64(d + 48);
-  h->subject = rd64(d + 56);
+  h->body_len = bcir_ld32le(d + 12);
+  h->generation = bcir_ld32le(d + 16);
+  h->expect = bcir_ld32le(d + 20);
+  h->capability = bcir_ld64le(d + 24);
+  h->boundary = bcir_ld64le(d + 32);
+  h->sequence = bcir_ld64le(d + 40);
+  h->lease = bcir_ld64le(d + 48);
+  h->subject = bcir_ld64le(d + 56);
 }
 
 bcir_status bcir_ctl_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
@@ -106,7 +96,7 @@ bcir_status bcir_ctl_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
     if (len < total) return BCIR_ERR_TRUNCATED;
     if (len > total) return BCIR_ERR_TRAILING;
     /* 8. the CRC over every preceding byte */
-    if (bcir_crc32(data, total - 4u) != rd32(data + total - 4u)) return BCIR_ERR_CRC;
+    if (bcir_crc32(data, total - 4u) != bcir_ld32le(data + total - 4u)) return BCIR_ERR_CRC;
   }
   if (hdr) *hdr = h;
   return BCIR_OK;
@@ -136,21 +126,21 @@ bcir_status bcir_ctl_decode(const uint8_t *BCIR_RESTRICT data, size_t len,
   /* the body, in wire order */
   switch (h->kind) {
     case BCIR_CTL_LEASE:
-      r.body.lease.lease_id = rd64(b);
-      r.body.lease.granted = rd64(b + 8);
-      r.body.lease.issued_epoch = rd64(b + 16);
-      r.body.lease.expiry_epoch = rd64(b + 24);
-      r.body.lease.holder = rd64(b + 32);
+      r.body.lease.lease_id = bcir_ld64le(b);
+      r.body.lease.granted = bcir_ld64le(b + 8);
+      r.body.lease.issued_epoch = bcir_ld64le(b + 16);
+      r.body.lease.expiry_epoch = bcir_ld64le(b + 24);
+      r.body.lease.holder = bcir_ld64le(b + 32);
       break;
     case BCIR_CTL_GENERATION:
-      r.body.generation.map_gen = rd32(b);
-      r.body.generation.data_gen = rd32(b + 4);
-      r.body.generation.topo_gen = rd32(b + 8);
-      r.body.generation.reserved = rd32(b + 12);
+      r.body.generation.map_gen = bcir_ld32le(b);
+      r.body.generation.data_gen = bcir_ld32le(b + 4);
+      r.body.generation.topo_gen = bcir_ld32le(b + 8);
+      r.body.generation.reserved = bcir_ld32le(b + 12);
       copy_bytes(r.body.generation.registry_digest, b + 16, 32u);
       break;
     case BCIR_CTL_QUIESCE:
-      r.body.quiesce.drain_deadline = rd64(b);
+      r.body.quiesce.drain_deadline = bcir_ld64le(b);
       break;
     case BCIR_CTL_ACTIVATE:
       copy_bytes(r.body.activate.artifact_sha256, b, 32u);
@@ -161,8 +151,8 @@ bcir_status bcir_ctl_decode(const uint8_t *BCIR_RESTRICT data, size_t len,
       copy_bytes(r.body.rollback.rollback_token, b + 32, 32u);
       break;
     default: /* BCIR_CTL_CANCEL (the kind was range-checked by the framing laws) */
-      r.body.cancel.first_sequence = rd64(b);
-      r.body.cancel.last_sequence = rd64(b + 8);
+      r.body.cancel.first_sequence = bcir_ld64le(b);
+      r.body.cancel.last_sequence = bcir_ld64le(b + 8);
       break;
   }
 
@@ -238,7 +228,7 @@ bcir_status bcir_ctl_lease_key(const uint8_t *BCIR_RESTRICT root, size_t root_le
     wipe(out, 32u);
     return BCIR_ERR_CONTROL;
   }
-  wr64(id, lease_id);
+  bcir_st64le(id, lease_id);
   bcir_hmac_sha256_init(&ctx, root, root_len);
   bcir_hmac_sha256_update(&ctx, LEASE_TAG, sizeof(LEASE_TAG));
   bcir_hmac_sha256_update(&ctx, id, sizeof(id));
@@ -249,9 +239,9 @@ bcir_status bcir_ctl_lease_key(const uint8_t *BCIR_RESTRICT root, size_t root_le
 
 static int feed_generation(const bcir_generation_view *g, void *ctx) {
   uint8_t b[BCIR_GENERATION_WIRE_SIZE];
-  wr32(b, g->rid);
-  wr32(b + 4, g->map_gen);
-  wr32(b + 8, g->data_gen);
+  bcir_st32le(b, g->rid);
+  bcir_st32le(b + 4, g->map_gen);
+  bcir_st32le(b + 8, g->data_gen);
   bcir_sha256_update((bcir_sha256 *)ctx, b, sizeof(b));
   return 0;
 }
@@ -622,12 +612,12 @@ bcir_ctl_outcome bcir_ctl_admit_plan(bcir_ctl_state *BCIR_RESTRICT state,
 static void put8(bcir_sha256 *h, uint8_t v) { bcir_sha256_update(h, &v, 1u); }
 static void put32(bcir_sha256 *h, uint32_t v) {
   uint8_t b[4];
-  wr32(b, v);
+  bcir_st32le(b, v);
   bcir_sha256_update(h, b, sizeof(b));
 }
 static void put64(bcir_sha256 *h, uint64_t v) {
   uint8_t b[8];
-  wr64(b, v);
+  bcir_st64le(b, v);
   bcir_sha256_update(h, b, sizeof(b));
 }
 

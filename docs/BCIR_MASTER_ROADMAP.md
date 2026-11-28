@@ -274,17 +274,17 @@ Current work is maintenance and bounded completion, not another breadth sprint:
 - Keep C-front twin/Clang equivalence, project linking, diagnostics, target ABI, and memory
   discipline green while driver fixtures become real programs.
 - Add C standard-library/compiler surfaces only when a driver or model slice requires them.
-  Near-term ML-relevant gaps are `<stdbit.h>`, `<stdckdint.h>`, verifier-fed `assume`, and
-  packed sub-byte storage/compute semantics.
+  Near-term ML-relevant gaps are verifier-fed `assume` and packed sub-byte storage/compute
+  semantics; `<stdbit.h>` and `<stdckdint.h>` have landed (CSUB-3).
 - **The subset against the runtime's own C** ([`research/BCIR_C_SUBSET_AUDIT_2026-11-10.md`](research/BCIR_C_SUBSET_AUDIT_2026-11-10.md)).
   CSUB-1, conformance, has landed: multi-line macro calls, `static_assert`, the freestanding
   headers, and one macro engine on both rails. The ratchet (`tools/c/csub_ratchet.py`) records
   which production units compile with R1–R18 clean, and names the rung that lifts each of the
   rest. The ladder from here:
   - CSUB-2, table idioms (most of the blocked units wait on it);
-  - CSUB-3, `<stdbit.h>` and `<stdckdint.h>`;
-  - CSUB-4, `<stdatomic.h>`'s explicit-order calls;
-  - CSUB-5, a hosted profile;
+  - CSUB-3, `<stdbit.h>`, `<stdckdint.h>` and one `bcir_bytes.h` (landed);
+  - CSUB-4, `<stdatomic.h>`'s explicit-order calls (landed);
+  - CSUB-5, a hosted profile (its `<string.h>` reads, hosted headers, the tools' next forms and `atomic_flag` landed);
   - CSUB-6, AI numerics at the source level.
 
   The ratchet fails a unit that stops compiling clean, and fails a promotion until it is

@@ -5,14 +5,11 @@
 #include "bcir_handoff.h"
 
 #include "bcir_shard_manifest.h"
+#include "bcir_bytes.h"
 
 static const uint8_t STATE_TAG[] = "BHOF/state/v0";  /* sizeof counts the NUL: the tag's 0x00 */
 static const uint8_t ZERO32[32] = {0};
 
-static void wr32(uint8_t *p, uint32_t v) {
-  p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
-}
-static void wr64(uint8_t *p, uint64_t v) { wr32(p, (uint32_t)v); wr32(p + 4, (uint32_t)(v >> 32)); }
 static void copy32(uint8_t *d, const uint8_t *s) {
   for (size_t i = 0; i < 32u; i++) d[i] = s[i];
 }
@@ -267,19 +264,19 @@ void bcir_ho_state_digest(const bcir_ho_table *BCIR_RESTRICT table, uint8_t out[
   uint8_t held_digest[32];
   bcir_sha256_init(&h);
   bcir_sha256_update(&h, STATE_TAG, sizeof(STATE_TAG));
-  wr32(b, table ? table->n_slots : 0u);
-  wr64(b + 4, table ? (uint64_t)table->capacity : 0u);
+  bcir_st32le(b, table ? table->n_slots : 0u);
+  bcir_st64le(b + 4, table ? (uint64_t)table->capacity : 0u);
   bcir_sha256_update(&h, b, 12u);
   for (uint32_t i = 0; table && table->slots && i < table->n_slots; i++) {
     const bcir_ho_slot *s = &table->slots[i];
     int held = s->state == BCIR_HO_FROZEN || s->state == BCIR_HO_RETIRED ||
                (s->state == BCIR_HO_EXHAUSTED && s->pins > 0u);
-    wr32(b, s->epoch);
+    bcir_st32le(b, s->epoch);
     b[4] = s->state;
     b[5] = s->admitted;
-    wr32(b + 6, s->pins);
-    wr32(b + 10, s->admitted_generation);
-    wr64(b + 14, held ? (uint64_t)s->length : 0u);
+    bcir_st32le(b + 6, s->pins);
+    bcir_st32le(b + 10, s->admitted_generation);
+    bcir_st64le(b + 14, held ? (uint64_t)s->length : 0u);
     bcir_sha256_update(&h, b, sizeof b);
     bcir_sha256_update(&h, s->admitted_registry, 32u);
     if (held) {

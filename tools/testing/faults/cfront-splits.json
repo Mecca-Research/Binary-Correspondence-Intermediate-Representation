@@ -31,23 +31,23 @@
     },
     {
       "expects": "test_split_forms_on_a_device_object_are_refused_on_both_rails",
-      "label": "S4 the oracle steps a member of a device struct as a value",
-      "new": "            _is_scalar_member_lv(node.operand, lv)\n        ):",
-      "old": "            _is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)\n        ):",
+      "label": "S4 the oracle re-reads a device struct's member for a prefix step that narrows",
+      "new": "            if named_vol:",
+      "old": "            if named_vol or (lv.kind == \"mem\" and self._mmio(lv.rid)):",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T1 the twin's inc/dec stops at a pointer member (`h.next->v++` refused again)",
-      "new": "    if(0 && f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){   /* on through the pointer member it loads: `h.next->v++`,",
-      "old": "    if(f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){   /* on through the pointer member it loads: `h.next->v++`,",
+      "new": "    if(0 && ((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f))){   /* on through the pointer it loads:",
+      "old": "    if((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f)){   /* on through the pointer it loads:",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T2 the twin's assignment value stops at a pointer member (`x = (h.next->v = 5)` refused again)",
-      "new": "    if(0 && f.is_ptr && !v->type.is_volatile && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){",
-      "old": "    if(f.is_ptr && !v->type.is_volatile && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){",
+      "new": "    if(0 && ((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f)) && !v->type.is_volatile){",
+      "old": "    if(((f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))) || ptr_elem_form(c,&f)) && !v->type.is_volatile){",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -67,8 +67,8 @@
     {
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T5 the twin keeps the parentheses of a callee (`(fp)(x)` refused again)",
-      "new": "      if(0 && !star && is_name && tok_is(op,\"(\") && !up_has_subscript(c,run_end,pe)){",
-      "old": "      if(!star && is_name && tok_is(op,\"(\") && !up_has_subscript(c,run_end,pe)){",
+      "new": "      if(0 && !star && !amp && is_name && tok_is(op,\"(\") && !up_has_subscript(c,run_end,pe)){",
+      "old": "      if(!star && !amp && is_name && tok_is(op,\"(\") && !up_has_subscript(c,run_end,pe)){",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -87,7 +87,7 @@
     },
     {
       "expects": "test_split_forms_on_a_device_object_are_refused_on_both_rails",
-      "label": "T8 the twin steps a member of a device struct as a value (the loaded pointer's domain unread)",
+      "label": "T8 the twin takes a device struct's member through a loaded pointer as plain storage (the loaded pointer's domain unread)",
       "new": "  (void)r;",
       "old": "  if(r && r->domain==BCIR_DOM_MMIO) return 1;",
       "path": "runtime/c/bcir_cfront.c"
@@ -96,7 +96,7 @@
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T9 the twin never re-reads a narrowing store's value through a loaded pointer",
       "new": "  (void)r; (void)sz; return 0;",
-      "old": "  return (lv->kind==1 && lv->f.bit_w) || sz < (int)(r?r->elem_bytes:4);",
+      "old": "  return ((lv->kind==1||lv->kind==3) && lv->f.bit_w) || sz < (int)(r?r->elem_bytes:4);",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

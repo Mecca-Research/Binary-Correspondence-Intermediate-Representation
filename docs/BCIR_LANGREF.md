@@ -299,7 +299,10 @@ it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attribu
   claim carries a positive clock; the setup/hold margin fits within the stage
   latency (R19) — and a RAW dependency that crosses clock domains must be
   synchronized (the consumer declares `sync_type='mixed'` or a barriered hazard),
-  else it is an unguarded crossing (R20).
+  else it is an unguarded crossing (R20). C source gives a statement's claims a
+  timing with the C23 attribute `[[bcir::timing(field = value, ...)]]` (PORT-3),
+  on both C front ends, and the C verifier (`bcir_verify.c`) holds both laws in the
+  oracle's words (`docs/languages/CFRONT_GUIDE.md`, "Timing annotations").
 - **R21 (pointer-lifetime legality: use-after-free / double-free)** — over the
   optional `#bcir.lifetime` annotation (`model.graph.Lifetime`, this §10): walking the
   claim order against the freed set, a read of a freed-and-not-reallocated resource

@@ -46,10 +46,10 @@ typedef enum bcir_stride {
 typedef enum bcir_hazard { BCIR_HZ_UNIQUE = 0, BCIR_HZ_ATOMIC = 1, BCIR_HZ_BARRIERED = 2 } bcir_hazard;
 typedef enum bcir_bounds { BCIR_BND_STRICT = 0, BCIR_BND_MASKED = 1, BCIR_BND_ASSUMED = 2 } bcir_bounds;
 
-/* The arguments a call carries, on both rails (the oracle's `lower.MAX_CALL_ARGS`): a seventeenth is refused alike,
- * where the twin once kept six and dropped the rest (CF-CALLARGS). A claim reads a callee value or an object base
- * and then the arguments, so its reads are one more. */
-#define BCIR_CALL_MAX_ARGS 16
+/* The arguments a call carries, on both rails (the oracle's `lower.MAX_CALL_ARGS`): a twenty-fifth is refused alike,
+ * where the twin once kept six and dropped the rest (CF-CALLARGS). Sixteen until the tensor kernels' calls of eighteen
+ * (CSUB-6a). A claim reads a callee value or an object base and then the arguments, so its reads are one more. */
+#define BCIR_CALL_MAX_ARGS 24
 #define BCIR_CLAIM_MAX_RD (BCIR_CALL_MAX_ARGS + 1)
 #define BCIR_CLAIM_MAX_WR 2
 #define BCIR_CLAIM_MAX_IMM 4   /* off, size, flag, stride -- the array-of-structs `arr[i].field` store */
@@ -135,6 +135,12 @@ typedef struct bcir_resource {
   uint8_t  typedef_named;    /* a named local whose name is one of the unit's typedef names, which the emitted function
                               * may spell: its hoisted declaration may not take the name (CF-TYPEDEFSCOPE; the oracle's
                               * `_uniq`). Emit-only. */
+  uint16_t row_n;            /* a POINTER to a row, loaded from a member `T (*m)[N]` (CSUB-2d): N, the row's scalars (0:
+                              * not one). It is declared flat, as a `T m[][N]` parameter is, so arithmetic on it, which
+                              * would step by the row, is refused, as a parameter's is (`rid_multidim`), and `typeof` of
+                              * it is the row pointer (`p_typeof_expr`). In the padding before `align` */
+  uint16_t align;            /* a local's or a static's `_Alignas(N)` (CSUB-2), spelled on its declaration; 0 -- none.
+                              * Emit-only, as a declared type is: the claim graph and its digest do not read it. */
 } bcir_resource;
 
 /* a C type descriptor (for signatures + faithful emission). */
@@ -180,6 +186,10 @@ typedef struct bcir_ctype {
                               * definition (0: not one) -- the call's result is that aggregate value */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
   int      nadims;           /* number of array dims (0 == not an array parameter) */
+  uint8_t  c_long;           /* an integer's `long`s as the source spells them: 1 `long`, 2 `long long`, else 0. The
+                              * emit spells an integer by its width (`int64_t`); a declaration of a function the C
+                              * library or another unit defines spells it as C does, which the library's own agrees
+                              * with -- `long long strtoll(...)`, not `int64_t`, which is `long` on LP64 (CSUB-5) */
 } bcir_ctype;
 
 typedef struct bcir_param { char name[BCIR_CIR_NAME]; uint32_t rid; bcir_ctype type; } bcir_param;
@@ -213,7 +223,26 @@ typedef struct bcir_claim {
                                * function's `qcasts` of the first of its casts, which follow one another; 0 for
                                * none. Held on the claim so that a lowering rolled back takes its casts with it.
                                * OPTIONAL annotation, digest-excluded, default 0. In the struct's tail padding. */
+  uint32_t timing;            /* the timing the timing laws R19/R20 read (PORT-3): 1 + the index in its function's
+                               * `timings` of the one a `[[bcir::timing(...)]]` statement gave it; 0 for none (the
+                               * oracle's `Claim.timing is None`). OPTIONAL annotation, excluded from the R13
+                               * provenance digest as the oracle excludes it; the cross-rail canon holds it. */
 } bcir_claim;
+
+/* A statement's timing (PORT-3): the oracle's `bcir.model.Timing`, field for field, as the law rail's `#bcir.timing`
+ * holds it -- three names of at most 63 letters, digits, `_`, `.` and `-` (the front ends refuse any other), four
+ * signed 64-bit counts and a flag. */
+#define BCIR_TIMING_TEXT 64
+typedef struct bcir_timing {
+  char     clock_domain[BCIR_TIMING_TEXT];   /* the clock net ("" = the implicit default) */
+  int64_t  latency_cycles;                   /* the stage's latency in cycles (0 = unspecified) */
+  int64_t  min_throughput_q16;               /* items per cycle, Q16 (0 = unspecified) */
+  uint8_t  critical_path;                    /* on the longest timing path */
+  char     power_domain[BCIR_TIMING_TEXT];   /* the power or voltage domain ("" = the implicit default) */
+  char     sync_type[BCIR_TIMING_TEXT];      /* "" | "synchronous" | "asynchronous" | "mixed"; R19 refuses others */
+  int64_t  clock_frequency_mhz;              /* the target clock (0 = unspecified) */
+  int64_t  setup_hold_margin;                /* extra setup/hold margin in cycles */
+} bcir_timing;
 
 /* A cast the emit puts on an operand of a call, or on its result (CF-QUALS): the callee's function type keeps a
  * qualifier below a parameter's top level, or below its return's, that the emit's own objects -- spelled without
@@ -290,9 +319,16 @@ typedef struct bcir_func {
   bcir_qcast *qcasts; int n_qcasts, cap_qcasts;           /* the casts its calls' operands take (CF-QUALS) */
   bcir_qglobal *qglobals; int n_qglobals, cap_qglobals;   /* its qualified globals, as the emit names them
                                                            * (CF-LINKEMIT) */
+  bcir_timing *timings; int n_timings, cap_timings;       /* the timings its statements carry, which its claims'
+                                                           * `timing` index (PORT-3) */
   struct bcir_emit_names *emit_names;                     /* the names its objects emit as, built once per emission
                                                            * and read by every reference (CF-NAMECACHE); NULL
                                                            * otherwise. Emit-only; owned by the lowering's allocator. */
+  char *block_types;                                      /* the untagged aggregates its block declarations define,
+                                                           * `struct { ... } t[]`, as the typedef lines the emit opens
+                                                           * the function with, `typedef <their tokens> __bcir_anonN;`
+                                                           * (CSUB-2); NULL when none. Emit-only; owned by the
+                                                           * lowering's allocator. */
 } bcir_func;
 
 /* A translation unit: a growable list of functions sharing struct definitions + a call graph. */

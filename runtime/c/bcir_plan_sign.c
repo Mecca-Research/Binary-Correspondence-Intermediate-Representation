@@ -7,14 +7,7 @@
 
 #include "bcir_ed25519.h"
 #include "bcir_sha256.h"
-
-static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
-
-static uint32_t rd32(const uint8_t *p) {
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static uint64_t rd64(const uint8_t *p) { return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32); }
+#include "bcir_bytes.h"
 
 static int same32(const uint8_t *a, const uint8_t *b) {
   unsigned i, d = 0;
@@ -58,15 +51,15 @@ bcir_ps_verdict bcir_ps_store_validate(const uint8_t *store, size_t length, uint
   if (count) *count = 0;
   if (!store || length < 8u) return BCIR_PS_STORE;
   if (store[0] != 'B' || store[1] != 'T' || store[2] != 'R' || store[3] != 'S') return BCIR_PS_STORE;
-  if (rd16(store + 4) != 1u) return BCIR_PS_STORE;
-  n = rd16(store + 6);
+  if (bcir_ld16le(store + 4) != 1u) return BCIR_PS_STORE;
+  n = bcir_ld16le(store + 6);
   if (length != 8u + (size_t)BCIR_PS_STORE_ENTRY_SIZE * n) return BCIR_PS_STORE;
   for (i = 0; i < n; i++) {
     const uint8_t *e = store + 8u + BCIR_PS_STORE_ENTRY_SIZE * i;
     if (!bcir_ed25519_usable_key(e)) return BCIR_PS_STORE;
     if (i > 0 && compare32(e - BCIR_PS_STORE_ENTRY_SIZE, e) >= 0) return BCIR_PS_STORE;
-    if (rd64(e + 40) <= rd64(e + 32)) return BCIR_PS_STORE; /* an empty window */
-    if ((rd32(e + 48) & ~(uint32_t)BCIR_PS_KEY_REVOKED) != 0u || rd32(e + 52) != 0u)
+    if (bcir_ld64le(e + 40) <= bcir_ld64le(e + 32)) return BCIR_PS_STORE; /* an empty window */
+    if ((bcir_ld32le(e + 48) & ~(uint32_t)BCIR_PS_KEY_REVOKED) != 0u || bcir_ld32le(e + 52) != 0u)
       return BCIR_PS_STORE;
   }
   if (count) *count = n;
@@ -86,7 +79,7 @@ bcir_ps_verdict bcir_ps_verify(const uint8_t *statement, size_t statement_length
   if (!statement || statement_length != BCIR_PS_STATEMENT_SIZE) return BCIR_PS_STATEMENT;
   if (statement[0] != 'B' || statement[1] != 'P' || statement[2] != 'S' || statement[3] != 'G')
     return BCIR_PS_STATEMENT;
-  if (rd16(statement + 4) != 1u || rd16(statement + 6) != 0u) return BCIR_PS_STATEMENT;
+  if (bcir_ld16le(statement + 4) != 1u || bcir_ld16le(statement + 6) != 0u) return BCIR_PS_STATEMENT;
   if (zero32(statement + 48)) return BCIR_PS_STATEMENT; /* a statement binds a plan */
   if (!plan && plan_length) return BCIR_PS_PLAN;
   bcir_sha256_digest(plan, plan_length, digest);
@@ -105,10 +98,10 @@ bcir_ps_verdict bcir_ps_verify(const uint8_t *statement, size_t statement_length
     }
   }
   if (!key) return BCIR_PS_UNKNOWN_KEY;
-  if (rd32(key + 48) & BCIR_PS_KEY_REVOKED) return BCIR_PS_REVOKED;
-  signed_at = rd64(statement + 8);
+  if (bcir_ld32le(key + 48) & BCIR_PS_KEY_REVOKED) return BCIR_PS_REVOKED;
+  signed_at = bcir_ld64le(statement + 8);
   if (signed_at > now) return BCIR_PS_FUTURE;
-  if (signed_at < rd64(key + 32) || signed_at >= rd64(key + 40)) return BCIR_PS_WINDOW;
+  if (signed_at < bcir_ld64le(key + 32) || signed_at >= bcir_ld64le(key + 40)) return BCIR_PS_WINDOW;
   if (!bcir_ed25519_verify(key, statement, BCIR_PS_SIGNED_SIZE, statement + BCIR_PS_SIGNED_SIZE))
     return BCIR_PS_SIGNATURE;
   return BCIR_PS_OK;

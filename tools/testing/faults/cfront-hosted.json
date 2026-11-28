@@ -1,0 +1,124 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+  "bcir.tests.test_c_cfront:test_the_hosted_profile_lowers_alike_and_runs_as_the_c_librarys_build"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP1 the oracle's FILE the UCRT's on Linux",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "tag = \"_iobuf\" if _windows(abi) else \"_IO_FILE\"",
+   "new": "tag = \"_IO_FILE\" if _windows(abi) else \"_iobuf\""
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP2 the twin's FILE the UCRT's on Linux",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "st->msvc ? \"_iobuf\" : \"_IO_FILE\"",
+   "new": "st->msvc ? \"_IO_FILE\" : \"_iobuf\""
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP3 the oracle's errno another location",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "loc = \"_errno\" if _windows(abi) else \"__errno_location\"",
+   "new": "loc = \"_errno\" if _windows(abi) else \"__errno\""
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP4 the twin's ERANGE one short",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "{\"ENOSPC\", 28}, {\"ERANGE\", 34},",
+   "new": "{\"ENOSPC\", 28}, {\"ERANGE\", 33},"
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP5 the oracle's strtoll returning long",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"long long strtoll(const char *, char **, int);\",",
+   "new": "\"long strtoll(const char *, char **, int);\","
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP6 the twin's library declarations spelled by width",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(!ty->c_long || ty->is_bool ||",
+   "new": "  if(1 || ty->is_bool ||"
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP7 the twin's long count unrecorded",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(longs>=1 && !ty->is_float && ty->kind==0) ty->c_long=(uint8_t)(longs>=2?2:1);",
+   "new": "  if(0 && longs>=1 && !ty->is_float && ty->kind==0) ty->c_long=(uint8_t)(longs>=2?2:1);"
+  },
+  {
+   "expects": "test_the_hosted_profile_lowers_alike_and_runs_as_the_c_librarys_build",
+   "label": "HP8 the twin's anonymous struct numbered by every aggregate",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    int na=0; for(int k=0;k<my;k++) na+=is_anon_tag(c->s[k].tag);",
+   "new": "    int na=my;"
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP9 the oracle's TIME_UTC another base",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"#define TIME_UTC 1\",",
+   "new": "\"#define TIME_UTC 2\","
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP10 the oracle's 64-bit length modifier ll on LP64",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"64\": \"l\" if lp64 else \"ll\"",
+   "new": "\"64\": \"ll\" if lp64 else \"l\""
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP11 the twin's pointer length modifier ll on i386",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "wptr = lp64 ? \"l\" : st->pointer_size == 4 ? \"\" : \"ll\";",
+   "new": "wptr = lp64 ? \"l\" : \"ll\";"
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP12 the twin without fdopen",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "    hput(b, \"FILE *fdopen(int, const char *);\");\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP13 the oracle's stdio unregistered",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "    \"stdio.h\": _stdio,\n",
+   "new": ""
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP14 the twin's stdlib unknown",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "\"stdio.h\", \"stdlib.h\", \"errno.h\", \"time.h\", \"inttypes.h\", \"unistd.h\",",
+   "new": "\"stdio.h\", \"errno.h\", \"time.h\", \"inttypes.h\", \"unistd.h\","
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP15 the twin's time_t int on Linux",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "\"typedef long long time_t;\" : \"typedef long time_t;\"",
+   "new": "\"typedef long long time_t;\" : \"typedef int time_t;\""
+  },
+  {
+   "expects": "test_the_hosted_headers_are_one_text_on_both_rails_and_the_c_librarys_declarations",
+   "label": "HP16 the oracle's qsort comparator without its const",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "\"void qsort(void *, size_t, size_t, int (*)(const void *, const void *));\",",
+   "new": "\"void qsort(void *, size_t, size_t, int (*)(void *, void *));\","
+  }
+ ]
+}

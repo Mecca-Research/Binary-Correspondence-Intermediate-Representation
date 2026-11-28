@@ -1,0 +1,32 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_a_pointer_element_of_a_member_is_stored_alike_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_a_pointer_element_of_a_member_is_stored_alike_on_both_rails",
+   "label": "PS1 the twin's element store read as a walk",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(pfld.ptee_depth>1 && pfld.row_n<=0 && !pfld.fp_sig && !elem_is_stored(c)){",
+   "new": "  if(pfld.ptee_depth>1 && pfld.row_n<=0 && !pfld.fp_sig){"
+  },
+  {
+   "expects": "test_a_pointer_element_of_a_member_is_stored_alike_on_both_rails",
+   "label": "PS2 the twin's null pointer stored as an int",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "        val=null_pointer(c,val,&et); } }",
+   "new": "        (void)et; } }"
+  },
+  {
+   "expects": "test_a_pointer_element_of_a_member_is_stored_alike_on_both_rails",
+   "label": "PS3 the twin's walk through an element read as its store",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return tok_is(t,\"=\") || is_compound_op(t);\n}",
+   "new": "  (void)t; return 1;\n}"
+  }
+ ]
+}

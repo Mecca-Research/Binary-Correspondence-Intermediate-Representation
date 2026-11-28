@@ -1,0 +1,89 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+  "bcir.tests.test_c_cfront:test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_target"
+ ],
+ "faults": [
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK1 the oracle's ckd_add subtracts",
+   "path": "bcir/frontends/cfront/stdheaders.py",
+   "old": "        \"#define ckd_add(R, A, B) __builtin_add_overflow((A), (B), (R))\",",
+   "new": "        \"#define ckd_add(R, A, B) __builtin_sub_overflow((A), (B), (R))\","
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK2 the twin's ckd_mul adds",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  hput(b, \"#define ckd_mul(R, A, B) __builtin_mul_overflow((A), (B), (R))\");",
+   "new": "  hput(b, \"#define ckd_mul(R, A, B) __builtin_add_overflow((A), (B), (R))\");"
+  },
+  {
+   "expects": "test_the_standard_headers_expand_alike_on_both_rails_and_as_clang_on_every_target",
+   "label": "CK3 the twin's header swaps ckd_sub's operands, unlike Clang's",
+   "path": "runtime/c/bcir_cpp.c",
+   "old": "  hput(b, \"#define ckd_sub(R, A, B) __builtin_sub_overflow((A), (B), (R))\");",
+   "new": "  hput(b, \"#define ckd_sub(R, A, B) __builtin_sub_overflow((B), (A), (R))\");"
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK4 the oracle calls an overflow builtin an undefined function",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if node.callee in _BUILTIN_CKD and node.callee not in self.func_rets:",
+   "new": "        if False and node.callee in _BUILTIN_CKD and node.callee not in self.func_rets:"
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK5 the oracle takes a bool for an overflow builtin's integer",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "            return ct is not None and ct.is_integer and ct.name not in (\"_Bool\", \"bool\")",
+   "new": "            return ct is not None and ct.is_integer"
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK6 the oracle takes a volatile or atomic result",
+   "path": "bcir/frontends/cfront/lower.py",
+   "old": "        if r.of.volatile or r.of.atomic:\n            raise CLowerError(CKD_RESULT_FO)\n",
+   "new": ""
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK7 the twin calls an overflow builtin an undefined function",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  if(ckd_builtin(name->s,name->n) && !unit_defines(c,name)){",
+   "new": "  if(0 && ckd_builtin(name->s,name->n) && !unit_defines(c,name)){"
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK8 the twin takes a bool for an overflow builtin's integer",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "  return r && !r->is_float && !r->is_bool && !r->is_complex",
+   "new": "  return r && !r->is_float && !r->is_complex"
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK9 the twin takes a volatile or atomic result",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(rr->is_volatile || rr->is_atomic || rr->domain==BCIR_DOM_MMIO){ fail(c,CC_CKD_RESULT_FO); return 0; }\n",
+   "new": ""
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK10 the twin takes a pointer operand",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "    if(!ckd_int(ra) || ra->kind==BCIR_RK_POINTER || !ckd_int(rb)",
+   "new": "    if(!ckd_int(ra) || !ckd_int(rb)"
+  },
+  {
+   "expects": "test_checked_arithmetic_is_the_overflow_builtin_on_both_rails",
+   "label": "CK11 the twin takes a result through a `T **`",
+   "path": "runtime/c/bcir_cfront.c",
+   "old": "       || rr->kind!=BCIR_RK_POINTER || (rr->ptr_depth?rr->ptr_depth:1)!=1){ fail(c,CC_CKD_OPERANDS); return 0; }",
+   "new": "       || rr->kind!=BCIR_RK_POINTER){ fail(c,CC_CKD_OPERANDS); return 0; }"
+  }
+ ]
+}

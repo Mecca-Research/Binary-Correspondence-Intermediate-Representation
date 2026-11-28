@@ -32,12 +32,27 @@
 #define BCIR_CPP_LINE 8192
 #define BCIR_CPP_ARGS 16
 #define BCIR_CPP_LONG_NAME "macro name is too long"
+/* A macro as `define_macro` reads one: fixed fields, held only while its line is read. */
 typedef struct {
   char name[BCIR_CPP_NAME];
   int isfunc;
   int np; char params[16][BCIR_CPP_NAME]; int variadic;
   char body[1024];
+} MacroDef;
+/* A macro as the table holds one: its parameters and body in one allocation of their own size (`blk`). Each had held
+ * 2 KiB whatever it spelled, in a table of 1024 that `define_macro` refused past (`too many macros`), where the oracle
+ * took any number (CF-MACROCAP). */
+typedef struct {
+  char name[BCIR_CPP_NAME];
+  int isfunc, np, variadic;
+  char (*params)[BCIR_CPP_NAME];
+  char *body;
+  void *blk;
 } Macro;
+/* The most macros the table holds, predefined and `-D` ones included, on both rails (the oracle's `cpp._MAX_MACROS`):
+ * a hide set names a macro by a 16-bit index, and a token from a macro's body by PPX_BODY + its index. */
+#define BCIR_CPP_MAX_MACROS 65534u
+#define PP_TOO_MANY_MACROS "too many macros"
 
 /* A token in macro replacement (the engine below): its spelling (`len` bytes at `off` in the text `src` names), its
  * hide set (an interned set of macro indices, 0 the empty one), its kind as `ntok` reads it ('i', 'n', 's', 'p'; 0 a
@@ -50,12 +65,14 @@ typedef struct { uint32_t start, len, hash, slot; } PPHide;
 typedef struct CppState {
   bcir_host_allocator allocator;
   bcir_host_arena scratch;
-  Macro macros[1024];
+  Macro *macros; size_t macro_cap;           /* the macro table, grown from the allocator (CF-MACROCAP) */
   int macro_count;
+  int *macro_index; size_t macro_index_cap;   /* each macro's index by its name's hash, -1 an empty slot (find_macro) */
   const char *limit_error;
   char constant_error[96];   /* the text of a malformed `#if` constant's refusal (`lit`), which limit_error names */
   const char *current_file;
   int current_line;
+  int line_spliced;          /* the current line's continuation holds `__LINE__` (`splice_lines`, PP_LINE_ON_SPLICED) */
   int include_depth;
   int long_size, pointer_size, long_double, msvc, flt_eval;   /* the rest of the target the standard headers the
                                                 * preprocessor supplies read (`bcir_cpp_context_set_target`) */
@@ -74,7 +91,7 @@ typedef struct CppState {
   PPHide *hs_v; size_t hs_n, hs_cap;
   uint16_t *hs_el; size_t hs_el_n, hs_el_cap;
   uint32_t *hs_tab; size_t hs_tab_cap;
-  uint16_t hs_tmp[1024];                     /* a set being made: at most every macro */
+  uint16_t hs_tmp[BCIR_CPP_MAX_MACROS];      /* a set being made: at most every macro */
   char ppx_tok[BCIR_CPP_LINE];               /* ntok's copy of the token it reads */
   char line_token[BCIR_CPP_LINE];            /* a `#line` operand (cpp_process recurses per #include: no frame) */
   char *out_buf;                             /* the caller's output buffer, and whether the output filled it */
@@ -98,15 +115,79 @@ static void cpp_limit(CppState *state, const char *message) {
   if (state && !state->limit_error) state->limit_error = message;
 }
 
+/* The macro table's index: open addressing with linear probing over a power-of-two table at most half full, keyed by
+ * a name's FNV-1a hash. A lookup had walked every macro, which a table past 1024 could not afford (CF-MACROCAP). */
+static size_t macro_home(const CppState *state, const char *n, size_t len) {
+  uint32_t h = 2166136261u;
+  for (size_t k = 0; k < len; k++) { h ^= (unsigned char)n[k]; h *= 16777619u; }
+  return (size_t)h & (state->macro_index_cap - 1u);
+}
 static int find_macro(CppState *state, const char *n, int len) {
-  for (int i = 0; i < state->macro_count; i++)
-    if ((int)strlen(state->macros[i].name) == len &&
-        !strncmp(state->macros[i].name, n, (size_t)len)) return i;
+  if (!state->macro_index_cap) return -1;
+  for (size_t h = macro_home(state, n, (size_t)len), i; (i = (size_t)state->macro_index[h]) != (size_t)-1;
+       h = (h + 1u) & (state->macro_index_cap - 1u))
+    if ((int)strlen(state->macros[i].name) == len && !strncmp(state->macros[i].name, n, (size_t)len)) return (int)i;
   return -1;
 }
+/* The index slot that holds macro i. */
+static size_t macro_slot(const CppState *state, int i) {
+  size_t h = macro_home(state, state->macros[i].name, strlen(state->macros[i].name));
+  while (state->macro_index[h] != i) h = (h + 1u) & (state->macro_index_cap - 1u);
+  return h;
+}
+static void macro_index_put(CppState *state, int i) {
+  size_t h = macro_home(state, state->macros[i].name, strlen(state->macros[i].name));
+  while (state->macro_index[h] >= 0) h = (h + 1u) & (state->macro_index_cap - 1u);
+  state->macro_index[h] = i;
+}
+/* Room in the index for one macro more, keeping it at most half full: 0 on an exhausted allocator. */
+static int macro_index_room(CppState *state) {
+  size_t cap = state->macro_index_cap ? state->macro_index_cap : 32u;
+  int *t;
+  while ((size_t)(state->macro_count + 1) * 2u > cap) cap *= 2u;
+  if (cap == state->macro_index_cap) return 1;
+  if (!(t = (int *)bcir_host_allocate(&state->allocator, cap * sizeof *t))) return 0;
+  for (size_t k = 0; k < cap; k++) t[k] = -1;
+  bcir_host_deallocate(&state->allocator, state->macro_index);
+  state->macro_index = t; state->macro_index_cap = cap;
+  for (int i = 0; i < state->macro_count; i++) macro_index_put(state, i);
+  return 1;
+}
+/* Empty slot s, shifting back each entry after it that its home no longer reaches past the hole. */
+static void macro_index_remove(CppState *state, size_t s) {
+  size_t mask = state->macro_index_cap - 1u, j = s, k = s;
+  int *t = state->macro_index;
+  for (;;) {
+    t[j] = -1;
+    for (;;) {
+      size_t h;
+      k = (k + 1u) & mask;
+      if (t[k] < 0) return;
+      h = macro_home(state, state->macros[t[k]].name, strlen(state->macros[t[k]].name));
+      if (j <= k ? (j < h && h <= k) : (j < h || h <= k)) continue;   /* its home lies after the hole: it stays */
+      break;
+    }
+    t[j] = t[k]; j = k;
+  }
+}
+/* Remove the macro `n`: its slot emptied, its allocation freed, the last macro moved into its place. */
 static void undef_macro(CppState *state, const char *n) {
-  int i = find_macro(state, n, (int)strlen(n));
-  if (i >= 0) state->macros[i] = state->macros[--state->macro_count];
+  int i = find_macro(state, n, (int)strlen(n)), last;
+  if (i < 0) return;
+  macro_index_remove(state, macro_slot(state, i));
+  bcir_host_deallocate(&state->allocator, state->macros[i].blk);
+  last = --state->macro_count;
+  if (i != last) {
+    size_t s = macro_slot(state, last);
+    state->macros[i] = state->macros[last];
+    state->macro_index[s] = i;
+  }
+}
+/* Every macro freed and the table emptied (a context reset, or its end). */
+static void macros_clear(CppState *state) {
+  for (int i = 0; i < state->macro_count; i++) bcir_host_deallocate(&state->allocator, state->macros[i].blk);
+  state->macro_count = 0;
+  for (size_t k = 0; k < state->macro_index_cap; k++) state->macro_index[k] = -1;
 }
 
 /* __FILE__/__LINE__: the file currently being processed + its 1-based logical line number. These
@@ -126,6 +207,25 @@ static int is_defined(CppState *state, const char *n) {
 }
 
 /* __has_attribute(x): the L8 ABI attributes (GCC __x__ spelling accepted), conservatively. */
+/* `__has_c_attribute`'s operand, `s` (`n` octets), names PORT-3's attribute: `bcir::timing`, each name also as `__x__`
+ * (C23 6.7.13.2), with any space around the names but none inside the `::` -- 1 for it, as Clang answers for a vendor
+ * attribute it implements; the standard attributes each rail drops are reported absent. The oracle's
+ * `_TIMING_ATTRIBUTE`. */
+static int ta_space(char ch){ return ch==' '||ch=='\t'||ch=='\n'||ch=='\r'||ch=='\f'||ch=='\v'; }   /* Python's ASCII `\s` */
+static int ta_word(char ch){ return (ch>='a'&&ch<='z')||(ch>='A'&&ch<='Z')||(ch>='0'&&ch<='9')||ch=='_'; }
+static int timing_attribute(const char *s, size_t n){
+  size_t k=0, a, b;
+  while(k<n && ta_space(s[k])) k++;
+  a=k; while(k<n && ta_word(s[k])) k++;
+  if(!((k-a==4 && !memcmp(s+a,"bcir",4)) || (k-a==8 && !memcmp(s+a,"__bcir__",8)))) return 0;
+  while(k<n && ta_space(s[k])) k++;
+  if(k+2>n || s[k]!=':' || s[k+1]!=':') return 0;
+  k+=2; while(k<n && ta_space(s[k])) k++;
+  b=k; while(k<n && ta_word(s[k])) k++;
+  if(!((k-b==6 && !memcmp(s+b,"timing",6)) || (k-b==10 && !memcmp(s+b,"__timing__",10)))) return 0;
+  while(k<n && ta_space(s[k])) k++;
+  return k==n;
+}
 static int has_attribute(const char *n) {
   char b[64]; int j = 0;
   for (const char *p = n; *p && j < 63; p++) b[j++] = *p;
@@ -210,12 +310,20 @@ static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
                                                           * e/E/p/P binary/decimal exponent's +/- sign, and C23's
                                                           * `'` separators (6.4.8), read as the oracle's `_TOKEN_RE`
                                                           * reads them: the twin had ended the number at one and read
-                                                          * a character constant from it (CF-PPARITH) */
-    while (idc((unsigned char)s[*i]) || s[*i] == '.' || s[*i] == '\'') {
+                                                          * a character constant from it (CF-PPARITH). A `'` is the
+                                                          * number's only before a digit or a nondigit (`pp-number '
+                                                          * digit`, `pp-number ' nondigit`), taken with it as one step,
+                                                          * so a sign after `'e` is no exponent's: any `'` had been, so
+                                                          * `1'c'` was one number where Clang and GCC read `1'c` and an
+                                                          * unterminated `'` (CF-DIGITSEP) */
+    while (idc((unsigned char)s[*i]) || s[*i] == '.' || (s[*i] == '\'' && idc((unsigned char)s[*i+1]))) {
       char d = s[*i];
       if (j < cap - 1) out[j++] = d; else cpp_limit(state, "preprocessor token too long");
       (*i)++;
-      if ((d=='e'||d=='E'||d=='p'||d=='P') && (s[*i]=='+'||s[*i]=='-')) {
+      if (d == '\'') {
+        if (j < cap - 1) out[j++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
+        (*i)++;
+      } else if ((d=='e'||d=='E'||d=='p'||d=='P') && (s[*i]=='+'||s[*i]=='-')) {
         if (j < cap - 1) out[j++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
         (*i)++;
       }
@@ -245,6 +353,13 @@ static int next_is(const char *s, int *i, char c) {
 #define PP_UNTERMINATED_ARGS "unterminated macro argument list"
 #define PP_DIRECTIVE_IN_ARGS "preprocessing directive inside macro arguments"
 #define PP_LINE_IN_CONTINUED "__LINE__ on a continued line of a macro invocation"
+/* ... and `__LINE__` on a line a backslash-newline continues, where the continuation holds it: Clang and GCC give one
+ * after the splice the line it stands on, which the twin does not track per token (CF-SPLICELINE; the oracle's
+ * `cpp.LINE_ON_SPLICED`) */
+#define PP_LINE_ON_SPLICED "__LINE__ on a line a backslash continues"
+/* An `#embed` whose header name C23's parameters follow (`limit`, `prefix`, `suffix`, `if_empty`): read by neither rail,
+ * and both had embedded the whole file past a `limit(1)` (CF-INCLUDEX; the oracle's `cpp.EMBED_PARAMETERS`) */
+#define PP_EMBED_PARAMETERS "#embed parameters are not supported"
 
 /* --- macro expansion (expand a line until stable) ------------------------ */
 static void app(CppState *state, char *o, size_t cap, size_t *w, const char *s) {
@@ -324,6 +439,7 @@ static int pastes(const char *prevp, char a, const char *t, int anum) {
 #define PPX_IN 0u
 #define PPX_POOL 1u
 #define PPX_BODY 2u
+_Static_assert(BCIR_CPP_MAX_MACROS - 1u + PPX_BODY <= 0xFFFFu, "a body token's source is a 16-bit PPX_BODY + index");
 
 static int ppx_grow(CppState *st, void **v, size_t *cap, size_t need, size_t elem) {
   size_t c = *cap ? *cap : 256u;
@@ -834,6 +950,7 @@ static int ppx_rescan(CppState *st, size_t base, int top, int depth) {
     {
       PPTok v = t;
       if (ppx_is(st, &t, "__LINE__")) {
+        if (st->line_spliced) { cpp_limit(st, PP_LINE_ON_SPLICED); return 0; }
         char num[16]; int n = snprintf(num, sizeof num, "%d", st->current_line);
         if (!ppx_spell_text(st, num, (size_t)n, &v)) return 0;
       } else {
@@ -1017,6 +1134,9 @@ static void h_limits(const CppState *st, hbuf *b) {
     static const int w[] = {8, 8, 8, 16, 16, 32, 32, 0, 0, 64, 64};
     for (int i = 0; k[i]; i++) hput(b, "#define %s_WIDTH %d", k[i], w[i] ? w[i] : long_bits); }
   hput(b, "#endif");
+  if (!st->msvc) {   /* POSIX's longest path, glibc's, where a POSIX feature macro asks for it (the oracle's, CSUB-5g) */
+    hput(b, "#if defined(_POSIX_C_SOURCE) || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_DEFAULT_SOURCE)");
+    hput(b, "#define PATH_MAX 4096"); hput(b, "#endif"); }
 }
 /* <float.h>'s limits, as Clang predefines them (the oracle's `_FLT`, `_DBL` and `_LDBL`): one row a name and a value
  * per format -- `float`, `double`, and `long double`'s x87 80-bit one (x86-64 and i386 Linux) and IEEE binary128
@@ -1058,6 +1178,217 @@ static void h_stdalign(hbuf *b) {
   hput(b, "#define __alignas_is_defined 1"); hput(b, "#define __alignof_is_defined 1");
   hput(b, "#endif");
 }
+static void h_stdckdint(hbuf *b) {   /* C23's checked arithmetic (7.20) as Clang and GCC spell it (CSUB-3) */
+  hput(b, "#define __STDC_VERSION_STDCKDINT_H__ 202311L");
+  hput(b, "#define ckd_add(R, A, B) __builtin_add_overflow((A), (B), (R))");
+  hput(b, "#define ckd_sub(R, A, B) __builtin_sub_overflow((A), (B), (R))");
+  hput(b, "#define ckd_mul(R, A, B) __builtin_mul_overflow((A), (B), (R))");
+}
+/* C11's atomics (7.17), the macros, the oracle's `stdheaders._stdatomic` line for line: each standard type always
+ * lock-free on every target of the matrix, the flag's initializer and `kill_dependency` (CSUB-4). */
+static void h_stdatomic(hbuf *b) {
+  static const char *const T[] = {"BOOL", "CHAR", "CHAR16_T", "CHAR32_T", "WCHAR_T", "SHORT", "INT", "LONG",
+                                  "LLONG", "POINTER", 0};
+  for (int k = 0; T[k]; k++) hput(b, "#define ATOMIC_%s_LOCK_FREE 2", T[k]);
+  hput(b, "#define ATOMIC_FLAG_INIT { 0 }");
+  hput(b, "#define kill_dependency(y) (y)");
+  hput(b, "__bcir_builtin typedef struct { _Bool __bcir_flag; } atomic_flag;");   /* the flag (CSUB-5d) */
+}
+/* C23's bit utilities (7.18), the oracle's `stdheaders._stdbit` line for line: each typed function a `static inline`
+ * one in the subset's own C over the integer builtins both rails lower verbatim -- a builtin's count taken in its own
+ * type's width and narrowed to the argument's, a zero argument's count the width, `bit_ceil` of a value whose ceiling
+ * the type cannot hold 0 -- and the type-generic forms a `_Generic` of them (CSUB-3). */
+static const char *const stdbit_ops[] = {"leading_zeros", "leading_ones", "trailing_zeros", "trailing_ones",
+                                         "first_leading_zero", "first_leading_one", "first_trailing_zero",
+                                         "first_trailing_one", "count_zeros", "count_ones", "has_single_bit",
+                                         "bit_width", "bit_floor", "bit_ceil", 0};
+/* ... in the order they are defined: each body calls only those before it */
+static const char *const stdbit_defs[] = {"leading_zeros", "leading_ones", "trailing_zeros", "trailing_ones",
+                                          "first_leading_zero", "first_leading_one", "first_trailing_zero",
+                                          "first_trailing_one", "count_ones", "count_zeros", "has_single_bit",
+                                          "bit_width", "bit_floor", "bit_ceil", 0};
+static void h_stdbit(const CppState *st, hbuf *b) {
+  int long_bits = 8 * st->long_size;
+  hput(b, "#define __STDC_VERSION_STDBIT_H__ 202311L");
+  hput(b, "#define __STDC_ENDIAN_LITTLE__ 1234");
+  hput(b, "#define __STDC_ENDIAN_BIG__ 4321");
+  hput(b, "#define __STDC_ENDIAN_NATIVE__ 1234");          /* every target of the matrix is little-endian */
+  static const struct { const char *suf, *ty, *b; int w; } T[] = {
+    {"uc", "unsigned char", "", 8}, {"us", "unsigned short", "", 16}, {"ui", "unsigned int", "", 32},
+    {"ul", "unsigned long", "l", 0}, {"ull", "unsigned long long", "ll", 64}};
+  for (size_t t = 0; t < sizeof T / sizeof T[0]; t++) {
+    const char *suf = T[t].suf, *ty = T[t].ty, *bs = T[t].b;
+    int w = T[t].w ? T[t].w : long_bits;
+    int pad = (bs[0] == 0 ? 32 : bs[1] == 0 ? long_bits : 64) - w;
+    char clz[64], ones[64];
+    if (pad) snprintf(clz, sizeof clz, "(unsigned int)__builtin_clz%s(x) - %du", bs, pad);
+    else snprintf(clz, sizeof clz, "(unsigned int)__builtin_clz%s(x)", bs);
+    snprintf(ones, sizeof ones, "((%s)~(%s)0)", ty, ty);
+    for (int k = 0; stdbit_defs[k]; k++) {
+      const char *op = stdbit_defs[k];
+      const char *ret = !strcmp(op, "has_single_bit") ? "_Bool"
+                        : (!strcmp(op, "bit_floor") || !strcmp(op, "bit_ceil")) ? ty : "unsigned int";
+      char body[256];
+      if (!strcmp(op, "leading_zeros")) snprintf(body, sizeof body, "return x ? %s : %du;", clz, w);
+      else if (!strcmp(op, "leading_ones")) snprintf(body, sizeof body, "return stdc_leading_zeros_%s((%s)~x);", suf, ty);
+      else if (!strcmp(op, "trailing_zeros"))
+        snprintf(body, sizeof body, "return x ? (unsigned int)__builtin_ctz%s(x) : %du;", bs, w);
+      else if (!strcmp(op, "trailing_ones")) snprintf(body, sizeof body, "return stdc_trailing_zeros_%s((%s)~x);", suf, ty);
+      else if (!strcmp(op, "first_leading_zero"))
+        snprintf(body, sizeof body, "return x == %s ? 0u : stdc_leading_ones_%s(x) + 1u;", ones, suf);
+      else if (!strcmp(op, "first_leading_one"))
+        snprintf(body, sizeof body, "return x ? stdc_leading_zeros_%s(x) + 1u : 0u;", suf);
+      else if (!strcmp(op, "first_trailing_zero"))
+        snprintf(body, sizeof body, "return x == %s ? 0u : stdc_trailing_ones_%s(x) + 1u;", ones, suf);
+      else if (!strcmp(op, "first_trailing_one"))
+        snprintf(body, sizeof body, "return x ? stdc_trailing_zeros_%s(x) + 1u : 0u;", suf);
+      else if (!strcmp(op, "count_zeros")) snprintf(body, sizeof body, "return %du - stdc_count_ones_%s(x);", w, suf);
+      else if (!strcmp(op, "count_ones")) snprintf(body, sizeof body, "return (unsigned int)__builtin_popcount%s(x);", bs);
+      else if (!strcmp(op, "has_single_bit")) snprintf(body, sizeof body, "return stdc_count_ones_%s(x) == 1u;", suf);
+      else if (!strcmp(op, "bit_width")) snprintf(body, sizeof body, "return %du - stdc_leading_zeros_%s(x);", w, suf);
+      else if (!strcmp(op, "bit_floor"))
+        snprintf(body, sizeof body, "return x ? (%s)((%s)1 << (stdc_bit_width_%s(x) - 1u)) : (%s)0;", ty, ty, suf, ty);
+      else
+        snprintf(body, sizeof body, "return x <= 1u ? (%s)1 : stdc_bit_width_%s((%s)(x - 1u)) >= %du ? (%s)0"
+                 " : (%s)((%s)1 << stdc_bit_width_%s((%s)(x - 1u)));", ty, suf, ty, w, ty, ty, ty, suf, ty);
+      hput(b, "static inline %s stdc_%s_%s(%s x) { %s }", ret, op, suf, ty, body);
+    }
+  }
+  for (int k = 0; stdbit_ops[k]; k++) {
+    const char *op = stdbit_ops[k];
+    hput(b, "#define stdc_%s(x) _Generic((x), unsigned char: stdc_%s_uc, unsigned short: stdc_%s_us,"
+         " unsigned int: stdc_%s_ui, unsigned long: stdc_%s_ul, unsigned long long: stdc_%s_ull)(x)",
+         op, op, op, op, op, op);
+  }
+}
+/* The hosted profile (CSUB-5), the oracle's `stdheaders._stdio`, `_stdlib`, `_errno` and `_time` line for line: what the
+ * runtime's tools call of the C library, declared as the target's library declares it -- glibc's tags and
+ * `__errno_location` on Linux, the UCRT's `_iobuf` and `_errno` on Windows (`msvc`) -- so each call is a typed
+ * external edge the host linker resolves, and each emitted `extern` declaration agrees with the library's own. */
+static void h_lines(hbuf *b, const char *const *lines) {
+  for (int k = 0; lines[k]; k++) hput(b, "%s", lines[k]);
+}
+static void h_stdio(const CppState *st, hbuf *b) {
+  static const char *const head[] = {"#define EOF (-1)", "#define SEEK_SET 0", "#define SEEK_CUR 1", "#define SEEK_END 2", 0};
+  static const char *const decls[] = {
+    "extern FILE *stdin;", "extern FILE *stdout;", "extern FILE *stderr;",
+    "FILE *fopen(const char *, const char *);", "int fclose(FILE *);",
+    "size_t fread(void *, size_t, size_t, FILE *);", "size_t fwrite(const void *, size_t, size_t, FILE *);",
+    "int fputs(const char *, FILE *);", "int fputc(int, FILE *);", "int putc(int, FILE *);", "int putchar(int);",
+    "int puts(const char *);", "int fgetc(FILE *);", "int getc(FILE *);", "int getchar(void);",
+    "int ungetc(int, FILE *);", "char *fgets(char *, int, FILE *);", "int fflush(FILE *);", "int ferror(FILE *);",
+    "int feof(FILE *);", "void clearerr(FILE *);", "int fseek(FILE *, long, int);", "long ftell(FILE *);",
+    "void rewind(FILE *);", "int remove(const char *);", "int rename(const char *, const char *);",
+    "FILE *tmpfile(void);", "void perror(const char *);", 0};
+  h_lines(b, head);
+  hput(b, "typedef struct %s FILE;", st->msvc ? "_iobuf" : "_IO_FILE");
+  h_lines(b, decls);
+  if (!st->msvc) {                                  /* POSIX's; the UCRT's are `_fileno` and `_fdopen` */
+    hput(b, "int fileno(FILE *);");
+    hput(b, "FILE *fdopen(int, const char *);");
+  }
+}
+static void h_stdlib(const CppState *st, hbuf *b) {   /* the allocator's four are both rails' own edges */
+  static const char *const decls[] = {
+    "#define EXIT_SUCCESS 0", "#define EXIT_FAILURE 1", "void exit(int);", "void abort(void);",
+    "long strtol(const char *, char **, int);", "unsigned long strtoul(const char *, char **, int);",
+    "long long strtoll(const char *, char **, int);", "unsigned long long strtoull(const char *, char **, int);",
+    "double strtod(const char *, char **);", "int atoi(const char *);", "long atol(const char *);",
+    "char *getenv(const char *);", "void qsort(void *, size_t, size_t, int (*)(const void *, const void *));",
+    "void *bsearch(const void *, const void *, size_t, size_t, int (*)(const void *, const void *));",
+    "int abs(int);", "long labs(long);", 0};
+  h_lines(b, decls);
+  if (!st->msvc) {
+    hput(b, "int mkstemp(char *);");                  /* POSIX's */
+    hput(b, "char *realpath(const char *, char *);");  /* ... and XSI's (CSUB-5g) */
+  }
+}
+static void h_errno(const CppState *st, hbuf *b) {    /* the codes both libraries give the same values */
+  static const struct { const char *n; int v; } codes[] = {
+    {"EPERM", 1}, {"ENOENT", 2}, {"EINTR", 4}, {"EIO", 5}, {"EBADF", 9}, {"EAGAIN", 11}, {"ENOMEM", 12},
+    {"EACCES", 13}, {"EEXIST", 17}, {"EINVAL", 22}, {"ENOSPC", 28}, {"ERANGE", 34}, {0, 0}};
+  const char *loc = st->msvc ? "_errno" : "__errno_location";
+  hput(b, "int *%s(void);", loc);
+  hput(b, "#define errno (*%s())", loc);
+  for (int k = 0; codes[k].n; k++) hput(b, "#define %s %d", codes[k].n, codes[k].v);
+}
+/* `time_t` and `struct timespec`, once however many headers declare them: `<time.h>` and `<sys/stat.h>`, whose times
+ * are three of them (the oracle's `_timespec`, CSUB-5f). */
+static void h_timespec(const CppState *st, hbuf *b) {
+  hput(b, "#ifndef __BCIR_TIMESPEC"); hput(b, "#define __BCIR_TIMESPEC 1");
+  hput(b, "%s", st->msvc ? "typedef long long time_t;" : "typedef long time_t;");
+  hput(b, "struct timespec { time_t tv_sec; long tv_nsec; };");
+  hput(b, "#endif");
+}
+static void h_time(const CppState *st, hbuf *b) {
+  h_timespec(st, b);
+  hput(b, "#define TIME_UTC 1");
+  hput(b, "int timespec_get(struct timespec *, int);");
+  hput(b, "time_t time(time_t *);");
+  if (!st->msvc) {                                    /* POSIX's clocks; the UCRT has none */
+    hput(b, "#define CLOCK_REALTIME 0");
+    hput(b, "#define CLOCK_MONOTONIC 1");
+    hput(b, "int clock_gettime(int, struct timespec *);");
+  }
+}
+/* `<inttypes.h>`'s format macros (the oracle's `_inttypes`): `l` for a 64-bit integer where `long` is one (LP64
+ * Linux), `ll` where it is not (i386, Windows); a pointer's and `intmax_t`'s likewise. */
+static void h_inttypes(const CppState *st, hbuf *b) {
+  int lp64 = st->long_size == 8;
+  const char *w64 = lp64 ? "l" : "ll", *wptr = lp64 ? "l" : st->pointer_size == 4 ? "" : "ll";
+  static const char *const W[] = {"8", "16", "32", "64", "PTR", "MAX"};
+  static const char *const C[] = {"d", "i", "u", "x", "X", "o"};
+  for (int w = 0; w < 6; w++) {
+    const char *m = w < 3 ? "" : w == 3 ? w64 : w == 4 ? wptr : w64;
+    for (int k = 0; k < 6; k++) hput(b, "#define PRI%s%s \"%s%s\"", C[k], W[w], m, C[k]);
+  }
+}
+static void h_unistd(const CppState *st, hbuf *b) {  /* POSIX's, as glibc declares it (never on Windows: the caller) */
+  static const char *const D[] = {"typedef int pid_t;", "int close(int);", "int fsync(int);",
+    "ssize_t read(int, void *, size_t);", "ssize_t write(int, const void *, size_t);", "int unlink(const char *);",
+    "pid_t getpid(void);", "pid_t fork(void);", "void _exit(int);", 0};
+  hput(b, "%s", st->pointer_size == 8 ? "typedef long ssize_t;" : "typedef int ssize_t;");
+  for (int k = 0; D[k]; k++) hput(b, "%s", D[k]);
+}
+/* POSIX's file status and directory reading, as glibc lays them out (the oracle's `_sys_stat` and `_dirent`, CSUB-5f;
+ * never on Windows: the caller). The emit reads a member at its offset, so each layout is the C library's exactly:
+ * glibc's x86 one where pointers are 4 bytes (i386) or `long double` is x87 (x86-64), its generic Linux one where
+ * `long double` is a quad (aarch64, riscv64) -- read off the facts both rails share, so they choose it alike. */
+static void h_sys_stat(const CppState *st, hbuf *b) {
+  static const char *const x86_64 =
+    "unsigned long st_dev; unsigned long st_ino; unsigned long st_nlink; unsigned int st_mode; "
+    "unsigned int st_uid; unsigned int st_gid; int __pad0; unsigned long st_rdev; long st_size; "
+    "long st_blksize; long st_blocks; struct timespec st_atim; struct timespec st_mtim; "
+    "struct timespec st_ctim; long __glibc_reserved[3];";
+  static const char *const i386 =
+    "unsigned long long st_dev; unsigned short __pad1; unsigned long st_ino; unsigned int st_mode; "
+    "unsigned int st_nlink; unsigned int st_uid; unsigned int st_gid; unsigned long long st_rdev; "
+    "unsigned short __pad2; long st_size; long st_blksize; long st_blocks; struct timespec st_atim; "
+    "struct timespec st_mtim; struct timespec st_ctim; unsigned long __glibc_reserved4; "
+    "unsigned long __glibc_reserved5;";
+  static const char *const generic =
+    "unsigned long st_dev; unsigned long st_ino; unsigned int st_mode; unsigned int st_nlink; "
+    "unsigned int st_uid; unsigned int st_gid; unsigned long st_rdev; unsigned long __pad1; long st_size; "
+    "int st_blksize; int __pad2; long st_blocks; struct timespec st_atim; struct timespec st_mtim; "
+    "struct timespec st_ctim; int __glibc_reserved[2];";
+  static const char *const D[] = {"#define S_IFMT 0170000", "#define S_IFDIR 0040000", "#define S_IFREG 0100000",
+    "#define S_IFLNK 0120000", "#define S_ISDIR(m) ((((m)) & 0170000) == (0040000))",
+    "#define S_ISREG(m) ((((m)) & 0170000) == (0100000))", "#define S_ISLNK(m) ((((m)) & 0170000) == (0120000))",
+    "int stat(const char *, struct stat *);", "int lstat(const char *, struct stat *);",
+    "int fstat(int, struct stat *);", 0};
+  h_timespec(st, b);
+  hput(b, "typedef unsigned int mode_t;");
+  hput(b, "struct stat { %s };", st->pointer_size == 4 ? i386 : st->long_double == 1 ? x86_64 : generic);
+  for (int k = 0; D[k]; k++) hput(b, "%s", D[k]);
+}
+static void h_dirent(hbuf *b) {
+  hput(b, "typedef struct __dirstream DIR;");
+  hput(b, "struct dirent { unsigned long d_ino; long d_off; unsigned short d_reclen; unsigned char d_type; "
+          "char d_name[256]; };");
+  hput(b, "DIR *opendir(const char *);");
+  hput(b, "struct dirent *readdir(DIR *);");
+  hput(b, "int closedir(DIR *);");
+}
 static void h_math(hbuf *b) {
   hput(b, "#define NAN (__builtin_nanf(\"\"))"); hput(b, "#define INFINITY (__builtin_inff())");
   hput(b, "#define HUGE_VAL (__builtin_huge_val())"); hput(b, "#define HUGE_VALF (__builtin_huge_valf())");
@@ -1067,7 +1398,9 @@ static void h_math(hbuf *b) {
   hput(b, "#define isnormal(x) __builtin_isnormal(x)");
 }
 static const char *const builtin_names[] = {"stdint.h", "stddef.h", "stdbool.h", "limits.h", "float.h", "iso646.h",
-                                            "stdalign.h", "math.h", 0};
+                                            "stdalign.h", "stdckdint.h", "stdatomic.h", "stdbit.h", "math.h",
+                                            "stdio.h", "stdlib.h", "errno.h", "time.h", "inttypes.h", "unistd.h",
+                                            "sys/stat.h", "dirent.h", 0};
 static int builtin_known(const char *name) {
   for (int k = 0; builtin_names[k]; k++) if (!strcmp(builtin_names[k], name)) return 1;
   return 0;
@@ -1076,10 +1409,13 @@ static int builtin_known(const char *name) {
  * include reads nothing: 1, or 0 for a header the preprocessor does not supply (or, never, one past the buffer). */
 static int builtin_header(CppState *st, const char *name) {
   if (!builtin_known(name)) return 0;
+  if (st->msvc && (!strcmp(name, "unistd.h") || !strcmp(name, "sys/stat.h") || !strcmp(name, "dirent.h")))
+    return 0;   /* the UCRT has none of these: read as nothing (CSUB-5c, CSUB-5f) */
   hbuf b = {st->builtin_text, sizeof st->builtin_text, 0, 0};
   char guard[32]; size_t g = 0;
   g += (size_t)snprintf(guard, sizeof guard, "__BCIR_");
-  for (const char *q = name; *q && g + 1 < sizeof guard; q++) guard[g++] = *q == '.' ? '_' : (char)(*q >= 'a' && *q <= 'z' ? *q - 32 : *q);
+  for (const char *q = name; *q && g + 1 < sizeof guard; q++)
+    guard[g++] = (*q == '.' || *q == '/') ? '_' : (char)(*q >= 'a' && *q <= 'z' ? *q - 32 : *q);
   guard[g] = 0;
   st->builtin_text[0] = 0;
   hput(&b, "#ifndef %s", guard); hput(&b, "#define %s 1", guard);
@@ -1090,6 +1426,17 @@ static int builtin_header(CppState *st, const char *name) {
   else if (!strcmp(name, "float.h")) h_float(st, &b);
   else if (!strcmp(name, "iso646.h")) h_iso646(&b);
   else if (!strcmp(name, "stdalign.h")) h_stdalign(&b);
+  else if (!strcmp(name, "stdckdint.h")) h_stdckdint(&b);
+  else if (!strcmp(name, "stdatomic.h")) h_stdatomic(&b);
+  else if (!strcmp(name, "stdbit.h")) h_stdbit(st, &b);
+  else if (!strcmp(name, "stdio.h")) h_stdio(st, &b);
+  else if (!strcmp(name, "stdlib.h")) h_stdlib(st, &b);
+  else if (!strcmp(name, "errno.h")) h_errno(st, &b);
+  else if (!strcmp(name, "time.h")) h_time(st, &b);
+  else if (!strcmp(name, "inttypes.h")) h_inttypes(st, &b);
+  else if (!strcmp(name, "unistd.h")) h_unistd(st, &b);
+  else if (!strcmp(name, "sys/stat.h")) h_sys_stat(st, &b);
+  else if (!strcmp(name, "dirent.h")) h_dirent(&b);
   else h_math(&b);
   hput(&b, "#endif");
   if (b.full) { cpp_limit(st, "standard header text too large"); return 0; }
@@ -1127,7 +1474,7 @@ static ppv lit(CE *expression, const char *s) {
   CppState *state=expression->state;
   if(why){
     if(!state->limit_error){
-      if(why==int_bad) snprintf(state->constant_error,sizeof state->constant_error,"%s '%.48s'",why,s);
+      if(why==int_bad) lit_why(state->constant_error,sizeof state->constant_error,why,s,(int)strlen(s));
       else if(why==int_bad_suffix) snprintf(state->constant_error,sizeof state->constant_error,"%s '%.*s' on integer constant",why,L.nsuf,L.suf);
       else snprintf(state->constant_error,sizeof state->constant_error,"%s",why);
       cpp_limit(state,state->constant_error); }
@@ -1277,6 +1624,8 @@ static ppv ce_comma(CE *c, int live, int depth){
 /* Does header `name` resolve against the search dirs (existence only, no read)? Mirrors
  * read_file_dirs' search so __has_include in #if agrees with #include. */
 static char *joined_path(CppState *state, const char *base, const char *name);
+static int read_file_dirs(CppState *state, const char *const *dirs, int ndirs, const char *name,
+                          unsigned char **out, size_t *out_len);
 static int header_exists(CppState *state, const char *const *dirs, int ndirs, const char *name) {
   int tries=ndirs?ndirs:1;
   for(int d=0;d<tries;d++){
@@ -1287,14 +1636,33 @@ static int header_exists(CppState *state, const char *const *dirs, int ndirs, co
   return 0;
 }
 
-/* Parse the header name out of a `__has_include`/`#include` argument `s[0..e)`: the text between the
- * first <...> or "..." pair. Writes into `nm` (NUL-terminated). */
-static void header_name_of(CppState *state, const char *s, int e, char *nm, size_t cap) {
-  int p=0; while(p<e && s[p]!='<' && s[p]!='"') p++;
-  if(p<e && (s[p]=='<' || s[p]=='"')) p++;
-  int q=p; while(q<e && s[q]!='>' && s[q]!='"') q++;
-  int nl=q-p; if(nl<0) nl=0; if((size_t)nl>cap-1){cpp_limit(state, "header name is too long");nl=(int)cap-1;}
-  memcpy(nm, s+p, (size_t)nl); nm[nl]=0;
+/* The header name of an `#include`, `#embed`, `__has_include` or `__has_embed` operand `rest` (kind 0, 1, 2 or 3:
+ * which, for the refusal) into nm (1024 bytes), *sys whether it is a `<...>` one and *after the text after it, read as
+ * the oracle's `_header_operand` reads it (CF-INCLUDEX). A header name written as one, `"..."` or `<...>`, is read as it
+ * stands, no macro replaced inside it (C11 6.10.2p2-3); any other operand is macro-expanded and must then be one
+ * (6.10.2p4) -- the twin had refused every computed operand as `malformed #include`. NULL, or the reason it is
+ * refused: none of the two forms, a `>` or `"` that never comes, a name past 1023 bytes, or the expansion's own. */
+static const char *header_operand(CppState *st, const char *rest, int kind, char *nm, int *sys, const char **after) {
+  static const char *const malformed[]={"malformed #include","malformed #embed","malformed __has_include",
+                                        "malformed __has_embed"};
+  static const char *const open[]={"unterminated #include name","unterminated #embed name",
+                                   "unterminated __has_include name","unterminated __has_embed name"};
+  static const char *const long_[]={"#include name too long","#embed name too long","__has_include name too long",
+                                    "__has_embed name too long"};
+  const char *t=rest; while(pp_space(*t)) t++;
+  if(*t!='<' && *t!='"'){
+    t=expand_text(st,t,0);
+    if(!t) return st->limit_error ? st->limit_error : "preprocessor error";
+    while(pp_space(*t)) t++;
+    if(*t!='<' && *t!='"') return malformed[kind];
+  }
+  *sys = *t=='<';
+  const char *e=strchr(t+1, *sys ? '>' : '"');
+  if(!e) return open[kind];
+  size_t nl=(size_t)(e-(t+1));
+  if(nl>1023) return long_[kind];
+  memcpy(nm,t+1,nl); nm[nl]=0; *after=e+1;
+  return NULL;
 }
 
 static int eval_if(CppState *state, const char *expr, const char *const *dirs, int ndirs) {
@@ -1322,26 +1690,47 @@ static int eval_if(CppState *state, const char *expr, const char *const *dirs, i
     if(k=='i'&&(!strcmp(t,"__has_attribute")||!strcmp(t,"__has_builtin")||
                 !strcmp(t,"__has_c_attribute"))){
       /* feature-test: only the L8 ABI attributes are honoured (no builtins, no [[...]] attrs). */
-      char nm[256]=""; int j=i, attr=!strcmp(t,"__has_attribute");
-      if(next_is(expr,&j,'(')){ int depth=1; int first=1;   /* the operand's tokens through `t`, whose name is read */
-        while(depth){int ak=ntok(state,expr,&j,t,sizeof t); if(!ak)break;
-          if(!strcmp(t,"("))depth++; else if(!strcmp(t,")")){depth--; if(!depth)break;}
+      char nm[256]=""; int j=i, attr=!strcmp(t,"__has_attribute"), cattr=!strcmp(t,"__has_c_attribute"), timing=0;
+      if(next_is(expr,&j,'(')){ int depth=1; int first=1, open=j;   /* the operand's tokens through `t`, whose name is read */
+        while(depth){int close=j, ak=ntok(state,expr,&j,t,sizeof t); if(!ak)break;
+          if(!strcmp(t,"("))depth++; else if(!strcmp(t,")")){depth--; if(!depth){ timing=cattr && timing_attribute(expr+open,(size_t)(close-open)); break;}}
           else if(first&&ak=='i'){strncpy(nm,t,sizeof nm-1);nm[sizeof nm-1]=0;first=0;} }
         i=j; }
-      int yes = attr && has_attribute(nm);
+      int yes = (attr && has_attribute(nm)) || timing;
       { char bit[2]={(char)(yes?'1':'0'),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
     if(k=='i'&&!strcmp(t,"__has_include")){
       /* resolve the header against the include search path (the raw <...>/"..." argument). */
       int j=i; while(expr[j]&&expr[j]!='(') j++; int has=0;
       if(expr[j]=='('){ int s=j+1, depth=1, e=s;
         while(expr[e]&&depth){ if(expr[e]=='(')depth++; else if(expr[e]==')'){depth--; if(!depth)break;} e++; }
-        char nm[1024]; header_name_of(state, expr+s, e-s, nm, sizeof nm);
-        has = nm[0] ? header_exists(state, dirs, ndirs, nm) : 0;
-        if (!has && nm[0]) {                     /* ... or a `<...>` one the preprocessor supplies (CSUB-1) */
-          int z = s; while (z < e && pp_space(expr[z])) z++;
-          has = expr[z] == '<' && builtin_known(nm); }
+        char op[BCIR_CPP_LINE], nm[1024]; int sys=0; const char *after=NULL;
+        size_t on=(size_t)(e-s); if(on>sizeof op-1) on=sizeof op-1;
+        memcpy(op, expr+s, on); op[on]=0;
+        const char *why=header_operand(state, op, 2, nm, &sys, &after);
+        if(why) cpp_limit(state, why);
+        else {
+          has = header_exists(state, dirs, ndirs, nm);
+          if (!has) has = sys && builtin_known(nm); }   /* ... or a `<...>` one the preprocessor supplies (CSUB-1) */
         i = (expr[e]==')') ? e+1 : e; }
       { char bit[2]={(char)(has?'1':'0'),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
+    if(k=='i'&&!strcmp(t,"__has_embed")){
+      /* C23 6.10.1: 1 where the resource is found and holds bytes, 2 where it is found empty, 0 where it is not
+       * (`__STDC_EMBED_FOUND__`, `_EMPTY__`, `_NOT_FOUND__`), its name read as `#embed` reads one: the twin had read the
+       * operator as an identifier, a malformed expression, where the oracle evaluated it (CF-INCLUDEX) */
+      int j=i; while(expr[j]&&expr[j]!='(') j++; int has=0;
+      if(expr[j]=='('){ int s=j+1, depth=1, e=s;
+        while(expr[e]&&depth){ if(expr[e]=='(')depth++; else if(expr[e]==')'){depth--; if(!depth)break;} e++; }
+        char op[BCIR_CPP_LINE], nm[1024]; int sys=0; const char *after=NULL;
+        size_t on=(size_t)(e-s); if(on>sizeof op-1) on=sizeof op-1;
+        memcpy(op, expr+s, on); op[on]=0;
+        const char *why=header_operand(state, op, 3, nm, &sys, &after);
+        if(!why){ while(pp_space(*after)) after++; if(*after) why=PP_EMBED_PARAMETERS; }
+        if(why) cpp_limit(state, why);
+        else { unsigned char *blob=NULL; size_t bn=0; int rr=read_file_dirs(state,dirs,ndirs,nm,&blob,&bn);
+          has = rr<0 ? 0 : bn ? 1 : 2;
+          if(rr>=0) bcir_host_deallocate(&state->allocator,blob); }
+        i = (expr[e]==')') ? e+1 : e; }
+      { char bit[2]={(char)('0'+has),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
     app(state,buf,sizeof state->conditional_buffer,&w,t);}
   if(state->limit_error) return 0;
   const char *ex=expand_text(state,buf,0);
@@ -1359,7 +1748,7 @@ static int eval_if(CppState *state, const char *expr, const char *const *dirs, i
 
 /* --- directive processing ------------------------------------------------ */
 static void define_macro(CppState *state, const char *rest) {
-  int i=0; Macro m; memset(&m,0,sizeof m);
+  int i=0; MacroDef m; memset(&m,0,sizeof m);
   if(!macro_name(state,rest,&i,m.name,"macro name must be an identifier"))return;
   if(rest[i]=='('){m.isfunc=1;i++; for(;;){
       while(pp_space(rest[i]))i++;
@@ -1396,8 +1785,17 @@ static void define_macro(CppState *state, const char *rest) {
   if(strlen(rest+i)>=sizeof m.body){cpp_limit(state, "macro replacement is too large");return;}
   strcpy(m.body,rest+i);
   undef_macro(state, m.name);
-  if(state->macro_count>=1024){cpp_limit(state, "too many macros");return;}
-  state->macros[state->macro_count++]=m;
+  if((unsigned)state->macro_count>=BCIR_CPP_MAX_MACROS){cpp_limit(state, PP_TOO_MANY_MACROS);return;}
+  { size_t pl=(size_t)m.np*BCIR_CPP_NAME, bl=strlen(m.body)+1u;
+    char *blk=(char *)bcir_host_allocate(&state->allocator,pl+bl);
+    if(!blk || !ppx_grow(state,(void **)&state->macros,&state->macro_cap,(size_t)state->macro_count+1u,
+                         sizeof *state->macros) || !macro_index_room(state)){
+      bcir_host_deallocate(&state->allocator,blk); if(!state->limit_error) cpp_limit(state,"oom"); return; }
+    memcpy(blk,m.params,pl); memcpy(blk+pl,m.body,bl);
+    Macro *t=&state->macros[state->macro_count];
+    memcpy(t->name,m.name,sizeof t->name); t->isfunc=m.isfunc; t->np=m.np; t->variadic=m.variadic;
+    t->params=(char (*)[BCIR_CPP_NAME])(void *)blk; t->body=blk+pl; t->blk=blk;
+    macro_index_put(state,state->macro_count++); }
 }
 
 /* Join one include-search directory and name without a path-length truncation. */
@@ -1484,6 +1882,7 @@ static void strip_comments(const char *s, char *o, size_t ocap) {
       o[w++]=c; i++;                                  /* a string/char literal: copy verbatim */
       while(s[i] && w+2<ocap){ char ch=s[i];
         if(ch=='\\' && s[i+1]){ o[w++]=ch; o[w++]=s[i+1]; i+=2; continue; }
+        if(ch=='\n') break;                          /* an open one ends at its line (CF-STRIPQUOTE) */
         o[w++]=ch; i++; if(ch==c) break; }
       continue; }
     if(c=='/' && s[i+1]=='/'){ i+=2; while(s[i] && s[i]!='\n') i++; o[w++]=' '; continue; }
@@ -1499,17 +1898,51 @@ static void strip_comments(const char *s, char *o, size_t ocap) {
   o[w]=0;
 }
 
-/* The logical line at *pp into `line` (cap bytes): its backslash-newlines spliced, a CRLF end of line read as a
- * new-line (translation phase 1), *pp past its new-line. Returns its length; *too_long when it outgrew `line`. */
+/* Translation phases 1 and 2 over a whole text, in place, before phase 3 (`strip_comments`), as the oracle's
+ * `_logical_lines` runs them: each CRLF read as a new-line, then each backslash-newline deleted, one pass each, so a
+ * `\\\r\n` splices and a CRLF file ends its directives as an LF file does (CF-PPSPLITS). The twin had stripped first
+ * and spliced each line as it read it, so a `//` comment a backslash continues ended at its new-line and the line
+ * after it was code -- a function the oracle and Clang read as part of the comment lowered on the twin alone -- and
+ * a splice inside a block comment kept its new-line, one line more for every `__LINE__` after it (CF-STRIPQUOTE). */
+/* Phase 2 keeps the line count: the new-lines a logical line's splices deleted are put back where it ends, so each
+ * line after it keeps its physical number -- `__LINE__` after a spliced line had been one less for every splice
+ * above it, on both rails (CF-SPLICELINE; the oracle's `_splice`). It never writes past what it has read: a splice
+ * takes two bytes and gives one back. *flags gets a bit for each (0-based) line whose continuation holds the text
+ * `__LINE__`, allocated only where one does (`PP_LINE_ON_SPLICED`). 1 on an exhausted allocator, else 0. */
+static int splice_lines(CppState *st, char *s, unsigned char **flags) {
+  size_t r=0, w=0, nl=0;
+  *flags=NULL;
+  for(; s[r]; r++){ if(s[r]=='\r' && s[r+1]=='\n') continue; if(s[r]=='\n') nl++; s[w++]=s[r]; }
+  s[w]=0;
+  size_t pending=0, line=0, start=0; int holds=0;
+  for(r=0, w=0; s[r]; ){
+    if(s[r]=='\\' && s[r+1]=='\n'){
+      r+=2; pending++;
+      for(size_t q=r; s[q] && s[q]!='\n' && !holds; q++) holds = !strncmp(s+q,"__LINE__",8);
+      continue; }
+    if(s[r]=='\n'){
+      for(size_t k=0; k<=pending; k++) s[w++]='\n';
+      line += pending+1;
+      if(holds){
+        if(!*flags && !(*flags=(unsigned char *)bcir_host_allocate_zeroed(&st->allocator,nl/8u+1u))) return 1;
+        (*flags)[start>>3] |= (unsigned char)(1u<<(start&7u)); }
+      start=line; pending=0; holds=0; r++; continue; }
+    s[w++]=s[r++];
+  }
+  if(holds){                                     /* a splice ends the text: no line after it to number */
+    if(!*flags && !(*flags=(unsigned char *)bcir_host_allocate_zeroed(&st->allocator,nl/8u+1u))) return 1;
+    (*flags)[start>>3] |= (unsigned char)(1u<<(start&7u)); }
+  s[w]=0;
+  return 0;
+}
+
+/* The line at *pp into `line` (cap bytes), *pp past its new-line: the text is spliced already (`splice_lines`), so a
+ * line is a logical line. A backslash-newline that splicing makes (two backslashes before two new-lines: the second
+ * backslash and the first new-line deleted) is not spliced again, as on the oracle. Returns its length; *too_long
+ * when it outgrew `line`. */
 static int read_logical(const char **pp, char *line, int cap, int *too_long) {
   const char *p = *pp; int L = 0; *too_long = 0;
   while(*p&&*p!='\n'){
-    if(*p=='\\'&&p[1]=='\n'){p+=2;continue;}
-    if(*p=='\\'&&p[1]=='\r'&&p[2]=='\n'){p+=3;continue;}   /* a CRLF end of line is a new-line (translation
-                                                           * phase 1): spliced as one, ended as one -- `#if K\r`
-                                                           * was malformed here and lowered on the oracle, and a
-                                                           * `\\\r\n` splice was none (CF-PPSPLITS) */
-    if(*p=='\r'&&p[1]=='\n'){p++;continue;}
     if(L<cap-2)line[L++]=*p;else *too_long=1;
     p++;
   }
@@ -1570,17 +2003,18 @@ static int expand_source_line(CppState *state, char *line, const char **pp, cons
     *pp = q; *extra += taken;
   }
 }
-static int cpp_process(CppState *state, const char *src, const char *curfile,
+static int cpp_process(CppState *state, const char *src, const unsigned char *spliced, const char *curfile,
                        const char *const *dirs, int ndirs,
                        char *out, size_t outcap, size_t *w, char *err, size_t errcap) {
   /* a conditional stack: active flag + taken flag (parent == all enclosing frames active) */
   struct { int active, taken, parent, seen_else; } cs[64]; int ncs=0;
-  const char *p=src; char line[8192]; long long presumed=1;
+  const char *p=src; char line[8192]; long long presumed=1; size_t pl=0;   /* pl: the line's index in src */
   char filebuf[1024]; const char *curf=curfile;    /* #line may repoint the current file at filebuf */
   while(*p){
     if(state->limit_error){if(err&&errcap)snprintf(err,errcap,"%s",state->limit_error);return 1;}
     int line_too_long=0;
     read_logical(&p,line,(int)sizeof line,&line_too_long);
+    state->line_spliced = spliced && ((spliced[pl>>3]>>(pl&7u))&1u); pl++;
     if(line_too_long){if(err&&errcap)snprintf(err,errcap,"preprocessor line too long");return 1;}
     if(presumed<1||presumed>INT_MAX){if(err&&errcap)snprintf(err,errcap,"presumed line number is out of range");return 1;}
     state->current_file=curf; state->current_line=(int)presumed; presumed++;
@@ -1626,13 +2060,9 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
         else if(!strcmp(dir,"undef")){char n[BCIR_CPP_NAME];int j=0;
           if(macro_name(state,rest,&j,n,"#undef requires an identifier"))undef_macro(state,n);}
         else if(!strcmp(dir,"include")){
-          int sys=(rest[0]=='<');char close=sys?'>':'"';char nm[1024];int j=0;
-          if(rest[0]!='<'&&rest[0]!='"'){if(err&&errcap)snprintf(err,errcap,"malformed #include");return 1;}
-          j++;int s2=j;while(rest[j]&&rest[j]!=close)j++;
-          if(rest[j]!=close){if(err&&errcap)snprintf(err,errcap,"unterminated #include name");return 1;}
-          int nl=j-s2;
-          if(nl>1023){if(err&&errcap)snprintf(err,errcap,"#include name too long");return 1;}
-          memcpy(nm,rest+s2,(size_t)nl);nm[nl]=0;
+          int sys=0;char nm[1024];const char *after=NULL;   /* (tokens after the name ignored, as Clang's) */
+          const char *why=header_operand(state,rest,0,nm,&sys,&after);
+          if(why){if(err&&errcap)snprintf(err,errcap,"%s",why);return 1;}
           unsigned char *hd=NULL;size_t hn=0;int rr=read_file_dirs(state,dirs,ndirs,nm,&hd,&hn);
           if(rr<0){
             if(rr==-2){if(err&&errcap)snprintf(err,errcap,"cannot read #include %s",nm);return 1;}
@@ -1640,7 +2070,7 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
             if(builtin_header(state,nm)){           /* a standard header the preprocessor supplies (CSUB-1) */
               if(state->include_depth>=64){if(err&&errcap)snprintf(err,errcap,"#include nesting too deep");return 1;}
               state->include_depth++;
-              int rc=cpp_process(state,state->builtin_text,nm,dirs,ndirs,out,outcap,w,err,errcap);
+              int rc=cpp_process(state,state->builtin_text,NULL,nm,dirs,ndirs,out,outcap,w,err,errcap);
               state->include_depth--;
               if(rc)return rc;
             }
@@ -1648,20 +2078,22 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
           } else {
             if(memchr(hd,0,hn)){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,"#include %s contains NUL",nm);return 1;}
             if(state->include_depth>=64){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,"#include nesting too deep");return 1;}
-            strip_comments((char *)hd,(char *)hd,hn+1u);    /* phase 3 for the header (in-place safe) */
+            unsigned char *hflags=NULL;                     /* phases 1 and 2 for the header, then 3 (in place) */
+            if(splice_lines(state,(char *)hd,&hflags)){bcir_host_deallocate(&state->allocator,hd);if(err&&errcap)snprintf(err,errcap,"oom");return 1;}
+            strip_comments((char *)hd,(char *)hd,hn+1u);
             state->include_depth++;
-            int rc=cpp_process(state,(char *)hd,nm,dirs,ndirs,out,outcap,w,err,errcap);
+            int rc=cpp_process(state,(char *)hd,hflags,nm,dirs,ndirs,out,outcap,w,err,errcap);
             state->include_depth--;
+            bcir_host_deallocate(&state->allocator,hflags);
             bcir_host_deallocate(&state->allocator,hd);if(rc)return rc;
           }
         }
         else if(!strcmp(dir,"embed")){
-          int sys=(rest[0]=='<');char close=sys?'>':'"';char nm[1024];int j=0;
-          if(rest[0]!='<'&&rest[0]!='"'){if(err&&errcap)snprintf(err,errcap,"malformed #embed");return 1;}
-          j++;int s2=j;while(rest[j]&&rest[j]!=close)j++;
-          if(rest[j]!=close){if(err&&errcap)snprintf(err,errcap,"unterminated #embed name");return 1;}
-          int nl=j-s2;if(nl>1023){if(err&&errcap)snprintf(err,errcap,"#embed name too long");return 1;}
-          memcpy(nm,rest+s2,(size_t)nl);nm[nl]=0;
+          int sys=0;char nm[1024];const char *after=NULL;
+          const char *why=header_operand(state,rest,1,nm,&sys,&after);
+          if(why){if(err&&errcap)snprintf(err,errcap,"%s",why);return 1;}
+          while(pp_space(*after)) after++;
+          if(*after){if(err&&errcap)snprintf(err,errcap,"%s",PP_EMBED_PARAMETERS);return 1;}
           unsigned char *blob=NULL;size_t bn=0;int rr=read_file_dirs(state,dirs,ndirs,nm,&blob,&bn);
           if(rr<0){if(err&&errcap)snprintf(err,errcap,rr==-2?"cannot read #embed %s":"#embed %s not found",nm);return 1;}
           char num[16];for(size_t b=0;b<bn&&!state->limit_error;b++){
@@ -1712,6 +2144,7 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
       if(expand_source_line(state,line,&p,&ex,&extra,err,errcap)) return 1;
       app(state,out,outcap,w,ex); app(state,out,outcap,w,"\n");
       for(int k=0;k<extra;k++){ presumed++; app(state,out,outcap,w,"\n"); }   /* each line it took keeps its place */
+      pl+=(size_t)extra;
     }
   }
   if(state->limit_error){if(err&&errcap)snprintf(err,errcap,"%s",state->limit_error);return 1;}
@@ -1764,7 +2197,7 @@ void bcir_cpp_context_reset(bcir_cpp_context *context) {
   if (!context || !context->state) return;
   state = (CppState *)context->state;
   bcir_host_arena_reset(&state->scratch);
-  state->macro_count = 0;
+  macros_clear(state);
   state->limit_error = NULL;
   state->current_file = "<source>";
   state->current_line = 0;
@@ -1781,9 +2214,11 @@ void bcir_cpp_context_destroy(bcir_cpp_context *context) {
   state = (CppState *)context->state;
   allocator = state->allocator;
   bcir_host_arena_destroy(&state->scratch);
-  {                                                  /* macro replacement's buffers (expand_text) */
+  macros_clear(state);
+  {                                                  /* the macro table and macro replacement's buffers */
     void *blocks[] = {state->ppx_stack.v, state->ppx_out.v, state->ppx_args.v, state->ppx_sub.v, state->ppx_body.v,
-                      state->ppx_pool, state->ppx_text, state->hs_v, state->hs_el, state->hs_tab};
+                      state->ppx_pool, state->ppx_text, state->hs_v, state->hs_el, state->hs_tab, state->macros,
+                      state->macro_index};
     for (size_t k = 0; k < sizeof blocks / sizeof blocks[0]; k++) bcir_host_deallocate(&allocator, blocks[k]);
   }
   memset(state, 0, sizeof *state);
@@ -1816,6 +2251,7 @@ int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
                             char *out, size_t outcap, char *err, size_t errcap) {
   CppState *state;
   int rc = 1;
+  unsigned char *flags = NULL;   /* the lines whose continuation holds `__LINE__` (`splice_lines`) */
   if(err&&errcap)err[0]=0;
   if(out&&outcap)out[0]=0;
   if(!context || !context->state){
@@ -1855,12 +2291,15 @@ int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
     }
     stripped=(char *)bcir_host_arena_allocate(&state->scratch,scratch_size,1u);
     if(!stripped){if(err&&errcap)snprintf(err,errcap,"oom");goto cleanup;}
-    strip_comments(src, stripped, scratch_size);
-    rc=cpp_process(state,stripped, (srcname && srcname[0]) ? srcname : "<source>",
+    memcpy(stripped, src, sl); stripped[sl]=0;       /* phases 1 and 2, then 3, in place, as the oracle runs them */
+    if(splice_lines(state, stripped, &flags)){if(err&&errcap)snprintf(err,errcap,"oom");goto cleanup;}
+    strip_comments(stripped, stripped, scratch_size);
+    rc=cpp_process(state,stripped, flags, (srcname && srcname[0]) ? srcname : "<source>",
                    dirs, ndirs, out, outcap, &w, err, errcap);
   }
   if(!rc&&state->limit_error){if(err&&errcap)snprintf(err,errcap,"%s",state->limit_error);rc=1;}
 cleanup:
+  bcir_host_deallocate(&state->allocator, flags);
   bcir_host_arena_reset(&state->scratch);
   return rc;
 }
