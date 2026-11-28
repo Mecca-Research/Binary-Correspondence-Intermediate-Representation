@@ -313,6 +313,18 @@ round trip reconstructs byte-identical native artifacts without changing BCAB v1
     The ratchet stays at 46 of 68: `bcir_tensor.c`
     moves on to a call of 18 arguments (CSUB-6), and no unit's first refusal is CSUB-2's any more.
 
+- **2026-11-28 — O1: `bcir_channel.c`'s JSON skip on an explicit stack; the channel reader under the verified compiler.**
+  - The reader skipped an unknown key's value by recursive descent, which R18 refuses by design. It is now one loop
+    over an explicit stack of the open containers, with the same grammar and the same 64-container bound.
+  - **Evidence.**
+    - The recursive version and this one, differentially, over 20,030 documents across the bound: identical verdicts,
+      8,411 accepted and 11,619 refused.
+    - `test_the_channel_readers_json_skip_is_its_grammar_at_every_depth`: the C reader is held to a reference walk
+      over 3,030 seeded documents.
+  - The ratchet moves to **62 of 68**.
+  - **Standing faults.** `channel-jskip.json`, 7, each swept RED. A trailing comma's own check was an equivalent
+    mutant -- the walk then reads the closer as a value or a key and refuses it all the same -- and was dropped.
+
 - **2026-11-28 — CSUB-5d: `<stdatomic.h>`'s flag on both rails; the quarantine under the verified compiler.**
   - `atomic_flag` is the built-in untagged one-byte structure, named in the emit by its typedef (Clang's flag is a
     tagged structure, GCC's is not). Its operations, both forms, are CSUB-4's generics, emitted by their own names; a

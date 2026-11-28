@@ -760,6 +760,30 @@ event transducer, compiles clean (39 of 60), and `bcir_etl_tool.c`, a hosted CLI
 lowering still orders an atomic claim by its hazard (`lower.memory_model`); reading the claim's own orders there is a
 follow-on.
 
+### 4.7 Outside the ladder: the units that recurse (O1, 2026-11-28)
+
+R18 refuses recursion by design (§4: "The subset should not admit recursion"), so a unit that recurses is outside
+every rung until its walk takes an explicit stack, as `bcir_per.c`'s length reader did with CSUB-1.
+- **O1: `bcir_channel.c`.** Its reader skipped a value it does not use -- a key it does not know -- by a recursive
+  descent over objects and arrays, 64 containers deep at most. The skip is now one loop over an explicit stack of the
+  containers open around the value being read: it reads a value, closes each container the value ends, then reads the
+  next member. Its grammar and its bound are the recursive walk's:
+  - **Differentially** against the recursive version at the parent commit, over 20,030 documents: random nestings with
+    malformed numbers, literals, strings, keys and trailing commas, and 60 to 69 nested arrays, objects and empty
+    containers across the bound. The verdicts were identical, 8,411 accepted and 11,619 refused.
+  - **Standing:** `test_the_channel_readers_json_skip_is_its_grammar_at_every_depth` holds the C reader to a
+    reference walk, written from the grammar, over a seeded corpus of 3,030 documents, each verdict drawn more than
+    500 times.
+
+  The unit then compiles with R1-R18 clean, to one digest on both rails: the count is **62 of 68**.
+- **Still outside**, each for the same reason, each a larger walk:
+  - `bcir_emit.c`, the ASN.1 emitter's descent over the schema tree (`der_write_full` and `der_write_content`,
+    `per_node`, `jer_node`);
+  - `bcir_cpp.c`, the `#if` evaluator's recursive descent (`ce_comma` down to `ce_prim`) and the recursion per
+    `#include`, past a multi-dimensional member array used as a value;
+  - `bcir_cfront.c`, the verified compiler's own rail: past the front end's input bound, it is a recursive-descent
+    parser throughout.
+
 ## 5. Subsystems
 
 **Built.** Every native subsystem the build has today:

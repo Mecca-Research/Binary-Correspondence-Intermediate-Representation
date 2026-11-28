@@ -42,10 +42,7 @@
       "rung": "outside"
     },
     "bcir_channel.c": {
-      "verdict": "blocked",
-      "blocker": "verify error: R18: recursive call cycle",
-      "construct": "the channel's recursive JSON skip (`jskip_depth` and `jskip_object`, `jskip_array`), which R18 refuses by design: the unit needs an explicit stack, as `bcir_per.c` did",
-      "rung": "outside"
+      "verdict": "clean"
     },
     "bcir_control_plane.c": {
       "verdict": "clean"

@@ -1,0 +1,60 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_channel:_CC",
+  "bcir.tests.test_c_channel:test_the_channel_readers_json_skip_is_its_grammar_at_every_depth"
+ ],
+ "faults": [
+  {
+   "expects": "test_the_channel_readers_json_skip_is_its_grammar_at_every_depth",
+   "label": "J1 the depth bound one container deeper",
+   "path": "runtime/c/bcir_channel.c",
+   "old": "    if (p >= e || n > BCIR_CHANNEL_JSON_DEPTH) return NULL;",
+   "new": "    if (p >= e || n > BCIR_CHANNEL_JSON_DEPTH + 1u) return NULL;"
+  },
+  {
+   "expects": "test_the_channel_readers_json_skip_is_its_grammar_at_every_depth",
+   "label": "J2 the members' comma optional",
+   "path": "runtime/c/bcir_channel.c",
+   "old": "      if (p >= e || *p != ',') return NULL;\n      p = jws(p + 1, e);",
+   "new": "      if (p >= e) return NULL;\n      p = jws(*p == ',' ? p + 1 : p, e);"
+  },
+  {
+   "expects": "test_the_channel_readers_json_skip_is_its_grammar_at_every_depth",
+   "label": "J3 a key's colon optional",
+   "path": "runtime/c/bcir_channel.c",
+   "old": "  if (p >= e || *p != ':') return NULL;\n  return p + 1;\n}",
+   "new": "  if (p < e && *p == ':') p++;\n  return p;\n}"
+  },
+  {
+   "expects": "test_the_channel_readers_json_skip_is_its_grammar_at_every_depth",
+   "label": "J4 an empty container left open",
+   "path": "runtime/c/bcir_channel.c",
+   "old": "      if (p < e && *p == (kind == '{' ? '}' : ']')) p++;   /* an empty container: the value, whole */",
+   "new": "      if (0) p++;   /* an empty container: the value, whole */"
+  },
+  {
+   "expects": "test_the_channel_readers_json_skip_is_its_grammar_at_every_depth",
+   "label": "J5 a closed container left on the stack",
+   "path": "runtime/c/bcir_channel.c",
+   "old": "      if (p < e && *p == close) { p++; n--; continue; }   /* that container ended too */",
+   "new": "      if (p < e && *p == close) { p++; continue; }   /* that container ended too */"
+  },
+  {
+   "expects": "test_the_channel_readers_json_skip_is_its_grammar_at_every_depth",
+   "label": "J6 a literal one character long",
+   "path": "runtime/c/bcir_channel.c",
+   "old": "      p += sizeof jt - 1u;",
+   "new": "      p += sizeof jt;"
+  },
+  {
+   "expects": "test_the_channel_readers_json_skip_is_its_grammar_at_every_depth",
+   "label": "J7 an array's members read as keys",
+   "path": "runtime/c/bcir_channel.c",
+   "old": "      if (stack[n - 1u] == '{' && !(p = jskip_key(p, e))) return NULL;",
+   "new": "      if (!(p = jskip_key(p, e))) return NULL;"
+  }
+ ]
+}
