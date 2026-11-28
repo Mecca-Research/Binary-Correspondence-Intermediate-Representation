@@ -23,6 +23,8 @@
 >   [BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md)
 > - Weight-Space Programming, Live State-Space Programming & Self-Improvement Memory (`SIM`) hybrid report:
 >   [BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md](BCIR_WSP_SIM_HYBRID_REPORT_2026-11-27.md)
+> - Literature-grounded 7-upgrade `Arch-7d` performance report (`AdaGC`/Kahan, Output-Boundary, `FWP-Snapshot`, Co-Evolution, `CIG`+Turbo, `ES`/Critic, `WeightWatcher`/`Tracr`/`IWIBench`):
+>   [BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md](BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md)
 
 The GEM+ measurement discipline
 ([BCIR_GEMPLUS_ROADMAP.md §0](BCIR_GEMPLUS_ROADMAP.md#0-the-measurement-discipline-and-why-it-comes-first))
@@ -518,13 +520,25 @@ Weight-Space Programming, and `SIM` fit inside `BCIR-Arch7d`:
   (`0.00003%`) beat zeroing `32,430` `L3.wo` coords (`21.15` vs `20.66`, `KL=0.00031`). Parameter-matched
   uniform `GQA_Full_2M` fails WSP on **`0/4` layers (`-7.77` to `-0.55`)**, while `Canon-AC`, `mHC`, and
   static global `GDN-2` gate edits are verified traps/invariants.
-- **Tier 3 (`SIM-1..3` — Outer-Loop CRSI Orchestrator):** A problem-grouped `bcir.sim.v1` ledger on the
+- **Tier 3 (`SIM-1..3` → `bcir.sim.cig.v2` — Outer-Loop CRSI Orchestrator):** A problem-grouped `bcir.sim.v1` ledger on the
   Proposer+Selector finishes #1 (or ceiling-tied at `99+`, timed from strictly isolated cold caches)
   across **`5/5` real BCIR shifts** (`mean 98.19` vs `86.57` Transfer, `+11.62` pts; `+4.20` Cross-Dataset,
   **`+6.24` Cross-Family `GQA-2M → Arch7d-10M`** at `1.37×` faster cold wall & `9.3×` source retention,
   and **`+47.65` Cross-Precision `BCIRQ8 → established COMP-1 1b`** rescuing negative transfer at `1.28×`
   faster cold wall & `4.58×` source retention), cutting trap-locus wasted probes `2.0–2.6×` while proving
   via `n = 10` paired seeds (`p = 0.197` at `n = 6` Evolve) that production CRSI requires `>= 30–50` Evolve tasks.
+
+### Verified 7-Upgrade Architecture & Runtime Laws ([BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md](BCIR_ARCH7D_UPGRADES_REPORT_2026-11-28.md), `Modular-AI` PR #232 `616caec`)
+
+Auditing all 67 references in `arXiv:2611.18856`, all 42 BibTeX refs + 11 Nov 2026 follow-ups in *Sparks of Weight-Space Programming*, and `arXiv:2611.20953` established seven empirically verified architectural rules on `BCIR-Arch7d-10M` and ABI 6 (`1.24e-5` stateful parity, `0.0` episode rollback diff, `0.0` `COMP-1` parity):
+
+1. **Production ABI 6 `AdaGC` + Kahan + Per-Group Telemetry (SHIPPED in `runtime/c/bcir_precision.{h,c}` & `bcir_mixer_ext.{h,c}`):** Per-tensor `AdaGC` EMA clipping composed *under* `grad_clip=3.0` beats global-only clipping on both `Arch7d_2M` seeds (`2.28800` vs `2.28916`) and `10M` continuation (`1.43840` vs `1.43851`) at matched throughput (`+531.5 KiB` Kahan RAM on `embed`/`norm` at `10M`, `0`-bit-drift `1T == 2T` and `BCIROPT1` v2 resume). Never drop the global `3.0` ceiling (full-batch OOD spikes regress `+0.0241` nats without it), and keep per-group `cos(g_t, m_{t-1})` diagnostic-only at small batches (`B=4` reactive OPAL throttling regresses `+0.0197` nats).
+2. **Echo-Gated Output-Boundary Control (`arXiv:2512.12895`, `arXiv:2611.20953`):** Confirms uniform `final_norm_gain` alone is greedy argmax-invariant (`27.43 → 27.43`, `+0.092` dCE), whereas pairing `final_norm_gain = 0.75` + `12` sparse loop-token biases (`13` scalars) jumps `27.43 → 89.55` (`loop 90.6% → 9.4%`, `+62.12` pts) at `0` latency cost. Deploy strictly behind online echo gating (`ctrl_apply_always = 0`) to avoid `0.134` static KL on clean prose.
+3. **`BCIR-FWP-Snapshot` Revisable `GDN-2` Fast-Weight State $S_t$ (`arXiv:2102.11174`, `arXiv:2610.12668`):** `GDN-2` fast-weight state $S_t$ serializes in **`0.750 MiB` FP64** (`134 us` save / `131 us` restore) or **`0.375 MiB` FP32** (`1.91e-6` max logit diff); full episode snapshot (`S_t` + `L3` MLA KV + `Canon-AC` ring + 64-bit layout-fingerprint guard) takes `1.81–2.56 MiB` (`T=64..256`, `425–601 us` restore). Rollback + rank-1 backward delta-rule erasure lifts stall recovery `27.43 → 76.56` (`loop 90.6% → 28.1%`, beating Blind Reset `30.66` and pure Rollback `72.80`) while preserving `96.97%` of $S_t$ and recovering `96.8%` of mid-episode stall prefix damage (`+0.00222` vs `+0.13692` Blind Reset).
+4. **Anchored On-Policy Localized Co-Evolution (`COEV-1`, `arXiv:2605.27276`, `arXiv:2609.09134`):** Unanchored on-policy SFT collapses (`+0.125–0.223` dCE). Masking `68.75%` of non-failing tokens via `BCIR_EXT_IGNORE` + `50%` real-corpus anchoring (`OnPolicy_Localized_Anchored`) is the **only** co-evolution law clearing BCIR's `P4` `+0.04` drift gate (`+0.0213` vs `+0.0781` OffPolicy) while achieving #1 active-harness score (`71.54`, `+15.75` = `1.77×` OffPolicy's `+8.91`).
+5. **Factorized Universal-Core + Turbo Overlays & `CIG` (`bcir.sim.cig.v2`):** Across 4 conflicting shifts (`Prose → Struct → ShortPrefix → COMP-1`), `Factorized_Harmony_CIG` cuts search evals `1.92×` (`25` vs `48`) and cold wall `1.75×` (`106.1` vs `185.4 s`) while eliminating forgetting completely (`98.71` mean, `0.00` forgetting vs `8.73` monolithic/`Flat_SIM_v1`); zero-label `TurboRouter` achieves `98.57` (`93.75%` route acc, `0.04` max forgetting — `213×` cut).
+6. **Forward-Only `ES`/Critic vs Matched-Budget `Best-of-K` (`arXiv:2509.24372`, `arXiv:2610.08993`, `arXiv:2607.12227`):** Inside inference-only RAM (`0` backward passes), `ES` beats `MeZO`/`Random` on the `520`-param Tier-2 surface (`36.71` vs `34.63`/`31.05`, `dCE=-0.00019`) and recovers `-0.01608` nats + `+3.72` pts on `COMP-1` 12 scales; zero-edit `Best-of-4` reaches `98.98` (`0.0%` loops, `0.0` KL) at `4.37×` latency (`Best-of-8 = 99.52` at `7.91×`). The `0.18 ms` Idea-Level Critic hits tie-aware Spearman `ρ = 0.827` on held-out `D4 COMP-1`, recovering `100%` of the oracle optimum in Top-3 (`85%` C11 rollouts saved, `6.67×` faster).
+7. **Muon `WeightWatcher` ESD Law, `Tracr` Circuits & `IWI5` Data-Free `COMP-1` RMS Restoration:** Muon polar orthogonalization preserves full spectral rank (`48.2` @ 2M, `92.7` @ 10M vs AdamW `-18.5%` contraction to `39.4`) and pushes ESD $\alpha$ to `5.7–7.4` (so classical SGD `[2, 4]` HT-SR bounds do NOT apply to Muon or detect `COMP-1` PPL doubling). Compiled `Tracr` parity/Dyck-1 circuits hit `100.0%` exact vs `51.2%`/`98.1%` 3-seed Adam. On `BCIR-Arch7d-10M` `IWIBench`, analytical **data-free Frobenius RMS restoration (`IWI5`, `12` scalars, `0` forward passes, `0` data) recovers `-0.11107` nats (`PPL 8.19 → 7.33`) on `COMP-1`**, while `IWI2`/`IWI3` document null/reversal boundaries of naive mid-MLP/norm projection steering.
 
 ---
 
@@ -547,10 +561,11 @@ caught in `gp-global` and `wedge-next`):
 
 ## 4. Phased Build Sequence
 
-1. **Phase M1 (`MIXER-EXT`, ABI 6) — IMPLEMENTED:** Landed the pluggable per-layer mixer runtime
+1. **Phase M1 (`MIXER-EXT`, ABI 6 + Upgrade 1 `AdaGC`/Kahan/Telemetry) — IMPLEMENTED:** Landed the pluggable per-layer mixer runtime
    (`runtime/c/bcir_mixer_ext.{h,c}`, `runtime/c/bcir_precision.{h,c}`, `bcir/hosted/models/mixer_ext.py`)
-   covering `GQA`, `SWA`, `Arch-1 DeltaNet`, `Arch-2 Hybrid-DN+GQA`, `Arch-4 MLA`, and `Arch-7`
+   covering `GQA`, `SWA`, `Arch-1 DeltaNet`, `Arch-2 Hybrid-DN+GQA`, `Arch-4 MLA`, `Arch-7`
    (`KDA`, `GDN-2`, `G1`, `QK-Norm`, `Canon-A/C`, `DeepSeek mHC`, `TRAIN-OPT-5` `online_softmax`),
+   and Upgrade 1 (`AdaGC` per-tensor EMA clipping, FP32 Kahan compensated rounding, per-tensor `cos(g_t, m_{t-1})` telemetry, per-tensor `lr_mult`, `BCIROPT1` v2 resume),
    keeping ABI 5 `bcir_decoder_train.c` untouched.
 2. **Phase M2 (`BCIR-Arch7d-10M` Reference Model, `1.114M`-Token Curriculum & `4×` Fixed-Target Extrapolation) — COMPLETED (G1/G4/10M Reference):**
    Locked in `BCIR-Arch7d-10M` (`d=512, L=4, ff=928, mla_dc=128, gate_rank=32`, `10.037M` params) via
@@ -558,26 +573,23 @@ caught in `gp-global` and `wedge-next`):
    untouched test `PPL 4.30` @ `T=512`, `4×` zero-shot fixed-target `T=2048` `PPL 4.21` with `-0.0004` nat drift on identical `2 kB` tail targets and `-0.0053` nat improvement on identical `16 kB` spans, `2.75 MiB` `T=4K` state,
    permanent `9.87 MiB` `BCIRQ8 v1` checkpoint at `+0.0001` nats, merged `Modular-AI` PR #230 `8039838`;
    prior 10-arch ablation in merged PR #229 `529f3f2`; `WSP`/`SSP-Live`/`SIM` 3-tier control study in
-   PR #231 `d823c20`).
-3. **Phase M3 (Native `Arch-7d` Inference Decode Lowering, `SSP-Live` Runtime Hooks & Tier M `10M`-Token Scaling):**
-   - Lower `BCIR-Arch7d-10M` (`GDN-2` + `NoPE-MLA` + `Canon-AC` + `mHC`) together with **Tier 1 `SSP-Live`
-     (`GDN-2` adaptive state-echo damping + `NoPE-MLA` repeat-key bias)** onto BCIR's `BCIRQ8 v1` /
-     `BCIRQ8 v2 LUT4-LANES` inference engine (`runtime/c/bcir_q8_model.{h,c}`, `bcir_ai_kernels.{h,c}`)
-     with Exact Differentiable Scale-Factor `COMP-1` KD-QAT (`200–500` steps) to close the Muon 1-bit MLP gap.
-   - Standardize `bcir.wsp1.weight_patch.v1` and `bcir.sim.v1` outer-loop CRSI governance alongside
-     `bcir/frontends/models/deploy_policy.py`.
+   PR #231 `d823c20`; 7-upgrade empirical suite in PR #232 `616caec`).
+3. **Phase M3 (Native `Arch-7d` Inference Decode Lowering, `BCIR-FWP-Snapshot` / Echo-Gated Output-Boundary Hooks & Tier M `10M`-Token Scaling):**
+   - Lower `BCIR-Arch7d-10M` (`GDN-2` + `NoPE-MLA` + `Canon-AC` + `mHC`) together with **Tier 1 echo-gated Output-Boundary Control**, **`BCIR-FWP-Snapshot` (`0.75 MiB` FP64 / `0.375 MiB` FP32 revisable fast-weight state $S_t$ + rank-1 delta erasure)**, and **`SSP-Live`** onto BCIR's `BCIRQ8 v1` /
+     `BCIRQ8 v2 LUT4-LANES` inference engine (`runtime/c/bcir_q8_model.{h,c}`, `bcir_ai_kernels.{h,c}`), adding automatic **data-free Frobenius RMS restoration (`IWI5`, `-0.111` nats free)** before Exact Differentiable Scale-Factor `COMP-1` KD-QAT (`200–500` steps) or inference-RAM `ES`.
+   - Standardize `bcir.wsp1.weight_patch.v1` and **`bcir.sim.cig.v2`** (Factorized Universal-Core + `TurboRouter` overlays + `CIG` graph + `0.18 ms` Idea-Level Critic pre-screening + `COEV-1` anchored co-evolution) alongside `bcir/frontends/models/deploy_policy.py`.
    - Execute full Tier M (`10M` tokens, `~1.2 hrs` est. on 16-core AVX2 / `~0.43 hrs` on 32-core AVX-512)
-     on `BCIR-Arch7d-10M` using the progressive `T=128 → 256 → 512` curriculum + `Opt_Q8_Muon_BF16Grad`,
+     on `BCIR-Arch7d-10M` using the progressive `T=128 → 256 → 512` curriculum + `Opt_Q8_Muon_BF16Grad` + `AdaGC` + Kahan (`embed`/`norm`),
      and implement `Arch-5` (`BCIR-BLT` 4-byte / UAX #29 patches after UC-6).
 4. **Phase M4 (`BCIR-Arch7d-50M` & `BCIR-MoE` Scaling):** Apply the verified `P4` width-gate, `3:1`
    global-anchor stratum (`L3, L7` `NoPE-MLA + G1` anchors for `WSP` / `SSP-Live` controllability), and
    compact-latent sizing law (`d=768, L=8 [3:1 × 2], mla_dc=192 = d/4, gate_rank=48`) to scale
-   `Arch-7d` and `BCIR-MoE` to 50M+ parameters (`>= 10M–50M` tokens) using `Opt_Q8_Muon_BF16Grad`
+   `Arch-7d` and `BCIR-MoE` to 50M+ parameters (`>= 10M–50M` tokens) using `Opt_Q8_Muon_BF16Grad` + `AdaGC`
    (`~342 MiB` persistent state at `50.7M` params) and archive checkpoints/logs in `Mecca-Research/Modular-AI`.
 5. **Phase M5 (`COMP-1` Deployment Export) — IMPLEMENTED:** Landed `BCIRQ8 v2` hybrid Q8-Attention
    + Sub-1-Bit Packed-LUT4 MLP (`bcir_ai_kernels.{h,c}`, `bcir_q8_model.{h,c}`, `deploy_policy.py`)
-   with permanent `bcir.deploy_baseline.v1` baseline checkpoint (`Modular-AI` PR #228 `8cc3f23`) and
-   verified Exact Differentiable Scale-Factor `COMP-1` QAT recovery on `BCIR-Arch7d-10M` (merged `PR #230` `8039838`).
+   with permanent `bcir.deploy_baseline.v1` baseline checkpoint (`Modular-AI` PR #228 `8cc3f23`),
+   verified Exact Differentiable Scale-Factor `COMP-1` QAT recovery (`PR #230` `8039838`), and zero-shot data-free Frobenius RMS restoration (`IWI5`, `-0.11107` nats, `PR #232` `616caec`).
 
 ---
 
@@ -592,8 +604,15 @@ caught in `gp-global` and `wedge-next`):
 - Allen-Zhu, *Physics of Language Models: Part 4.1, Architecture Design and the Magic of Canon Layers* (2025): https://arxiv.org/abs/2512.17351
 - DeepSeek-AI, *mHC: Manifold-Constrained Hyper-Connections* (2025): https://arxiv.org/abs/2512.24880
 - *8-bit Muon (`Muon-8L/AdamW-32`)* (2025): https://arxiv.org/abs/2509.23106
+- *AdaGC: Adaptive Per-Parameter Gradient Clipping* (2025): https://arxiv.org/abs/2502.11034
+- *Reactive Optimizers / OPAL* (2026): https://arxiv.org/abs/2610.33826
 - Takehi et al., *Sparks of Weight-Space Programming* (MIT CSAIL, Nov 2026): https://rikiyat.github.io/blog/weight-space-programming/
+- *Claude WSP Replication & Output-Boundary Control* (Nov 2026): https://arxiv.org/abs/2611.20953
+- Pipis et al., *Output-Boundary Intervention* (2025): https://arxiv.org/abs/2512.12895
+- Schlag et al., *Linear Transformers Are Secretly Fast Weight Programmers* (ICML 2021): https://arxiv.org/abs/2102.11174
+- *ReHarness: Revisable Agent Harness Execution* (2026): https://arxiv.org/abs/2610.12668
 - Yu et al., *Self-Improvement Memory Enables Continual Recursive Self-Improvement* (Google, Nov 2026): https://arxiv.org/abs/2611.18856
+- `SIA` (`2605.27276`), Yu et al. (`2609.09134`), `ModularRSI` (`2609.14857`), `Harmony` (`2610.15150`), `Turbo` (`2609.40330`), `CIG` (`2610.05039`), Zhao (`2611.03219`), `ES at Scale` (`2509.24372`), `MeZO` (`2305.17333`), Bai (`2610.08993`), Wang (`2607.12227`), Martin & Mahoney *WeightWatcher* (Nature Comms 2021), `Tracr` (`2301.05062`), `IWIBench` (`2611.08647`)
 - Qwen Team, `Qwen/Qwen3.5-0.8B` `3:1` Hybrid GDN + Full-Attention + G1 configuration: https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/config.json
 - Lieber et al., *Jamba: A Hybrid Transformer-Mamba Language Model* (2024): https://arxiv.org/abs/2403.19887
 - Ren et al., *Samba: Simple Hybrid State Space Models for Efficient Unlimited Context Language Modeling* (2024): https://arxiv.org/abs/2406.07522
@@ -607,3 +626,4 @@ caught in `gp-global` and `wedge-next`):
 - Pinned ABI 6 `MIXER-EXT`, `Q8-Muon`, `Arch-7` & `1.024M` Pilot bundle (`mixer-ext-abi6-study`, merged commit `529f3f2eae601c5a39d2ffa5543e0f57795f044d`, PR #229): https://github.com/Mecca-Research/Modular-AI/tree/529f3f2eae601c5a39d2ffa5543e0f57795f044d/BCIR%20Model%20Training/mixer-ext-abi6-study
 - Pinned `BCIR-Arch7d-10M` 6-Stage Curriculum, Controls, Fixed-Target `4×` Extrapolation & Deployment bundle (`arch7d-10m-training-study`, merged commit `803983803b72b7d313924fe5d4c3c644d969385e`, PR #230): https://github.com/Mecca-Research/Modular-AI/tree/803983803b72b7d313924fe5d4c3c644d969385e/BCIR%20Model%20Training/arch7d-10m-training-study
 - Pinned `WSP` / `SSP-Live` / `SIM` Hybrid Control Study bundle (`wsp-sim-hybrid-study`, commit `d823c202c211ac4bb31c89ef35b398984a9ac4d1`, PR #231): https://github.com/Mecca-Research/Modular-AI/tree/d823c202c211ac4bb31c89ef35b398984a9ac4d1/BCIR%20Model%20Training/wsp-sim-hybrid-study
+- Pinned `BCIR-Arch7d` 7-Upgrade Empirical Study bundle (`arch7d-upgrades-study`, commit `616caec3ef875c394c65266cd554893c4b21cbcb`, PR #232): https://github.com/Mecca-Research/Modular-AI/tree/616caec3ef875c394c65266cd554893c4b21cbcb/BCIR%20Model%20Training/arch7d-upgrades-study
