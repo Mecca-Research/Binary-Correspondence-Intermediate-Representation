@@ -482,7 +482,7 @@ establish six operational rules for BCIR training and deployment:
    `8cc3f234be0bc84009b79f152ab55995ada9a499` (`wide512` KD-QAT `ADMITTED_HYBRID_V2` at `2.05 MiB` /
    `3.05×` cut / `+0.0096` nats with frozen Q8 attention and `bcir-qualify` GEM parity; `wide50m`
    zero-QAT PTQ and narrow `wedge128` automatically promoted via `P3`/`P4` to `PROMOTED_Q8_V1`).
-6. **Production ABI 6 `MIXER-EXT` + `Arch-7d` + `1.024M`-Token `T=256` Pilot (`PR #229`, `529f3f2`):**
+6. **Production ABI 6 `MIXER-EXT` + `Arch-7d` + `1.024M`-Token `T=256` Pilot (merged `PR #229`, `529f3f2`):**
    Landed in `runtime/c/bcir_mixer_ext.{h,c}`, `runtime/c/bcir_precision.{h,c}`, and
    `bcir/hosted/models/mixer_ext.py` (preserving ABI 5 untouched). Over `1,024,000` real tokens at
    `T=256, B=8` (`online_softmax=1`, `~0.85–1.0` tok/param), **`Arch-7d` (`GDN-2 + G1-NoPE-MLA +
@@ -492,7 +492,9 @@ establish six operational rules for BCIR training and deployment:
    lowest persistent RAM (`8.76 MiB`), `4.84×` lower peak activation amplitude (`2.15` vs `10.42`),
    and verified crash-atomic 0-bit-drift mid-run checkpoint resume with full optimizer state restore across
    all 7 optimizers (`bcir_ext_{opt_state_bytes,save_opt_state,load_opt_state}`).
-   Full Tier M (`10M`) and Tier L (`50M`) runs remain queued on 16+ core hosts via `run_tier_ml_qual.py`.
+7. **Verified `10M` Progressive Curriculum, Co-Design Synergy & Scale-Factor `COMP-1` QAT ([BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md), `Modular-AI` PR #230 `f5b9e26`):**
+   - **Progressive `T=128 → 256 → 512` Curriculum Law:** On `BCIR-Arch7d-10M` (`10.037M` params, `d=512, L=4, ff=928, mla_dc=128, gate_rank=32`), running `196,608` warmup tokens at `T=128` (`192 × 1,024` Muon steps) beats flat `T=256` (`96 × 2,048` steps) by **`-0.1511` nats (`PPL 6.74` vs `7.84`)** on zero-shot `T=256` test. Extending across `1,114,112` real tokens with 0-bit-drift cross-stage `Opt_Q8_Muon_BF16Grad` (`68.2 MiB` pers., `-55.5%` vs FP32) handoff reaches **`val PPL 4.05` (`BPB 2.019`)**, untouched test **`PPL 4.30` (`T=512`)**, `0.0%` clip hits across Stages 2–3, and **`4×` zero-shot extrapolation to `T=2048` (`PPL 4.13`, `1.75 MiB` state)**.
+   - **Muon Spectral Preservation vs `COMP-1` Factor-QAT:** Because `Opt_Q8_Muon_BF16Grad` maintains high MLP spectral rank (`r90 = 64.50%`, `stable_rank = 167.58`, `+0.9%` Frobenius norm drift), zero-QAT 1-bit `COMP-1` PTQ incurs `+0.6782` nats while `BCIRQ8 v1` (`9.87 MiB`, tracked artifact) stays within **`+0.0001` nats**. Adopt **Exact Differentiable Scale-Factor `COMP-1` QAT** (freezing non-MLP `BCIRQ8 v1` and binary signs `{B, Bu, Bv}`, backpropagating directly onto continuous FP16 scales) — which monotonically recovered **`-0.2903` nats (`42.8%` of the PTQ gap, `PPL 8.55 → 6.40`)** in `32` steps without STE sign-flip shock.
 
 ---
 
@@ -501,9 +503,9 @@ establish six operational rules for BCIR training and deployment:
 | Priority | Slice | Primary Metric Targeted | Status / Dependencies |
 |---:|---|---|---|
 | **1** | `TRAIN-OPT-1` ($\mu$P + residual init) & `TRAIN-OPT-4` (fast C init / `skip_init`) — **IMPLEMENTED** | Fix 99.8% clip saturation; cut 50M init `15.6s → <0.45s` | `runtime/c/bcir_precision.{h,c}` (`PR #228` `8cc3f23`) |
-| **2** | `TRAIN-OPT-5` (`online_softmax=1` `O(T)` LSE tiled attention) — **IMPLEMENTED** | Cut `GQA` `T=1024` prob storage `512.0×` (`512 → 1 MiB`), `0` bit drift | `runtime/c/bcir_mixer_ext.{h,c}` (`PR #229` `529f3f2`) |
+| **2** | `TRAIN-OPT-5` (`online_softmax=1` `O(T)` LSE tiled attention) — **IMPLEMENTED** | Cut `GQA` `T=1024` prob storage `512.0×` (`512 → 1 MiB`); `10M` `T=512 B=4` arena `829.8 MiB` | `runtime/c/bcir_mixer_ext.{h,c}` (`PR #229` `529f3f2`, `PR #230` `f5b9e26`) |
 | **3** | `TRAIN-OPT-2` (causal suffix trimming + masked-target loss) — **IMPLEMENTED** | `2.54×` speedup on padded KV batches; fail-closed all-masked refusal | `runtime/c/bcir_mixer_ext.{h,c}` (ABI 6) |
-| **4** | `MIXER-EXT` ABI 6 + `Arch-1/2/4` + Beyond-the-List `Arch-7` (`KDA`/`GDN-2`/`G1`/`Canon`/`mHC`) — **IMPLEMENTED** | `wide10m` #1 `9.51` PPL, `1.024M` pilot `4.81` PPL, `4.27×` smaller `T=4k` state | `runtime/c/bcir_mixer_ext.{h,c}`, `bcir/hosted/models/mixer_ext.py` |
-| **5** | `TRAIN-OPT-6` (`VDPBF16PS`) & `TRAIN-OPT-7` (`Adafactor` `12.0 B/p`, `Q8+BF16Grad` `8.05 B/p`, **`Q8-Muon+BF16Grad` `7.07 B/p`**) — **IMPLEMENTED** | Cut `50.74M` persistent RAM `774 → 342 MiB` (`-55.8%`); `-0.092` nats on `wide10m` hybrid; crash-atomic 0-bit-drift resume | `runtime/c/bcir_precision.{h,c}` (`PR #229` `529f3f2`) |
-| **6** | `TRAIN-OPT-3` (Tier M/L `10M–50M` scaling on 16+ core hosts) + `Arch-5/6` + `WSP-1..4` | True converged scaling laws (`>= 10M–50M` tok at `wide10m`/`wide50m`), `BCIR-BLT`, `BCIR-MoE` | `run_tier_ml_qual.py` (`1.024M` pilot done; 16+ core queue) |
-| **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP & `LUT4-LANES`) — **IMPLEMENTED** | Whole-model & MLP decode speedup + `>= 3×` smaller edge artifacts ($d \ge 512$), gated by `P1–P6` (`bcir/frontends/models/deploy_policy.py`) | `bcir_q8_model.h`, `bcir_ai_kernels.h`, Exp 5 baseline `8cc3f234be0bc84009b79f152ab55995ada9a499` |
+| **4** | `MIXER-EXT` ABI 6 + `BCIR-Arch7d-10M` (`10.04M` Reference, `1.114M`-Tok Curriculum) — **VERIFIED** | `T=512` test `PPL 4.30`, `4×` zero-shot `T=2048` `PPL 4.13`, `2.75 MiB` `T=4K` state, `9.87 MiB` `BCIRQ8 v1` | [BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md) (`PR #230` `f5b9e26`) |
+| **5** | `TRAIN-OPT-6` (`VDPBF16PS`) & `TRAIN-OPT-7` (`Adafactor` `12.0 B/p`, `Q8+BF16Grad` `8.05 B/p`, **`Q8-Muon+BF16Grad` `7.07–7.13 B/p`**) — **IMPLEMENTED** | Cut `50.74M` RAM `774 → 342 MiB` (`-55.8%`) & `10M` RAM `153 → 68 MiB` (`-55.5%`); 0-bit-drift cross-stage handoff | `runtime/c/bcir_precision.{h,c}` (`PR #229` `529f3f2`, `PR #230` `f5b9e26`) |
+| **6** | `TRAIN-OPT-3` (Tier M/L `10M–200M` scaling on 16–32 core hosts) + `Arch-7d` Decode Lowering + `Arch-5/6` | `10M` Tier M (`~1.2 hrs` est. 16c AVX2 / `0.43 hrs` 32c AVX-512), `BCIRQ8 v2` `Arch-7d` serve, `BCIR-BLT`, `BCIR-MoE` | `arch7d-10m-training-study` progressive curriculum CLI (`PR #230`) |
+| **7** | `COMP-1` (`BCIRQ8 v2` Q8-Attn + Sub-1-Bit Packed-LUT4 MLP & Scale-Factor QAT) — **IMPLEMENTED** | `7.59×` weight cut (`38.3 → 5.04 MiB`, `7.79 MiB` 4K total); `-0.2903` nats Factor-QAT recovery in 32 steps | `bcir_q8_model.h`, `bcir_ai_kernels.h`, `PR #228` `8cc3f23`, `PR #230` `f5b9e26` |

@@ -477,13 +477,15 @@ exceeded; `<= 0.04` nat WikiText-2 CE drift — `<= 4.08%` PPL ratio $e^{\Delta\
   promoted to `PROMOTED_Q8_V1` with exact recall match on 6/6 circuits; `LUT4-LANES` FP32 `4.30–5.47×`
   faster than `Q8-LANES` on AVX2 with `0` bit drift).
 - **Production ABI 6 `MIXER-EXT` + Beyond-the-List `Arch-7` Study ([BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md](BCIR_PRECISION_FRONTIER_AND_ARCH_STUDY_2026-11-22.md) §8):**
-  Verified on `Modular-AI` PR #229 commit `529f3f2eae601c5a39d2ffa5543e0f57795f044d`: `Arch-7d`
+  Verified on `Modular-AI` merged PR #229 (`529f3f2eae601c5a39d2ffa5543e0f57795f044d` / `c707873`): `Arch-7d`
   (`3:1 GDN-2 + G1-NoPE-MLA + Canon-AC + DeepSeek mHC C=2`) leads `wide10m` (`9.51` PPL vs `Arch-2`
   `9.60` and `GQA_Full` `10.44`) with `2.04×` lower zero-QAT Dual-SVID + Joint-ITQ `COMP-1` PTQ
   error (`+0.1086` vs `+0.2214`) and `3.75 MiB` `T=4096` state; paired with `Opt_Q8_Muon_BF16Grad`
   (`7.07 B/p`), it wins the `1.024M`-token `T=256` pilot at `4.81` untouched test PPL (`-0.2949`
   nats vs `GQA_Full` `6.47`), faster wall clock than `GQA_Full`, lowest RAM (`8.76 MiB`), `4.84×`
   lower peak activations, and verified crash-atomic 0-bit-drift mid-run checkpoint resume across all 7 optimizers.
+- **Verified `10M` Reference Model — `BCIR-Arch7d-10M` ([BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md](BCIR_ARCH7D_10M_PERFORMANCE_REPORT_2026-11-27.md), `Modular-AI` PR #230 `f5b9e26`):**
+  Stage 0 sizing & ablation locks in **`Arch7d_10M_B_ff928_gr32_dc128`** (`10.037M` params: `d=512, L=4 [GDN-2×3, NoPE-MLA], h=8, kvh=2, ff=928, mla_dc=128, mla_dr=32, gate_rank=32, tied=1, G1, QK-Norm, Canon-AC, mHC C=2, online_softmax=1`), clearing BCIR's `P4` width gate (`12/12` MLPs `>= 512`, `2.75 MiB` `T=4096` state = `5.82×` vs GQA, `7.79 MiB` `COMP-1` 4K footprint) whereas narrow-deep `d=384, L=8` fails `P4` (`0/24` MLPs, `17.24 MiB` 4K footprint). Across a **3-stage progressive curriculum (`T=128 → 256 → 512`, `1,114,112` real tokens)** with 0-bit-drift cross-stage `Opt_Q8_Muon_BF16Grad` (`68.2 MiB` pers., `-55.5%` vs FP32) handoff, `BCIR-Arch7d-10M` reaches **`val PPL 4.05` (`BPB 2.019`, `58.9%` acc)** and untouched test **`PPL 4.32` (`T=256`) / `4.30` (`T=512`)** (`0.0%` clip hits across Stages 2–3), extrapolates **`4×` zero-shot to `T=2048` (`PPL 4.13`, `BPB 2.048`, `58.5%` acc, `max_abs_act=2.13`, `sink=0.005`, `1.75 MiB` state)**, beats parameter-matched `GQA_Full`, `Arch-2`, and `Arch-7d + Adafactor` controls, ships a permanent `9.87 MiB` `BCIRQ8 v1` checkpoint (`+0.0001` nats vs FP32), and demonstrates **Exact Differentiable Scale-Factor `COMP-1` QAT** (`-0.2903` nats / `42.8%` PTQ gap recovery in 32 steps without STE sign-flip shock).
 - Parameter-matched `6.16M` geometry (`wide_shallow_6m` `d=512, L=2` vs `narrow_deep_6m` `d=256, L=8`,
   within `0.029%` params) proves width/aspect ratio — not parameter count — controls the storage floor
   (`0.37` vs `0.47 BPW`, `2.02×` lower `r=1` floor, `1.69×` faster decode).
@@ -517,18 +519,27 @@ caught in `gp-global` and `wedge-next`):
    covering `GQA`, `SWA`, `Arch-1 DeltaNet`, `Arch-2 Hybrid-DN+GQA`, `Arch-4 MLA`, and `Arch-7`
    (`KDA`, `GDN-2`, `G1`, `QK-Norm`, `Canon-A/C`, `DeepSeek mHC`, `TRAIN-OPT-5` `online_softmax`),
    keeping ABI 5 `bcir_decoder_train.c` untouched.
-2. **Phase M2 (`Arch-1` + `Arch-2` + `Arch-7` Verification & `1.024M` Pilot) — COMPLETED (G1/G4/Pilot):**
-   Benchmarked all 10 architectures across recall (`B1`), `wide10m` LM (`B2`), and `1.024M`-token
-   `T=256` pilot (`Exp C`, PR #229 `529f3f2`); `Keyed-Wedge` (`Arch-3`) remains optional geometric control.
-3. **Phase M3 (`Arch-5` BLT & Tier M `10M`-Token Scaling):** Execute full Tier M (`10M`-token)
-   `wide10m` qualification of `Arch-7d` + `Opt_Q8_Muon_BF16Grad` on 16+ core hosts via
-   `run_tier_ml_qual.py` and implement `Arch-5` (`BCIR-BLT` 4-byte / UAX #29 patches after UC-6).
-4. **Phase M4 (`Arch-7d` / `Arch-2` / `Arch-6` at 50M+):** Scale `Arch-7d` and `BCIR-MoE` to 50M
-   parameters (`>= 10M–50M` tokens) using `Opt_Q8_Muon_BF16Grad` (`342.2 MiB` persistent state at
-   `50.74M` params) and archive checkpoints/logs in `Mecca-Research/Modular-AI`.
+2. **Phase M2 (`BCIR-Arch7d-10M` Reference Model, `1.114M`-Token Curriculum & `4×` Extrapolation) — COMPLETED (G1/G4/10M Reference):**
+   Locked in `BCIR-Arch7d-10M` (`d=512, L=4, ff=928, mla_dc=128, gate_rank=32`, `10.037M` params) via
+   Stage 0 sizing/ablation, verified progressive `T=128 → 256 → 512` curriculum (`1.114M` tokens,
+   untouched test `PPL 4.30` @ `T=512`, `4×` zero-shot `T=2048` `PPL 4.13`, `2.75 MiB` `T=4K` state,
+   permanent `9.87 MiB` `BCIRQ8 v1` checkpoint at `+0.0001` nats, `Modular-AI` PR #230 `f5b9e26`;
+   prior 10-arch ablation in merged PR #229 `529f3f2`).
+3. **Phase M3 (Native `Arch-7d` Inference Decode Lowering & Tier M `10M`-Token Scaling):**
+   - Lower `BCIR-Arch7d-10M` (`GDN-2` + `NoPE-MLA` + `Canon-AC` + `mHC`) onto BCIR's `BCIRQ8 v1` /
+     `BCIRQ8 v2 LUT4-LANES` inference engine (`runtime/c/bcir_q8_model.{h,c}`, `bcir_ai_kernels.{h,c}`)
+     with Exact Differentiable Scale-Factor `COMP-1` KD-QAT (`200–500` steps) to close the Muon 1-bit MLP gap.
+   - Execute full Tier M (`10M` tokens, `~1.2 hrs` est. on 16-core AVX2 / `~0.43 hrs` on 32-core AVX-512)
+     on `BCIR-Arch7d-10M` using the progressive `T=128 → 256 → 512` curriculum + `Opt_Q8_Muon_BF16Grad`,
+     and implement `Arch-5` (`BCIR-BLT` 4-byte / UAX #29 patches after UC-6).
+4. **Phase M4 (`BCIR-Arch7d-50M` & `BCIR-MoE` Scaling):** Apply the verified `P4` width-gate &
+   compact-latent sizing law (`d=768, L=8 [3:1 × 2], mla_dc=192 = d/4, gate_rank=48`) to scale
+   `Arch-7d` and `BCIR-MoE` to 50M+ parameters (`>= 10M–50M` tokens) using `Opt_Q8_Muon_BF16Grad`
+   (`~342 MiB` persistent state at `50.7M` params) and archive checkpoints/logs in `Mecca-Research/Modular-AI`.
 5. **Phase M5 (`COMP-1` Deployment Export) — IMPLEMENTED:** Landed `BCIRQ8 v2` hybrid Q8-Attention
    + Sub-1-Bit Packed-LUT4 MLP (`bcir_ai_kernels.{h,c}`, `bcir_q8_model.{h,c}`, `deploy_policy.py`)
-   with permanent `bcir.deploy_baseline.v1` baseline checkpoint (`Modular-AI` PR #228 `8cc3f23`).
+   with permanent `bcir.deploy_baseline.v1` baseline checkpoint (`Modular-AI` PR #228 `8cc3f23`) and
+   verified Exact Differentiable Scale-Factor `COMP-1` QAT recovery on `BCIR-Arch7d-10M` (`PR #230` `f5b9e26`).
 
 ---
 
@@ -552,4 +563,5 @@ caught in `gp-global` and `wedge-next`):
 - Archived BCIR model-training evidence (`gp-global`, `wedge-next`, `wedge-integrated`, `wedge-query-qware`, `wedge-pr818`, `BCIR-50M-Study`): https://github.com/Mecca-Research/Modular-AI
 - Pinned LittleBit / LittleBit-2 bare-metal C experiment bundle (`littlebit-sub1bit-study`, merged commit `3ec7ee5551b3740c46015b86aef9fe3e52e142bb`, PR #227): https://github.com/Mecca-Research/Modular-AI/tree/3ec7ee5551b3740c46015b86aef9fe3e52e142bb/BCIR%20Model%20Training/littlebit-sub1bit-study
 - Pinned Precision Frontier & Exp 5 Deployment Baseline bundle (`precision-arch-study`, merged commit `8cc3f234be0bc84009b79f152ab55995ada9a499`, PR #228): https://github.com/Mecca-Research/Modular-AI/tree/8cc3f234be0bc84009b79f152ab55995ada9a499/BCIR%20Model%20Training/precision-arch-study
-- Pinned ABI 6 `MIXER-EXT`, `Q8-Muon`, `Arch-7` & `1.024M` Pilot bundle (`mixer-ext-abi6-study`, commit `529f3f2eae601c5a39d2ffa5543e0f57795f044d`, PR #229): https://github.com/Mecca-Research/Modular-AI/tree/529f3f2eae601c5a39d2ffa5543e0f57795f044d/BCIR%20Model%20Training/mixer-ext-abi6-study
+- Pinned ABI 6 `MIXER-EXT`, `Q8-Muon`, `Arch-7` & `1.024M` Pilot bundle (`mixer-ext-abi6-study`, merged commit `529f3f2eae601c5a39d2ffa5543e0f57795f044d`, PR #229): https://github.com/Mecca-Research/Modular-AI/tree/529f3f2eae601c5a39d2ffa5543e0f57795f044d/BCIR%20Model%20Training/mixer-ext-abi6-study
+- Pinned `BCIR-Arch7d-10M` 6-Stage Curriculum, Controls, `4×` Extrapolation & Deployment bundle (`arch7d-10m-training-study`, commit `f5b9e26dd008990b68f43dcb91434770f513ea7a`, PR #230): https://github.com/Mecca-Research/Modular-AI/tree/f5b9e26dd008990b68f43dcb91434770f513ea7a/BCIR%20Model%20Training/arch7d-10m-training-study
